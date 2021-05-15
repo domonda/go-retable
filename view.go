@@ -3,37 +3,47 @@ package retable
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 type View interface {
-	Title() string
-	Columns() Columns
-	NumRows() int
+	Caption() string
+	Columns() []string
+	Rows() int
 	ReflectRow(index int) ([]reflect.Value, error)
 }
 
-func NewView(rows interface{}) (View, error) {
-	return NewViewWithTitle(rows, "")
-}
-
-func NewViewWithTitle(rows interface{}, title string) (View, error) {
-	panic("TODO")
-}
-
-type sliceView struct {
-	title string
-	cols  Columns
-	rows  reflect.Value
-}
-
-func (r *sliceView) Title() string    { return r.title }
-func (r *sliceView) Columns() Columns { return r.cols }
-func (r *sliceView) NumRows() int     { return r.rows.Len() }
-
-func (r *sliceView) ReflectRow(index int) ([]reflect.Value, error) {
-	if index < 0 || index >= r.NumRows() {
-		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, r.NumRows())
+func NewViewFromColumnMapper(rows interface{}, columnMapper ColumnMapper, caption ...string) (View, error) {
+	v := reflect.ValueOf(rows)
+	for v.Kind() == reflect.Ptr && !v.IsNil() {
+		v = v.Elem()
 	}
+	if v.Kind() != reflect.Slice || v.Kind() == reflect.Array {
+		return nil, fmt.Errorf("rows must be slice or array kind, got %T", rows)
+	}
+	columns, rowReflector := columnMapper.ColumnTitlesAndRowReflector(v.Type().Elem())
+	return &rowReflectorView{
+		caption:      strings.Join(caption, " "),
+		columns:      columns,
+		rowReflector: rowReflector,
+		rows:         v,
+	}, nil
+}
 
-	panic("TODO")
+type rowReflectorView struct {
+	caption      string
+	columns      []string
+	rowReflector RowReflector
+	rows         reflect.Value
+}
+
+func (v *rowReflectorView) Caption() string   { return v.caption }
+func (v *rowReflectorView) Columns() []string { return v.columns }
+func (v *rowReflectorView) Rows() int         { return v.rows.Len() }
+
+func (v *rowReflectorView) ReflectRow(index int) ([]reflect.Value, error) {
+	if index < 0 || index >= v.rows.Len() {
+		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, v.rows.Len())
+	}
+	return v.rowReflector.ReflectRow(v.rows.Index(index)), nil
 }

@@ -3,6 +3,6 @@ package retable
 import "reflect"
 
 type Builder interface {
-	Columns() Columns
+	// Columns() Columns
 	NewRow() []reflect.Value
 }
