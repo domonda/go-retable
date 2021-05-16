@@ -13,18 +13,18 @@ import (
 )
 
 type Writer struct {
-	valueWriters     retable.ValueWriters
+	formatter        retable.TypeFormatter
 	writeHeaderRow   bool
 	quoteAllFields   bool
 	quoteEmptyFields bool
-	delimiter        string
+	delimiter        rune
 	newLine          string
 	charset          retable.Charset
 }
 
 func NewWriter() *Writer {
 	return &Writer{
-		delimiter: ";",
+		delimiter: ';',
 		newLine:   "\r\n",
 	}
 }
@@ -32,7 +32,7 @@ func NewWriter() *Writer {
 func (w *Writer) Write(ctx context.Context, dest io.Writer, view retable.View) error {
 	var (
 		rowBuf         = bytes.NewBuffer(make([]byte, 0, 1024))
-		mustQuoteChars = "\"\n" + w.delimiter
+		mustQuoteChars = "\n\"" + string(w.delimiter)
 	)
 	if w.writeHeaderRow {
 		colTitles := view.Columns()
@@ -61,29 +61,32 @@ func (w *Writer) Write(ctx context.Context, dest io.Writer, view retable.View) e
 func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View, mustQuoteChars string) (err error) {
 	for col, val := range rowVals {
 		if col > 0 {
-			rowBuf.WriteString(w.delimiter)
+			rowBuf.WriteRune(w.delimiter)
 		}
-		if w.quoteAllFields {
-			rowBuf.WriteByte('"')
+		var str string
+		if formatter, ok := val.Interface().(Formatter); ok {
+			str, err = formatter.FormatCSV(ctx, val, row, col, view)
+			if err != nil {
+				return err
+			}
+		} else {
+			str, err = w.formatter.FormatValue(ctx, val, row, col, view)
+			if err != nil {
+				if !errors.Is(err, retable.ErrNotSupported) {
+					return err
+				}
+				str = fmt.Sprint(val.Interface())
+			}
 		}
-		start := rowBuf.Len()
-		err := w.valueWriters.WriteValue(ctx, rowBuf, val, row, col, view)
-		if errors.Is(err, retable.ErrNotSupported) {
-			fmt.Fprint(rowBuf, val.Interface())
-		} else if err != nil {
-			return err
-		}
-		if w.quoteAllFields {
+		switch {
+		case w.quoteAllFields || strings.ContainsAny(str, mustQuoteChars):
 			rowBuf.WriteByte('"')
-		} else if bytes.ContainsAny(rowBuf.Bytes()[start:], mustQuoteChars) {
-			valStr := string(rowBuf.Bytes()[start:]) // string forces copy
-			valStr = strings.ReplaceAll(valStr, `"`, `""`)
-			rowBuf.Truncate(start)
+			rowBuf.WriteString(strings.ReplaceAll(str, `"`, `""`))
 			rowBuf.WriteByte('"')
-			rowBuf.WriteString(valStr)
-			rowBuf.WriteByte('"')
-		} else if w.quoteEmptyFields && rowBuf.Len() == start {
+		case w.quoteEmptyFields && str == "":
 			rowBuf.WriteString(`""`)
+		default:
+			rowBuf.WriteString(strings.ReplaceAll(str, `"`, `""`))
 		}
 	}
 	rowBuf.WriteString(w.newLine)
