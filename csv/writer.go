@@ -13,7 +13,7 @@ import (
 )
 
 type Writer struct {
-	formatter        retable.TypeFormatter
+	formatter        retable.TypeFormatters
 	writeHeaderRow   bool
 	quoteAllFields   bool
 	quoteEmptyFields bool
@@ -27,6 +27,80 @@ func NewWriter() *Writer {
 		delimiter: ';',
 		newLine:   "\r\n",
 	}
+}
+
+func (w *Writer) WithTypeFormatters(formatter retable.TypeFormatters) *Writer {
+	w.formatter = formatter
+	return w
+}
+
+func (w *Writer) SetTypeFormatter(typ reflect.Type, fmt retable.ValueFormatter) *Writer {
+	w.formatter.SetTypeFormatter(typ, fmt)
+	return w
+}
+
+func (w *Writer) SetInterfaceTypeFormatter(typ reflect.Type, fmt retable.ValueFormatter) *Writer {
+	w.formatter.SetInterfaceTypeFormatter(typ, fmt)
+	return w
+}
+
+func (w *Writer) SetKindFormatter(kind reflect.Kind, fmt retable.ValueFormatter) *Writer {
+	w.formatter.SetKindFormatter(kind, fmt)
+	return w
+}
+
+func (w *Writer) WithWriteHeaderRow(writeHeaderRow bool) *Writer {
+	w.writeHeaderRow = writeHeaderRow
+	return w
+}
+
+func (w *Writer) WithQuoteAllFields(quoteAllFields bool) *Writer {
+	w.quoteAllFields = quoteAllFields
+	return w
+}
+
+func (w *Writer) WithQuoteEmptyFields(quoteEmptyFields bool) *Writer {
+	w.quoteEmptyFields = quoteEmptyFields
+	return w
+}
+
+func (w *Writer) WithDelimiter(delimiter rune) *Writer {
+	w.delimiter = delimiter
+	return w
+}
+
+func (w *Writer) WithNewLine(newLine string) *Writer {
+	w.newLine = newLine
+	return w
+}
+
+func (w *Writer) WithCharset(charset retable.Charset) *Writer {
+	w.charset = charset
+	return w
+}
+
+func (w *Writer) WriteHeaderRow() bool {
+	return w.writeHeaderRow
+}
+
+func (w *Writer) QuoteAllFields() bool {
+	return w.quoteAllFields
+}
+
+func (w *Writer) QuoteEmptyFields() bool {
+	return w.quoteEmptyFields
+}
+
+func (w *Writer) Delimiter() rune {
+	return w.delimiter
+}
+
+func (w *Writer) NewLine() string {
+	return w.newLine
+}
+
+func (w *Writer) Charset() retable.Charset {
+	return w.charset
 }
 
 func (w *Writer) Write(ctx context.Context, dest io.Writer, view retable.View) error {
@@ -59,6 +133,9 @@ func (w *Writer) Write(ctx context.Context, dest io.Writer, view retable.View) e
 }
 
 func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View, mustQuoteChars string) (err error) {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	for col, val := range rowVals {
 		if col > 0 {
 			rowBuf.WriteRune(w.delimiter)
