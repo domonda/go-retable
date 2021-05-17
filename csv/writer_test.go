@@ -16,14 +16,15 @@ func TestWriter_Write(t *testing.T) {
 		quoteEmptyFields bool
 		delimiter        rune
 		newLine          string
-		charset          retable.Charset
+		encoder          TextTransformer
 	}
 	tests := []struct {
-		name     string
-		fields   fields
-		view     retable.View
-		wantDest string
-		wantErr  bool
+		name           string
+		fields         fields
+		view           retable.View
+		writeHeaderRow bool
+		wantDest       string
+		wantErr        bool
 	}{
 		// TODO: Add test cases.
 	}
@@ -31,15 +32,14 @@ func TestWriter_Write(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := &Writer{
 				formatter:        tt.fields.formatter,
-				writeHeaderRow:   tt.fields.writeHeaderRow,
 				quoteAllFields:   tt.fields.quoteAllFields,
 				quoteEmptyFields: tt.fields.quoteEmptyFields,
 				delimiter:        tt.fields.delimiter,
 				newLine:          tt.fields.newLine,
-				charset:          tt.fields.charset,
+				encoder:          tt.fields.encoder,
 			}
 			dest := &bytes.Buffer{}
-			if err := w.Write(context.Background(), dest, tt.view); (err != nil) != tt.wantErr {
+			if err := w.Write(context.Background(), dest, tt.view, tt.writeHeaderRow); (err != nil) != tt.wantErr {
 				t.Errorf("Writer.Write() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}

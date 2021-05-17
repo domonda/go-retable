@@ -13,6 +13,10 @@ type View interface {
 	ReflectRow(index int) ([]reflect.Value, error)
 }
 
+func NewView(rows interface{}, caption ...string) (View, error) {
+	return NewViewFromColumnMapper(rows, DefaultReflectColumnTitles, caption...)
+}
+
 func NewViewFromColumnMapper(rows interface{}, columnMapper ColumnMapper, caption ...string) (View, error) {
 	v := reflect.ValueOf(rows)
 	for v.Kind() == reflect.Ptr && !v.IsNil() {
