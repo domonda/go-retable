@@ -12,10 +12,6 @@ import (
 	"github.com/domonda/go-retable"
 )
 
-type TextTransformer interface {
-	Bytes([]byte) ([]byte, error)
-}
-
 type Writer struct {
 	formatter        retable.TypeFormatters
 	quoteAllFields   bool
@@ -157,7 +153,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 			return err
 		}
 	}
-	for row := 0; row < view.Rows(); row++ {
+	for row := 0; row < view.NumRows(); row++ {
 		rowVals, err := view.ReflectRow(row)
 		if err != nil {
 			return err
@@ -174,18 +170,23 @@ func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buf
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	cell := retable.ViewCell{
+		View: view,
+		Row:  row,
+	}
 	for col, val := range rowVals {
+		cell.Col = col
 		if col > 0 {
 			rowBuf.WriteRune(w.delimiter)
 		}
-		var str string
-		if formatter, ok := val.Interface().(Formatter); ok {
-			str, err = formatter.FormatCSV(ctx, row, col, view)
+		if formatter, ok := val.Interface().(RawFormatter); ok {
+			raw, err := formatter.RawCSV(ctx, &cell)
 			if err != nil {
 				return err
 			}
+			rowBuf.WriteString(raw)
 		} else {
-			str, err = w.formatter.FormatValue(ctx, val, row, col, view)
+			str, err := w.formatter.FormatValue(ctx, val, &cell)
 			if err != nil {
 				if !errors.Is(err, retable.ErrNotSupported) {
 					return err
@@ -199,19 +200,19 @@ func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buf
 					str = fmt.Sprint(val.Interface())
 				}
 			}
-		}
-		// Just in case remove all \r,
-		// \n alone is valid within quotes
-		str = strings.ReplaceAll(str, "\r", "")
-		switch {
-		case w.quoteAllFields || strings.ContainsAny(str, mustQuoteChars):
-			rowBuf.WriteByte('"')
-			rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
-			rowBuf.WriteByte('"')
-		case w.quoteEmptyFields && str == "":
-			rowBuf.WriteString(`""`)
-		default:
-			rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
+			// Just in case remove all \r,
+			// \n alone is valid within quotes
+			str = strings.ReplaceAll(str, "\r", "")
+			switch {
+			case w.quoteAllFields || strings.ContainsAny(str, mustQuoteChars):
+				rowBuf.WriteByte('"')
+				rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
+				rowBuf.WriteByte('"')
+			case w.quoteEmptyFields && str == "":
+				rowBuf.WriteString(`""`)
+			default:
+				rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
+			}
 		}
 	}
 	rowBuf.WriteString(w.newLine)

@@ -9,7 +9,7 @@ import (
 type View interface {
 	Caption() string
 	Columns() []string
-	Rows() int
+	NumRows() int
 	ReflectRow(index int) ([]reflect.Value, error)
 }
 
@@ -43,11 +43,17 @@ type rowReflectorView struct {
 
 func (v *rowReflectorView) Caption() string   { return v.caption }
 func (v *rowReflectorView) Columns() []string { return v.columns }
-func (v *rowReflectorView) Rows() int         { return v.rows.Len() }
+func (v *rowReflectorView) NumRows() int      { return v.rows.Len() }
 
 func (v *rowReflectorView) ReflectRow(index int) ([]reflect.Value, error) {
 	if index < 0 || index >= v.rows.Len() {
 		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, v.rows.Len())
 	}
 	return v.rowReflector.ReflectRow(v.rows.Index(index)), nil
+}
+
+type ViewCell struct {
+	View
+	Row int
+	Col int
 }
