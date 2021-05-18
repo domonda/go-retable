@@ -170,6 +170,8 @@ func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buf
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
+	rowBuf.Reset()
 	cell := retable.ViewCell{
 		View: view,
 		Row:  row,
@@ -179,45 +181,56 @@ func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buf
 		if col > 0 {
 			rowBuf.WriteRune(w.delimiter)
 		}
-		if formatter, ok := val.Interface().(RawFormatter); ok {
-			raw, err := formatter.RawCSV(ctx, &cell)
+
+		// Use RawFormatter if implemented by val
+		rawFormatter, _ := val.Interface().(RawFormatter)
+		if rawFormatter == nil && val.CanAddr() {
+			rawFormatter, _ = val.Addr().Interface().(RawFormatter)
+		}
+		if rawFormatter != nil {
+			raw, err := rawFormatter.RawCSV(ctx, &cell)
 			if err != nil {
 				return err
 			}
 			rowBuf.WriteString(raw)
-		} else {
-			str, err := w.formatter.FormatValue(ctx, val, &cell)
-			if err != nil {
-				if !errors.Is(err, retable.ErrNotSupported) {
-					return err
-				}
-				switch {
-				case isNil(val):
-					str = w.nilValue
-				case val.Kind() == reflect.Ptr:
-					str = fmt.Sprint(val.Elem().Interface())
-				default:
-					str = fmt.Sprint(val.Interface())
-				}
+			continue
+		}
+
+		// No RawFormatter, try retable.TypeFormatters
+		str, err := w.formatter.FormatValue(ctx, val, &cell)
+		if err != nil {
+			if !errors.Is(err, retable.ErrNotSupported) {
+				return err
 			}
-			// Just in case remove all \r,
-			// \n alone is valid within quotes
-			str = strings.ReplaceAll(str, "\r", "")
+			// val type not supported by retable.TypeFormatters
+			// fall back on fmt.Sprint
 			switch {
-			case w.quoteAllFields || strings.ContainsAny(str, mustQuoteChars):
-				rowBuf.WriteByte('"')
-				rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
-				rowBuf.WriteByte('"')
-			case w.quoteEmptyFields && str == "":
-				rowBuf.WriteString(`""`)
+			case isNil(val):
+				str = w.nilValue
+			case val.Kind() == reflect.Ptr:
+				str = fmt.Sprint(val.Elem().Interface())
 			default:
-				rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
+				str = fmt.Sprint(val.Interface())
 			}
+		}
+		// Just in case remove all \r,
+		// \n alone is valid within quotes
+		str = strings.ReplaceAll(str, "\r", "")
+		switch {
+		case w.quoteAllFields || strings.ContainsAny(str, mustQuoteChars):
+			rowBuf.WriteByte('"')
+			rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
+			rowBuf.WriteByte('"')
+		case w.quoteEmptyFields && str == "":
+			rowBuf.WriteString(`""`)
+		default:
+			rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
 		}
 	}
 	rowBuf.WriteString(w.newLine)
+
+	// Write buffered row with optional encoding
 	rowBytes := rowBuf.Bytes()
-	rowBuf.Reset()
 	if w.encoder != nil {
 		rowBytes, err = w.encoder.Bytes(rowBytes)
 		if err != nil {
