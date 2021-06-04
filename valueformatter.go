@@ -3,23 +3,35 @@ package retable
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 )
 
+// ValueFormatter is an interface for formatting reflected values.
 type ValueFormatter interface {
 	FormatValue(ctx context.Context, val reflect.Value, cell *ViewCell) (string, error)
 }
 
+// ValueFormatterFunc implements ValueFormatter for a function.
 type ValueFormatterFunc func(ctx context.Context, val reflect.Value, cell *ViewCell) (string, error)
 
 func (f ValueFormatterFunc) FormatValue(ctx context.Context, val reflect.Value, cell *ViewCell) (string, error) {
 	return f(ctx, val, cell)
 }
 
+// PrintfValueFormatter implements ValueFormatter by calling
+// fmt.Sprintf with this type's string value as format.
+type PrintfValueFormatter string
+
+func (f PrintfValueFormatter) FormatValue(ctx context.Context, val reflect.Value, cell *ViewCell) (string, error) {
+	return fmt.Sprintf(string(f), val.Interface()), nil
+}
+
 type TypeFormatters struct {
 	Types          map[reflect.Type]ValueFormatter
 	InterfaceTypes map[reflect.Type]ValueFormatter
 	Kinds          map[reflect.Kind]ValueFormatter
+	Other          ValueFormatter
 }
 
 func (f *TypeFormatters) FormatValue(ctx context.Context, val reflect.Value, cell *ViewCell) (string, error) {
@@ -39,6 +51,9 @@ func (f *TypeFormatters) FormatValue(ctx context.Context, val reflect.Value, cel
 	}
 	if kw, ok := f.Kinds[val.Kind()]; ok {
 		return kw.FormatValue(ctx, val, cell)
+	}
+	if f.Other != nil {
+		return f.Other.FormatValue(ctx, val, cell)
 	}
 	return "", ErrNotSupported
 }
