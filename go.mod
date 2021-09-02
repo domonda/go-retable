@@ -1,3 +1,3 @@
 module github.com/domonda/go-retable
 
-go 1.16
+go 1.17

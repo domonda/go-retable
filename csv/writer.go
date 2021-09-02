@@ -129,8 +129,9 @@ func (w *Writer) Encoder() TextTransformer {
 	return w.encoder
 }
 
-func (w *Writer) Write(ctx context.Context, dest io.Writer, rows interface{}, writeHeaderRow bool) error {
-	view, err := retable.NewView(rows)
+// Write calls WriteView with the result of retable.DefaultViewer.NewView(table)
+func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool) error {
+	view, err := retable.DefaultViewer.NewView(table)
 	if err != nil {
 		return err
 	}
