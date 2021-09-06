@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"html/template"
 	"io"
 	"reflect"
@@ -14,22 +13,24 @@ import (
 )
 
 type Writer struct {
-	tableClass     string
-	formatter      *retable.TypeFormatters
-	nilValue       string
-	headerTemplate *template.Template
-	rowTemplate    *template.Template
-	footerTemplate *template.Template
+	tableClass       string
+	columnFormatters map[int]retable.CellFormatter
+	typeFormatters   *retable.TypeFormatters
+	nilValue         template.HTML
+	headerTemplate   *template.Template
+	rowTemplate      *template.Template
+	footerTemplate   *template.Template
 }
 
 func NewWriter() *Writer {
 	return &Writer{
-		tableClass:     "",
-		formatter:      nil, // OK to use nil retable.TypeFormatters
-		nilValue:       "",
-		headerTemplate: HeaderTemplate,
-		rowTemplate:    RowTemplate,
-		footerTemplate: FooterTemplate,
+		tableClass:       "",
+		columnFormatters: make(map[int]retable.CellFormatter),
+		typeFormatters:   nil, // OK to use nil retable.TypeFormatters
+		nilValue:         "",
+		headerTemplate:   HeaderTemplate,
+		rowTemplate:      RowTemplate,
+		footerTemplate:   FooterTemplate,
 	}
 }
 
@@ -45,49 +46,59 @@ func (w *Writer) WithTableClass(tableClass string) *Writer {
 	return mod
 }
 
+func (w *Writer) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer {
+	mod := w.clone()
+	mod.columnFormatters = make(map[int]retable.CellFormatter)
+	for key, val := range w.columnFormatters {
+		mod.columnFormatters[key] = val
+	}
+	mod.columnFormatters[columnIndex] = formatter
+	return mod
+}
+
 func (w *Writer) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer {
 	mod := w.clone()
-	mod.formatter = formatter
+	mod.typeFormatters = formatter
 	return mod
 }
 
-func (w *Writer) WithTypeFormatter(typ reflect.Type, fmt retable.ValueFormatter) *Writer {
+func (w *Writer) WithTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithTypeFormatter(typ, fmt)
+	mod.typeFormatters = w.typeFormatters.WithTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithTypeFormatterFunc(typ reflect.Type, fmt retable.ValueFormatterFunc) *Writer {
+func (w *Writer) WithTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithTypeFormatter(typ, fmt)
+	mod.typeFormatters = w.typeFormatters.WithTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.ValueFormatter) *Writer {
+func (w *Writer) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithInterfaceTypeFormatter(typ, fmt)
+	mod.typeFormatters = w.typeFormatters.WithInterfaceTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable.ValueFormatterFunc) *Writer {
+func (w *Writer) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithInterfaceTypeFormatter(typ, fmt)
+	mod.typeFormatters = w.typeFormatters.WithInterfaceTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithKindFormatter(kind reflect.Kind, fmt retable.ValueFormatter) *Writer {
+func (w *Writer) WithKindFormatter(kind reflect.Kind, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithKindFormatter(kind, fmt)
+	mod.typeFormatters = w.typeFormatters.WithKindFormatter(kind, fmt)
 	return mod
 }
 
-func (w *Writer) WithKindFormatterFunc(kind reflect.Kind, fmt retable.ValueFormatterFunc) *Writer {
+func (w *Writer) WithKindFormatterFunc(kind reflect.Kind, fmt retable.CellFormatterFunc) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithKindFormatter(kind, fmt)
+	mod.typeFormatters = w.typeFormatters.WithKindFormatter(kind, fmt)
 	return mod
 }
 
-func (w *Writer) WithNilValue(nilValue string) *Writer {
+func (w *Writer) WithNilValue(nilValue template.HTML) *Writer {
 	mod := w.clone()
 	mod.nilValue = nilValue
 	return mod
@@ -105,7 +116,7 @@ func (w *Writer) TableClass() string {
 	return w.tableClass
 }
 
-func (w *Writer) NilValue() string {
+func (w *Writer) NilValue() template.HTML {
 	return w.nilValue
 }
 
@@ -123,38 +134,37 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 		return ctx.Err()
 	}
 
-	// Write table header
-	captionStr := strings.Join(caption, " ")
-	err := w.headerTemplate.Execute(dest, HeaderTemplateContext{TableClass: w.tableClass, Caption: captionStr})
+	var (
+		columns   = view.Columns()
+		templData = &RowTemplateContext{
+			TemplateContext: TemplateContext{
+				TableClass: w.tableClass,
+				Caption:    strings.Join(caption, " "),
+			},
+			RawCells: make([]template.HTML, len(columns)), // will be reused with updated elements
+		}
+	)
+
+	err := w.headerTemplate.Execute(dest, templData.TemplateContext)
 	if err != nil {
 		return err
 	}
 
-	columns := view.Columns()
-
-	// Write rows
-
-	// rowData will be reused per row with updated data
-	rowData := &RowTemplateContext{
-		TableClass: w.tableClass,
-		RawCells:   make([]template.HTML, len(columns)), // will be reused with updated elements
-	}
-
 	if writeHeaderRow {
-		rowData.IsHeaderRow = true
+		templData.IsHeaderRow = true
 		for i := range columns {
-			rowData.RawCells[i] = template.HTML(html.EscapeString(columns[i]))
+			templData.RawCells[i] = template.HTML(template.HTMLEscapeString(columns[i]))
 		}
-		err = w.rowTemplate.Execute(dest, rowData)
+		err = w.rowTemplate.Execute(dest, templData)
 		if err != nil {
 			return err
 		}
-		rowData.IsHeaderRow = false
-		rowData.RowIndex++
+		templData.IsHeaderRow = false
+		templData.RowIndex++
 	}
 
 	// cell will be reused with updated Row and Col fields
-	cell := retable.ViewCell{View: view}
+	cell := retable.Cell{View: view}
 
 	for row, numRows := 0, view.NumRows(); row < numRows; row++ {
 		rowVals, err := view.ReflectRow(row)
@@ -165,57 +175,64 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 		cell.Row = row
 		for col, val := range rowVals {
 			cell.Col = col
+			cell.Value = val
 
-			rawFormatter, _ := val.Interface().(RawFormatter)
-			if rawFormatter == nil && val.CanAddr() {
-				rawFormatter, _ = val.Addr().Interface().(RawFormatter)
-			}
-			if rawFormatter != nil {
-				raw, err := rawFormatter.RawHTML(ctx, &cell)
-				if err != nil {
+			if colFormatter, ok := w.columnFormatters[col]; ok {
+				str, isRaw, err := colFormatter.FormatCell(ctx, &cell)
+				if err != nil && !errors.Is(err, retable.ErrNotSupported) {
 					return err
 				}
-				rowData.RawCells[col] = raw
-				continue
+				if err == nil {
+					if !isRaw {
+						str = template.HTMLEscapeString(str)
+					}
+					templData.RawCells[col] = template.HTML(str)
+					continue
+				}
 			}
 
-			// No RawFormatter, try retable.TypeFormatters
-			str, err := w.formatter.FormatValue(ctx, val, &cell)
+			str, isRaw, err := w.typeFormatters.FormatCell(ctx, &cell)
 			if err != nil {
 				if !errors.Is(err, retable.ErrNotSupported) {
 					return err
 				}
 				// In case of retable.ErrNotSupported
-				// fall back on nilValue or fmt.Sprint
-				switch {
-				case isNil(val):
-					str = w.nilValue
-				case val.Kind() == reflect.Ptr:
-					str = fmt.Sprint(val.Elem().Interface())
-				default:
-					str = fmt.Sprint(val.Interface())
+				// use fallback method of formatting
+				if isNil(val) {
+					templData.RawCells[col] = w.nilValue
+					continue
 				}
+				if val.Kind() == reflect.Ptr {
+					val = val.Elem()
+				}
+				str, isRaw = fmt.Sprint(val.Interface()), false
 			}
-			rowData.RawCells[col] = template.HTML(html.EscapeString(str))
+
+			if !isRaw {
+				str = template.HTMLEscapeString(str)
+			}
+			templData.RawCells[col] = template.HTML(str)
 		}
 
-		err = w.rowTemplate.Execute(dest, rowData)
+		err = w.rowTemplate.Execute(dest, templData)
 		if err != nil {
 			return err
 		}
 
-		rowData.RowIndex++
+		templData.RowIndex++
 	}
 
-	// Write table footer
-	return w.footerTemplate.Execute(dest, FooterTemplateContext{TableClass: w.tableClass, Caption: captionStr})
+	return w.footerTemplate.Execute(dest, templData.TemplateContext)
 }
 
 func isNil(val reflect.Value) bool {
-	switch val.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.UnsafePointer, reflect.Interface, reflect.Slice:
-		return val.IsNil()
-	default:
-		return false
+	if !val.IsValid() {
+		return true
 	}
+	switch val.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
+		reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return val.IsNil()
+	}
+	return false
 }

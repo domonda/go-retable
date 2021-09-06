@@ -3,6 +3,7 @@ package csv
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type Format struct {
@@ -66,4 +67,8 @@ func NewFormatDetectionConfig() *FormatDetectionConfig {
 			// "cc§google.com",
 		},
 	}
+}
+
+func EscapeQuotes(val string) string {
+	return strings.ReplaceAll(val, `"`, `""`)
 }

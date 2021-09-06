@@ -21,12 +21,6 @@ type View interface {
 	ReflectRow(index int) ([]reflect.Value, error)
 }
 
-type ViewCell struct {
-	View
-	Row int
-	Col int
-}
-
 type CachedView struct {
 	Cols []string
 	Rows [][]reflect.Value
@@ -55,4 +49,23 @@ func (view *CachedView) ReflectRow(index int) ([]reflect.Value, error) {
 		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, len(view.Rows))
 	}
 	return view.Rows[index], nil
+}
+
+type MockView struct {
+	Cols []string
+	Rows [][]interface{}
+}
+
+func (view *MockView) Columns() []string { return view.Cols }
+func (view *MockView) NumRows() int      { return len(view.Rows) }
+
+func (view *MockView) ReflectRow(index int) ([]reflect.Value, error) {
+	if index < 0 || index >= len(view.Rows) {
+		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, len(view.Rows))
+	}
+	rowValues := make([]reflect.Value, len(view.Cols))
+	for col := range rowValues {
+		rowValues[col] = reflect.ValueOf(view.Rows[index][col])
+	}
+	return rowValues, nil
 }

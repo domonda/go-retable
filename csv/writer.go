@@ -12,20 +12,28 @@ import (
 	"github.com/domonda/go-retable"
 )
 
+type Encoder interface {
+	Bytes([]byte) ([]byte, error)
+}
+
 type Writer struct {
-	formatter        *retable.TypeFormatters
+	columnFormatters map[int]retable.CellFormatter
+	formatters       *retable.TypeFormatters
+	fieldPadding     bool
 	quoteAllFields   bool
 	quoteEmptyFields bool
 	escapeQuotes     string
 	nilValue         string
 	delimiter        rune
 	newLine          string
-	encoder          TextTransformer
+	encoder          Encoder
 }
 
 func NewWriter() *Writer {
 	return &Writer{
-		formatter:        nil, // OK to use nil retable.TypeFormatters
+		columnFormatters: make(map[int]retable.CellFormatter),
+		formatters:       nil, // OK to use nil retable.TypeFormatters
+		fieldPadding:     false,
 		quoteAllFields:   false,
 		quoteEmptyFields: false,
 		escapeQuotes:     `""`,
@@ -42,45 +50,61 @@ func (w *Writer) clone() *Writer {
 	return c
 }
 
+func (w *Writer) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer {
+	mod := w.clone()
+	mod.columnFormatters = make(map[int]retable.CellFormatter)
+	for key, val := range w.columnFormatters {
+		mod.columnFormatters[key] = val
+	}
+	mod.columnFormatters[columnIndex] = formatter
+	return mod
+}
+
 func (w *Writer) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer {
 	mod := w.clone()
-	mod.formatter = formatter
+	mod.formatters = formatter
 	return mod
 }
 
-func (w *Writer) WithTypeFormatter(typ reflect.Type, fmt retable.ValueFormatter) *Writer {
+func (w *Writer) WithTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithTypeFormatter(typ, fmt)
+	mod.formatters = w.formatters.WithTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithTypeFormatterFunc(typ reflect.Type, fmt retable.ValueFormatterFunc) *Writer {
+func (w *Writer) WithTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithTypeFormatter(typ, fmt)
+	mod.formatters = w.formatters.WithTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.ValueFormatter) *Writer {
+func (w *Writer) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithInterfaceTypeFormatter(typ, fmt)
+	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable.ValueFormatterFunc) *Writer {
+func (w *Writer) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithInterfaceTypeFormatter(typ, fmt)
+	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (w *Writer) WithKindFormatter(kind reflect.Kind, fmt retable.ValueFormatter) *Writer {
+func (w *Writer) WithKindFormatter(kind reflect.Kind, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithKindFormatter(kind, fmt)
+	mod.formatters = w.formatters.WithKindFormatter(kind, fmt)
 	return mod
 }
 
-func (w *Writer) WithKindFormatterFunc(kind reflect.Kind, fmt retable.ValueFormatterFunc) *Writer {
+func (w *Writer) WithKindFormatterFunc(kind reflect.Kind, fmt retable.CellFormatterFunc) *Writer {
 	mod := w.clone()
-	mod.formatter = w.formatter.WithKindFormatter(kind, fmt)
+	mod.formatters = w.formatters.WithKindFormatter(kind, fmt)
+	return mod
+}
+
+func (w *Writer) WithFieldPadding(fieldPadding bool) *Writer {
+	mod := w.clone()
+	mod.fieldPadding = fieldPadding
 	return mod
 }
 
@@ -120,7 +144,7 @@ func (w *Writer) WithNewLine(newLine string) *Writer {
 	return mod
 }
 
-func (w *Writer) WithEncoder(encoder TextTransformer) *Writer {
+func (w *Writer) WithEncoder(encoder Encoder) *Writer {
 	mod := w.clone()
 	mod.encoder = encoder
 	return mod
@@ -150,7 +174,7 @@ func (w *Writer) NewLine() string {
 	return w.newLine
 }
 
-func (w *Writer) Encoder() TextTransformer {
+func (w *Writer) Encoder() Encoder {
 	return w.encoder
 }
 
@@ -164,17 +188,14 @@ func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, w
 }
 
 func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) error {
-	var (
-		rowBuf         = bytes.NewBuffer(make([]byte, 0, 1024))
-		mustQuoteChars = "\n" + string(w.delimiter)
-	)
+	rowBuf := bytes.NewBuffer(make([]byte, 0, 1024))
 	if writeHeaderRow {
 		colTitles := view.Columns()
 		rowVals := make([]reflect.Value, len(colTitles))
 		for col, title := range colTitles {
 			rowVals[col] = reflect.ValueOf(title)
 		}
-		err := w.writeRow(ctx, dest, rowBuf, rowVals, -1, view, mustQuoteChars)
+		err := w.writeRow(ctx, dest, rowBuf, rowVals, -1, view)
 		if err != nil {
 			return err
 		}
@@ -184,7 +205,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 		if err != nil {
 			return err
 		}
-		err = w.writeRow(ctx, dest, rowBuf, rowVals, row, view, mustQuoteChars)
+		err = w.writeRow(ctx, dest, rowBuf, rowVals, row, view)
 		if err != nil {
 			return err
 		}
@@ -192,67 +213,25 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 	return nil
 }
 
-func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View, mustQuoteChars string) (err error) {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	rowBuf.Reset()
+func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View) (err error) {
 	// cell will be reused for every column of the row
-	// with cell.Col set to the column index
-	cell := retable.ViewCell{
+	cell := retable.Cell{
 		View: view,
 		Row:  row,
 	}
 	for col, val := range rowVals {
 		cell.Col = col
+		cell.Value = val
+
+		str, err := w.cellString(ctx, &cell)
+		if err != nil {
+			return err
+		}
+
 		if col > 0 {
 			rowBuf.WriteRune(w.delimiter)
 		}
-
-		// Use RawFormatter if implemented by val
-		rawFormatter, _ := val.Interface().(RawFormatter)
-		if rawFormatter == nil && val.CanAddr() {
-			rawFormatter, _ = val.Addr().Interface().(RawFormatter)
-		}
-		if rawFormatter != nil {
-			raw, err := rawFormatter.RawCSV(ctx, &cell)
-			if err != nil {
-				return err
-			}
-			rowBuf.WriteString(raw)
-			continue
-		}
-
-		// No RawFormatter, try retable.TypeFormatters
-		str, err := w.formatter.FormatValue(ctx, val, &cell)
-		if err != nil {
-			if !errors.Is(err, retable.ErrNotSupported) {
-				return err
-			}
-			// In case of retable.ErrNotSupported
-			// fall back on nilValue or fmt.Sprint
-			switch {
-			case isNil(val):
-				str = w.nilValue
-			case val.Kind() == reflect.Ptr:
-				str = fmt.Sprint(val.Elem().Interface())
-			default:
-				str = fmt.Sprint(val.Interface())
-			}
-		}
-		// Just in case remove all \r,
-		// \n alone is valid within quotes
-		str = strings.ReplaceAll(str, "\r", "")
-		switch {
-		case w.quoteAllFields || strings.ContainsAny(str, mustQuoteChars):
-			rowBuf.WriteByte('"')
-			rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
-			rowBuf.WriteByte('"')
-		case w.quoteEmptyFields && str == "":
-			rowBuf.WriteString(`""`)
-		default:
-			rowBuf.WriteString(strings.ReplaceAll(str, `"`, w.escapeQuotes))
-		}
+		rowBuf.WriteString(str)
 	}
 	rowBuf.WriteString(w.newLine)
 
@@ -265,14 +244,70 @@ func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buf
 		}
 	}
 	_, err = dest.Write(rowBytes)
+	rowBuf.Reset()
 	return err
 }
 
-func isNil(val reflect.Value) bool {
-	switch val.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.UnsafePointer, reflect.Interface, reflect.Slice:
-		return val.IsNil()
-	default:
-		return false
+func (w *Writer) cellString(ctx context.Context, cell *retable.Cell) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
+
+	if colFormatter, ok := w.columnFormatters[cell.Col]; ok {
+		str, isRaw, err := colFormatter.FormatCell(ctx, cell)
+		if err == nil {
+			return w.escapeStr(str, isRaw), nil
+		}
+		if !errors.Is(err, retable.ErrNotSupported) {
+			return "", err
+		}
+		// Continue after retable.ErrNotSupported from colFormatter
+	}
+
+	str, isRaw, err := w.formatters.FormatCell(ctx, cell)
+	if err == nil {
+		return w.escapeStr(str, isRaw), nil
+	}
+	if !errors.Is(err, retable.ErrNotSupported) {
+		return "", err
+	}
+
+	// In case of retable.ErrNotSupported from w.formatters
+	// use fallback methods for formatting
+	if isNil(cell.Value) {
+		return w.escapeStr(w.nilValue, false), nil
+	}
+	v := cell.Value
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return w.escapeStr(fmt.Sprint(v.Interface()), false), nil
+}
+
+func (w *Writer) escapeStr(str string, isRaw bool) string {
+	if isRaw {
+		return str
+	}
+	// Just in case remove all \r,
+	// \n alone is valid within quotes
+	str = strings.ReplaceAll(str, "\r", "")
+	switch {
+	case w.quoteAllFields || strings.ContainsRune(str, w.delimiter) || strings.ContainsRune(str, '\n'):
+		return `"` + strings.ReplaceAll(str, `"`, w.escapeQuotes) + `"`
+	case w.quoteEmptyFields && str == "":
+		return `""`
+	}
+	return strings.ReplaceAll(str, `"`, w.escapeQuotes)
+}
+
+func isNil(val reflect.Value) bool {
+	if !val.IsValid() {
+		return true
+	}
+	switch val.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
+		reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return val.IsNil()
+	}
+	return false
 }

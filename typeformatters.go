@@ -7,40 +7,40 @@ import (
 )
 
 // Ensure that TypeFormatters implements ValueFormatter
-var _ ValueFormatter = new(TypeFormatters)
+var _ CellFormatter = new(TypeFormatters)
 
 type TypeFormatters struct {
-	Types          map[reflect.Type]ValueFormatter
-	InterfaceTypes map[reflect.Type]ValueFormatter
-	Kinds          map[reflect.Kind]ValueFormatter
-	Other          ValueFormatter
+	Types          map[reflect.Type]CellFormatter
+	InterfaceTypes map[reflect.Type]CellFormatter
+	Kinds          map[reflect.Kind]CellFormatter
+	Other          CellFormatter
 }
 
-func (f *TypeFormatters) FormatValue(ctx context.Context, val reflect.Value, cell *ViewCell) (string, error) {
+func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
 	if f == nil {
-		return "", ErrNotSupported
+		return "", false, ErrNotSupported
 	}
-	if tw, ok := f.Types[val.Type()]; ok {
-		str, err := tw.FormatValue(ctx, val, cell)
+	if tw, ok := f.Types[cell.Value.Type()]; ok {
+		str, raw, err := tw.FormatCell(ctx, cell)
 		if !errors.Is(err, ErrNotSupported) {
-			return str, err
+			return str, raw, err
 		}
 	}
 	for it, iw := range f.InterfaceTypes {
-		if val.Type().Implements(it) {
-			str, err := iw.FormatValue(ctx, val, cell)
+		if cell.Value.Type().Implements(it) {
+			str, raw, err := iw.FormatCell(ctx, cell)
 			if !errors.Is(err, ErrNotSupported) {
-				return str, err
+				return str, raw, err
 			}
 		}
 	}
-	if kw, ok := f.Kinds[val.Kind()]; ok {
-		return kw.FormatValue(ctx, val, cell)
+	if kw, ok := f.Kinds[cell.Value.Kind()]; ok {
+		return kw.FormatCell(ctx, cell)
 	}
 	if f.Other != nil {
-		return f.Other.FormatValue(ctx, val, cell)
+		return f.Other.FormatCell(ctx, cell)
 	}
-	return "", ErrNotSupported
+	return "", false, ErrNotSupported
 }
 
 func (f *TypeFormatters) cloneOrNew() *TypeFormatters {
@@ -49,19 +49,19 @@ func (f *TypeFormatters) cloneOrNew() *TypeFormatters {
 	}
 	c := &TypeFormatters{Other: f.Other}
 	if len(f.Types) > 0 {
-		c.Types = make(map[reflect.Type]ValueFormatter, len(f.Types))
+		c.Types = make(map[reflect.Type]CellFormatter, len(f.Types))
 		for key, val := range f.Types {
 			c.Types[key] = val
 		}
 	}
 	if len(f.InterfaceTypes) > 0 {
-		c.InterfaceTypes = make(map[reflect.Type]ValueFormatter, len(f.InterfaceTypes))
+		c.InterfaceTypes = make(map[reflect.Type]CellFormatter, len(f.InterfaceTypes))
 		for key, val := range f.InterfaceTypes {
 			c.InterfaceTypes[key] = val
 		}
 	}
 	if len(f.Kinds) > 0 {
-		c.Kinds = make(map[reflect.Kind]ValueFormatter, len(f.Kinds))
+		c.Kinds = make(map[reflect.Kind]CellFormatter, len(f.Kinds))
 		for key, val := range f.Kinds {
 			c.Kinds[key] = val
 		}
@@ -69,41 +69,41 @@ func (f *TypeFormatters) cloneOrNew() *TypeFormatters {
 	return c
 }
 
-func (f *TypeFormatters) SetTypeFormatter(typ reflect.Type, fmt ValueFormatter) {
+func (f *TypeFormatters) setTypeFormatter(typ reflect.Type, fmt CellFormatter) {
 	if f.Types == nil {
-		f.Types = make(map[reflect.Type]ValueFormatter)
+		f.Types = make(map[reflect.Type]CellFormatter)
 	}
 	f.Types[typ] = fmt
 }
 
-func (f *TypeFormatters) WithTypeFormatter(typ reflect.Type, fmt ValueFormatter) *TypeFormatters {
+func (f *TypeFormatters) WithTypeFormatter(typ reflect.Type, fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.SetTypeFormatter(typ, fmt)
+	mod.setTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (f *TypeFormatters) SetInterfaceTypeFormatter(typ reflect.Type, fmt ValueFormatter) {
+func (f *TypeFormatters) setInterfaceTypeFormatter(typ reflect.Type, fmt CellFormatter) {
 	if f.InterfaceTypes == nil {
-		f.InterfaceTypes = make(map[reflect.Type]ValueFormatter)
+		f.InterfaceTypes = make(map[reflect.Type]CellFormatter)
 	}
 	f.InterfaceTypes[typ] = fmt
 }
 
-func (f *TypeFormatters) WithInterfaceTypeFormatter(typ reflect.Type, fmt ValueFormatter) *TypeFormatters {
+func (f *TypeFormatters) WithInterfaceTypeFormatter(typ reflect.Type, fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.SetInterfaceTypeFormatter(typ, fmt)
+	mod.setInterfaceTypeFormatter(typ, fmt)
 	return mod
 }
 
-func (f *TypeFormatters) SetKindFormatter(kind reflect.Kind, fmt ValueFormatter) {
+func (f *TypeFormatters) setKindFormatter(kind reflect.Kind, fmt CellFormatter) {
 	if f.Kinds == nil {
-		f.Kinds = make(map[reflect.Kind]ValueFormatter)
+		f.Kinds = make(map[reflect.Kind]CellFormatter)
 	}
 	f.Kinds[kind] = fmt
 }
 
-func (f *TypeFormatters) WithKindFormatter(kind reflect.Kind, fmt ValueFormatter) *TypeFormatters {
+func (f *TypeFormatters) WithKindFormatter(kind reflect.Kind, fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.SetKindFormatter(kind, fmt)
+	mod.setKindFormatter(kind, fmt)
 	return mod
 }
