@@ -41,24 +41,60 @@ func TestWriter_WriteView(t *testing.T) {
 				`1;Hello;` + "\r\n" +
 				`2;world!;0` + "\r\n",
 		},
-		// {
-		// 	name: "simple padded",
-		// 	writer: NewWriter().
-		// 		WithDelimiter('|').
-		// 		WithFieldPadding(true),
-		// 	view: &retable.MockView{
-		// 		Cols: []string{"A", "B", "Blah"},
-		// 		Rows: [][]interface{}{
-		// 			{1, "Hello", nil},
-		// 			{123, "world!", new(float64)},
-		// 		},
-		// 	},
-		// 	writeHeaderRow: true,
-		// 	wantDest: "" +
-		// 		`A  |B     |Blah` + "\r\n" +
-		// 		`1  |Hello |    ` + "\r\n" +
-		// 		`123|world!|0   ` + "\r\n",
-		// },
+		{
+			name: "simple padded align left",
+			writer: NewWriter().
+				WithDelimiter('|').
+				WithPadding(AlignLeft),
+			view: &retable.MockView{
+				Cols: []string{"A", "B", "Blah"},
+				Rows: [][]interface{}{
+					{1, "Hello", nil},
+					{123, "world!", new(float64)},
+				},
+			},
+			writeHeaderRow: true,
+			wantDest: "" +
+				`A  |B     |Blah` + "\r\n" +
+				`1  |Hello |    ` + "\r\n" +
+				`123|world!|0   ` + "\r\n",
+		},
+		{
+			name: "simple padded align center",
+			writer: NewWriter().
+				WithDelimiter('|').
+				WithPadding(AlignCenter),
+			view: &retable.MockView{
+				Cols: []string{"A", "B", "Blah"},
+				Rows: [][]interface{}{
+					{1, "Hello", nil},
+					{123, "world!", new(float64)},
+				},
+			},
+			writeHeaderRow: true,
+			wantDest: "" +
+				` A |  B   |Blah` + "\r\n" +
+				` 1 |Hello |    ` + "\r\n" +
+				`123|world!| 0  ` + "\r\n",
+		},
+		{
+			name: "simple padded align right",
+			writer: NewWriter().
+				WithDelimiter('|').
+				WithPadding(AlignRight),
+			view: &retable.MockView{
+				Cols: []string{"A", "B", "Blah"},
+				Rows: [][]interface{}{
+					{1, "Hello", nil},
+					{123, "world!", new(float64)},
+				},
+			},
+			writeHeaderRow: true,
+			wantDest: "" +
+				`  A|     B|Blah` + "\r\n" +
+				`  1| Hello|    ` + "\r\n" +
+				`123|world!|   0` + "\r\n",
+		},
 		{
 			name: "command and quoted fields",
 			writer: NewWriter().

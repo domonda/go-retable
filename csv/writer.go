@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/domonda/go-retable"
 )
@@ -16,10 +17,19 @@ type Encoder interface {
 	Bytes([]byte) ([]byte, error)
 }
 
+type Padding int
+
+const (
+	NoPadding Padding = iota
+	AlignLeft
+	AlignRight
+	AlignCenter
+)
+
 type Writer struct {
 	columnFormatters map[int]retable.CellFormatter
 	formatters       *retable.TypeFormatters
-	fieldPadding     bool
+	padding          Padding
 	quoteAllFields   bool
 	quoteEmptyFields bool
 	escapeQuotes     string
@@ -33,7 +43,7 @@ func NewWriter() *Writer {
 	return &Writer{
 		columnFormatters: make(map[int]retable.CellFormatter),
 		formatters:       nil, // OK to use nil retable.TypeFormatters
-		fieldPadding:     false,
+		padding:          NoPadding,
 		quoteAllFields:   false,
 		quoteEmptyFields: false,
 		escapeQuotes:     `""`,
@@ -102,9 +112,9 @@ func (w *Writer) WithKindFormatterFunc(kind reflect.Kind, fmt retable.CellFormat
 	return mod
 }
 
-func (w *Writer) WithFieldPadding(fieldPadding bool) *Writer {
+func (w *Writer) WithPadding(padding Padding) *Writer {
 	mod := w.clone()
-	mod.fieldPadding = fieldPadding
+	mod.padding = padding
 	return mod
 }
 
@@ -188,6 +198,10 @@ func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, w
 }
 
 func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) error {
+	if w.padding != NoPadding {
+		return w.writeViewPadded(ctx, dest, view, writeHeaderRow)
+	}
+
 	rowBuf := bytes.NewBuffer(make([]byte, 0, 1024))
 	if writeHeaderRow {
 		colTitles := view.Columns()
@@ -195,7 +209,11 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 		for col, title := range colTitles {
 			rowVals[col] = reflect.ValueOf(title)
 		}
-		err := w.writeRow(ctx, dest, rowBuf, rowVals, -1, view)
+		err := w.writeRow(ctx, rowBuf, rowVals, -1, view)
+		if err != nil {
+			return err
+		}
+		err = w.writeAndResetBuffer(dest, rowBuf)
 		if err != nil {
 			return err
 		}
@@ -205,7 +223,11 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 		if err != nil {
 			return err
 		}
-		err = w.writeRow(ctx, dest, rowBuf, rowVals, row, view)
+		err = w.writeRow(ctx, rowBuf, rowVals, row, view)
+		if err != nil {
+			return err
+		}
+		err = w.writeAndResetBuffer(dest, rowBuf)
 		if err != nil {
 			return err
 		}
@@ -213,7 +235,147 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 	return nil
 }
 
-func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View) (err error) {
+// writeAndResetBuffer writes a buffered row with optional encoding
+func (w *Writer) writeAndResetBuffer(dest io.Writer, buf *bytes.Buffer) (err error) {
+	data := buf.Bytes()
+	buf.Reset()
+
+	if w.encoder != nil {
+		data, err = w.encoder.Bytes(data)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = dest.Write(data)
+	return err
+}
+
+func (w *Writer) writeViewPadded(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) (err error) {
+	var rows [][]string
+
+	colTitles := view.Columns()
+
+	if writeHeaderRow {
+		rowVals := make([]reflect.Value, len(colTitles))
+		for col, title := range colTitles {
+			rowVals[col] = reflect.ValueOf(title)
+		}
+		rowStrs, err := w.rowStrings(ctx, rowVals, -1, view)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, rowStrs)
+	}
+	for row := 0; row < view.NumRows(); row++ {
+		rowVals, err := view.ReflectRow(row)
+		if err != nil {
+			return err
+		}
+		rowStrs, err := w.rowStrings(ctx, rowVals, row, view)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, rowStrs)
+	}
+
+	// Collect column widths
+	colRuneCount := make([]int, len(view.Columns()))
+	for row := range rows {
+		for col, str := range rows[row] {
+			count := utf8.RuneCountInString(str)
+			if count > colRuneCount[col] {
+				colRuneCount[col] = count
+			}
+		}
+	}
+
+	rowBuf := bytes.NewBuffer(make([]byte, 0, 1024))
+	for row := range rows {
+		for col, str := range rows[row] {
+			if col > 0 {
+				_, err = rowBuf.WriteRune(w.delimiter)
+				if err != nil {
+					return err
+				}
+			}
+			var (
+				padTotal = colRuneCount[col] - utf8.RuneCountInString(str)
+				padLeft  = 0
+				padRight = 0
+			)
+			switch w.padding {
+			case AlignLeft:
+				padRight = padTotal
+			case AlignRight:
+				padLeft = padTotal
+			case AlignCenter:
+				padLeft = padTotal / 2
+				padRight = (padTotal + 1) / 2
+			}
+			for i := 0; i < padLeft; i++ {
+				err = rowBuf.WriteByte(' ')
+				if err != nil {
+					return err
+				}
+			}
+			_, err = rowBuf.WriteString(str)
+			if err != nil {
+				return err
+			}
+			for i := 0; i < padRight; i++ {
+				err = rowBuf.WriteByte(' ')
+				if err != nil {
+					return err
+				}
+			}
+		}
+		_, err = rowBuf.WriteString(w.newLine)
+		if err != nil {
+			return err
+		}
+
+		err = w.writeAndResetBuffer(dest, rowBuf)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (w *Writer) writeRow(ctx context.Context, dest *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View) (err error) {
+	// cell will be reused for every column of the row
+	cell := retable.Cell{
+		View: view,
+		Row:  row,
+	}
+	for col, val := range rowVals {
+		cell.Col = col
+		cell.Value = val
+
+		if col > 0 {
+			_, err = dest.WriteRune(w.delimiter)
+			if err != nil {
+				return err
+			}
+		}
+		str, err := w.cellString(ctx, &cell)
+		if err != nil {
+			return err
+		}
+		_, err = dest.WriteString(str)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = dest.WriteString(w.newLine)
+	return err
+}
+
+func (w *Writer) rowStrings(ctx context.Context, rowVals []reflect.Value, row int, view retable.View) (rowStrs []string, err error) {
+	rowStrs = make([]string, len(rowVals))
+
 	// cell will be reused for every column of the row
 	cell := retable.Cell{
 		View: view,
@@ -225,27 +387,13 @@ func (w *Writer) writeRow(ctx context.Context, dest io.Writer, rowBuf *bytes.Buf
 
 		str, err := w.cellString(ctx, &cell)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		if col > 0 {
-			rowBuf.WriteRune(w.delimiter)
-		}
-		rowBuf.WriteString(str)
+		rowStrs[col] = str
 	}
-	rowBuf.WriteString(w.newLine)
 
-	// Write buffered row with optional encoding
-	rowBytes := rowBuf.Bytes()
-	if w.encoder != nil {
-		rowBytes, err = w.encoder.Bytes(rowBytes)
-		if err != nil {
-			return err
-		}
-	}
-	_, err = dest.Write(rowBytes)
-	rowBuf.Reset()
-	return err
+	return rowStrs, nil
 }
 
 func (w *Writer) cellString(ctx context.Context, cell *retable.Cell) (string, error) {
