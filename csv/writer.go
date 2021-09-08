@@ -60,14 +60,26 @@ func (w *Writer) clone() *Writer {
 	return c
 }
 
+// WithColumnFormatter returns a new writer with the passed formatter registered for columnIndex.
+// If nil is passed as formatter, then a previous registered column formatter is removed.
 func (w *Writer) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer {
 	mod := w.clone()
 	mod.columnFormatters = make(map[int]retable.CellFormatter)
 	for key, val := range w.columnFormatters {
 		mod.columnFormatters[key] = val
 	}
-	mod.columnFormatters[columnIndex] = formatter
+	if formatter != nil {
+		mod.columnFormatters[columnIndex] = formatter
+	} else {
+		delete(mod.columnFormatters, columnIndex)
+	}
 	return mod
+}
+
+// WithColumnFormatterFunc returns a new writer with the passed formatterFunc registered for columnIndex.
+// If nil is passed as formatterFunc, then a previous registered column formatter is removed.
+func (w *Writer) WithColumnFormatterFunc(columnIndex int, formatterFunc retable.CellFormatterFunc) *Writer {
+	return w.WithColumnFormatter(columnIndex, formatterFunc)
 }
 
 func (w *Writer) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer {
