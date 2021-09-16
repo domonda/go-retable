@@ -96,13 +96,21 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 				t.Errorf("ReflectCellFormatterFunc() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if err == nil {
-				if gotFormatter == nil {
-					t.Error("ReflectCellFormatterFunc() gotFormatter = <nil>")
-				}
-				if gotValType != tt.wantValType {
-					t.Errorf("ReflectCellFormatterFunc() gotValType = %v, want %v", gotValType, tt.wantValType)
-				}
+			if err != nil {
+				return
+			}
+			if gotFormatter == nil {
+				t.Error("ReflectCellFormatterFunc() gotFormatter = <nil>")
+			}
+			_, gotRaw, err := gotFormatter(nil, &Cell{Value: reflect.ValueOf(0)})
+			if gotRaw != tt.args.rawResult {
+				t.Errorf("gotFormatter() raw = %v, want %v", gotRaw, tt.args.rawResult)
+			}
+			if err != nil {
+				t.Errorf("gotFormatter() returned %v", err)
+			}
+			if gotValType != tt.wantValType {
+				t.Errorf("ReflectCellFormatterFunc() gotValType = %v, want %v", gotValType, tt.wantValType)
 			}
 		})
 	}
