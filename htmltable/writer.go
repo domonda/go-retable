@@ -86,6 +86,22 @@ func (w *Writer) WithTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatt
 	return mod
 }
 
+func (w *Writer) WithTypeFormatterReflectFunc(function interface{}) *Writer {
+	fmt, typ, err := retable.ReflectCellFormatterFunc(function, false)
+	if err != nil {
+		panic(err)
+	}
+	return w.WithTypeFormatter(typ, fmt)
+}
+
+func (w *Writer) WithTypeFormatterReflectRawFunc(function interface{}) *Writer {
+	fmt, typ, err := retable.ReflectCellFormatterFunc(function, true)
+	if err != nil {
+		panic(err)
+	}
+	return w.WithTypeFormatter(typ, fmt)
+}
+
 func (w *Writer) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
 	mod := w.clone()
 	mod.typeFormatters = w.typeFormatters.WithInterfaceTypeFormatter(typ, fmt)
