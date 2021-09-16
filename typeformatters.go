@@ -69,41 +69,45 @@ func (f *TypeFormatters) cloneOrNew() *TypeFormatters {
 	return c
 }
 
-func (f *TypeFormatters) setTypeFormatter(typ reflect.Type, fmt CellFormatter) {
-	if f.Types == nil {
-		f.Types = make(map[reflect.Type]CellFormatter)
-	}
-	f.Types[typ] = fmt
-}
-
 func (f *TypeFormatters) WithTypeFormatter(typ reflect.Type, fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.setTypeFormatter(typ, fmt)
+	if mod.Types == nil {
+		mod.Types = make(map[reflect.Type]CellFormatter)
+	}
+	mod.Types[typ] = fmt
 	return mod
 }
 
-func (f *TypeFormatters) setInterfaceTypeFormatter(typ reflect.Type, fmt CellFormatter) {
-	if f.InterfaceTypes == nil {
-		f.InterfaceTypes = make(map[reflect.Type]CellFormatter)
+func (f *TypeFormatters) WithTypeFormatterReflectFunc(function interface{}) *TypeFormatters {
+	fmt, typ, err := ReflectCellFormatterFunc(function, false)
+	if err != nil {
+		panic(err)
 	}
-	f.InterfaceTypes[typ] = fmt
+	return f.WithTypeFormatter(typ, fmt)
+}
+
+func (f *TypeFormatters) WithTypeFormatterReflectRawFunc(function interface{}) *TypeFormatters {
+	fmt, typ, err := ReflectCellFormatterFunc(function, true)
+	if err != nil {
+		panic(err)
+	}
+	return f.WithTypeFormatter(typ, fmt)
 }
 
 func (f *TypeFormatters) WithInterfaceTypeFormatter(typ reflect.Type, fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.setInterfaceTypeFormatter(typ, fmt)
-	return mod
-}
-
-func (f *TypeFormatters) setKindFormatter(kind reflect.Kind, fmt CellFormatter) {
-	if f.Kinds == nil {
-		f.Kinds = make(map[reflect.Kind]CellFormatter)
+	if mod.InterfaceTypes == nil {
+		mod.InterfaceTypes = make(map[reflect.Type]CellFormatter)
 	}
-	f.Kinds[kind] = fmt
+	mod.InterfaceTypes[typ] = fmt
+	return mod
 }
 
 func (f *TypeFormatters) WithKindFormatter(kind reflect.Kind, fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.setKindFormatter(kind, fmt)
+	if mod.Kinds == nil {
+		mod.Kinds = make(map[reflect.Kind]CellFormatter)
+	}
+	mod.Kinds[kind] = fmt
 	return mod
 }
