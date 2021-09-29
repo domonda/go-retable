@@ -68,6 +68,14 @@ func (viewer *StructRowsViewer) WithIgnoreIndex(fieldIndex int) *StructRowsViewe
 	return mod
 }
 
+func (viewer *StructRowsViewer) WithIgnoreIndices(fieldIndices ...int) *StructRowsViewer {
+	mod := viewer.clone()
+	for _, fieldIndex := range fieldIndices {
+		mod.MapIndices[fieldIndex] = -1
+	}
+	return mod
+}
+
 func (viewer *StructRowsViewer) WithMapIndices(mapIndices map[int]int) *StructRowsViewer {
 	mod := viewer.clone()
 	mod.MapIndices = mapIndices
