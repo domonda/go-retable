@@ -14,6 +14,7 @@ import (
 
 type Writer struct {
 	tableClass       string
+	viewer           retable.Viewer
 	columnFormatters map[int]retable.CellFormatter
 	typeFormatters   *retable.TypeFormatters
 	nilValue         template.HTML
@@ -43,6 +44,12 @@ func (w *Writer) clone() *Writer {
 func (w *Writer) WithTableClass(tableClass string) *Writer {
 	mod := w.clone()
 	mod.tableClass = tableClass
+	return mod
+}
+
+func (w *Writer) WithTableViewer(viewer retable.Viewer) *Writer {
+	mod := w.clone()
+	mod.viewer = viewer
 	return mod
 }
 
@@ -148,9 +155,14 @@ func (w *Writer) NilValue() template.HTML {
 	return w.nilValue
 }
 
-// Write calls WriteView with the result of retable.DefaultViewer.NewView(table)
+// Write calls WriteView with the result of Viewer.NewView(table)
+// using the writer's viewer if not nil or else retable.DefaultViewer.
 func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool, caption ...string) error {
-	view, err := retable.DefaultViewer.NewView(table)
+	viewer := w.viewer
+	if viewer == nil {
+		viewer = retable.DefaultViewer
+	}
+	view, err := viewer.NewView(table)
 	if err != nil {
 		return err
 	}

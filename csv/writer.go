@@ -27,6 +27,7 @@ const (
 )
 
 type Writer struct {
+	viewer           retable.Viewer
 	columnFormatters map[int]retable.CellFormatter
 	formatters       *retable.TypeFormatters
 	padding          Padding
@@ -58,6 +59,12 @@ func (w *Writer) clone() *Writer {
 	c := new(Writer)
 	*c = *w
 	return c
+}
+
+func (w *Writer) WithTableViewer(viewer retable.Viewer) *Writer {
+	mod := w.clone()
+	mod.viewer = viewer
+	return mod
 }
 
 // WithColumnFormatter returns a new writer with the passed formatter registered for columnIndex.
@@ -216,9 +223,14 @@ func (w *Writer) Encoder() Encoder {
 	return w.encoder
 }
 
-// Write calls WriteView with the result of retable.DefaultViewer.NewView(table)
+// Write calls WriteView with the result of Viewer.NewView(table)
+// using the writer's viewer if not nil or else retable.DefaultViewer.
 func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool) error {
-	view, err := retable.DefaultViewer.NewView(table)
+	viewer := w.viewer
+	if viewer == nil {
+		viewer = retable.DefaultViewer
+	}
+	view, err := viewer.NewView(table)
 	if err != nil {
 		return err
 	}
