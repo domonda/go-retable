@@ -13,7 +13,7 @@ type TypeFormatters struct {
 	Types          map[reflect.Type]CellFormatter
 	InterfaceTypes map[reflect.Type]CellFormatter
 	Kinds          map[reflect.Kind]CellFormatter
-	Other          CellFormatter
+	Default        CellFormatter
 }
 
 func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
@@ -37,8 +37,8 @@ func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string
 	if kindFmt, ok := f.Kinds[cell.Value.Kind()]; ok {
 		return kindFmt.FormatCell(ctx, cell)
 	}
-	if f.Other != nil {
-		return f.Other.FormatCell(ctx, cell)
+	if f.Default != nil {
+		return f.Default.FormatCell(ctx, cell)
 	}
 	return "", false, ErrNotSupported
 }
@@ -86,9 +86,9 @@ func (f *TypeFormatters) WithKindFormatter(kind reflect.Kind, fmt CellFormatter)
 	return mod
 }
 
-func (f *TypeFormatters) WithOtherFormatter(fmt CellFormatter) *TypeFormatters {
+func (f *TypeFormatters) WithDefaultFormatter(fmt CellFormatter) *TypeFormatters {
 	mod := f.cloneOrNew()
-	mod.Other = fmt
+	mod.Default = fmt
 	return mod
 }
 
@@ -96,7 +96,7 @@ func (f *TypeFormatters) cloneOrNew() *TypeFormatters {
 	if f == nil {
 		return new(TypeFormatters)
 	}
-	c := &TypeFormatters{Other: f.Other}
+	c := &TypeFormatters{Default: f.Default}
 	if len(f.Types) > 0 {
 		c.Types = make(map[reflect.Type]CellFormatter, len(f.Types))
 		for key, val := range f.Types {
