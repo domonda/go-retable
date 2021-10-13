@@ -496,6 +496,11 @@ func isNil(val reflect.Value) bool {
 	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
 		reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		return val.IsNil()
+	case reflect.Struct:
+		if t := val.Type(); t.NumField() == 0 && t.NumMethod() {
+			// Treat a value of type struct{} like nil
+			return true
+		}
 	}
 	return false
 }
