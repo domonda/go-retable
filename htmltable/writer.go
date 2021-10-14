@@ -274,7 +274,7 @@ func isNil(val reflect.Value) bool {
 		reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		return val.IsNil()
 	case reflect.Struct:
-		if t := val.Type(); t.NumField() == 0 && t.NumMethod() {
+		if t := val.Type(); t.NumField() == 0 && t.NumMethod() == 0 {
 			// Treat a value of type struct{} like nil
 			return true
 		}
