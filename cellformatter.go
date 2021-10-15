@@ -71,6 +71,30 @@ func (f LayoutFormatter) FormatCell(ctx context.Context, cell *Cell) (str string
 	return formatter.Format(string(f)), false, nil
 }
 
+// TrueString formats bool cells by
+// returning the underlying string as non-raw value
+// for true and an empty string as non-raw value for false.
+type TrueString string
+
+func (f TrueString) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
+	if cell.Value.Bool() {
+		str = string(f)
+	}
+	return str, false, nil
+}
+
+// TrueRawString formats bool cells by
+// returning the underlying string as raw value
+// for true and an empty string as raw value for false.
+type TrueRawString string
+
+func (f TrueRawString) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
+	if cell.Value.Bool() {
+		str = string(f)
+	}
+	return str, true, nil
+}
+
 func ReflectCellFormatterFunc(function interface{}, rawResult bool) (formatter CellFormatterFunc, valType reflect.Type, err error) {
 	fv := reflect.ValueOf(function)
 	if !fv.IsValid() {
