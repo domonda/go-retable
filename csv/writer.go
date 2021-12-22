@@ -292,13 +292,16 @@ func (w *Writer) writeAndResetBuffer(dest io.Writer, buf *bytes.Buffer) (err err
 }
 
 func (w *Writer) writeViewPadded(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) (err error) {
-	var rows [][]string
-
-	colTitles := view.Columns()
+	var (
+		rows    [][]string
+		numCols = len(view.Columns())
+	)
 
 	if writeHeaderRow {
-		rowVals := make([]reflect.Value, len(colTitles))
-		for col, title := range colTitles {
+		// view.Columns() already returns a string slice,
+		// but use w.rowStrings() for any potential formatting
+		rowVals := make([]reflect.Value, numCols)
+		for col, title := range view.Columns() {
 			rowVals[col] = reflect.ValueOf(title)
 		}
 		rowStrs, err := w.rowStrings(ctx, rowVals, -1, view)
@@ -307,6 +310,7 @@ func (w *Writer) writeViewPadded(ctx context.Context, dest io.Writer, view retab
 		}
 		rows = append(rows, rowStrs)
 	}
+
 	for row := 0; row < view.NumRows(); row++ {
 		rowVals, err := view.ReflectRow(row)
 		if err != nil {
@@ -320,15 +324,7 @@ func (w *Writer) writeViewPadded(ctx context.Context, dest io.Writer, view retab
 	}
 
 	// Collect column widths
-	colRuneCount := make([]int, len(view.Columns()))
-	for row := range rows {
-		for col, str := range rows[row] {
-			count := utf8.RuneCountInString(str)
-			if count > colRuneCount[col] {
-				colRuneCount[col] = count
-			}
-		}
-	}
+	colRuneCount := retable.StringColumnWidths(rows, numCols)
 
 	rowBuf := bytes.NewBuffer(make([]byte, 0, 1024))
 	for row := range rows {
@@ -462,7 +458,7 @@ func (w *Writer) cellString(ctx context.Context, cell *retable.Cell) (string, er
 
 	// In case of retable.ErrNotSupported from w.formatters
 	// use fallback methods for formatting
-	if isNil(cell.Value) {
+	if retable.ValueIsNil(cell.Value) {
 		return w.escapeStr(w.nilValue, false), nil
 	}
 	v := cell.Value
@@ -486,21 +482,4 @@ func (w *Writer) escapeStr(str string, isRaw bool) string {
 		return `""`
 	}
 	return strings.ReplaceAll(str, `"`, w.escapeQuotes)
-}
-
-func isNil(val reflect.Value) bool {
-	if !val.IsValid() {
-		return true
-	}
-	switch val.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
-		reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		return val.IsNil()
-	case reflect.Struct:
-		if t := val.Type(); t.NumField() == 0 && t.NumMethod() == 0 {
-			// Treat a value of type struct{} like nil
-			return true
-		}
-	}
-	return false
 }

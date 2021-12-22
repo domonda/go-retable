@@ -238,7 +238,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 				}
 				// In case of retable.ErrNotSupported
 				// use fallback method of formatting
-				if isNil(val) {
+				if retable.ValueIsNil(val) {
 					templData.RawCells[col] = w.nilValue
 					continue
 				}
@@ -263,21 +263,4 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 	}
 
 	return w.footerTemplate.Execute(dest, templData.TemplateContext)
-}
-
-func isNil(val reflect.Value) bool {
-	if !val.IsValid() {
-		return true
-	}
-	switch val.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
-		reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		return val.IsNil()
-	case reflect.Struct:
-		if t := val.Type(); t.NumField() == 0 && t.NumMethod() == 0 {
-			// Treat a value of type struct{} like nil
-			return true
-		}
-	}
-	return false
 }

@@ -16,6 +16,8 @@ type TypeFormatters struct {
 	Default        CellFormatter
 }
 
+func NewTypeFormatters() *TypeFormatters { return new(TypeFormatters) }
+
 func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
 	if f == nil {
 		return "", false, ErrNotSupported
@@ -90,6 +92,14 @@ func (f *TypeFormatters) WithDefaultFormatter(fmt CellFormatter) *TypeFormatters
 	mod := f.cloneOrNew()
 	mod.Default = fmt
 	return mod
+}
+
+func (f *TypeFormatters) WithDefaultFormatterReflectFunc(function interface{}) *TypeFormatters {
+	fmt, _, err := ReflectCellFormatterFunc(function, false)
+	if err != nil {
+		panic(err)
+	}
+	return f.WithDefaultFormatter(fmt)
 }
 
 func (f *TypeFormatters) cloneOrNew() *TypeFormatters {

@@ -78,3 +78,23 @@ func SpacePascalCase(name string) string {
 func UseTitle(columnTitle string) func(fieldName string) (columnTitle string) {
 	return func(string) string { return columnTitle }
 }
+
+// ValueIsNil return true if passed reflect.Value
+// is not valid, nil (of a type that can be nil),
+// or is of type struct{}
+func ValueIsNil(val reflect.Value) bool {
+	if !val.IsValid() {
+		return true
+	}
+	switch val.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
+		reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return val.IsNil()
+	case reflect.Struct:
+		if t := val.Type(); t.NumField() == 0 && t.NumMethod() == 0 {
+			// Treat a value of type struct{} like nil
+			return true
+		}
+	}
+	return false
+}
