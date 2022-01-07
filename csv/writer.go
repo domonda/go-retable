@@ -228,7 +228,11 @@ func (w *Writer) Encoder() Encoder {
 func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool) error {
 	viewer := w.viewer
 	if viewer == nil {
-		viewer = retable.DefaultViewer
+		var err error
+		viewer, err = retable.SelectViewer(table)
+		if err != nil {
+			return err
+		}
 	}
 	view, err := viewer.NewView(table)
 	if err != nil {

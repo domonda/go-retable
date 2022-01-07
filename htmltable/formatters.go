@@ -39,7 +39,7 @@ func (indent JSONCellFormatter) FormatCell(ctx context.Context, cell *retable.Ce
 	if err != nil {
 		return "", false, err
 	}
-	buf := bytes.NewBuffer([]byte("<pre>"))
+	buf := bytes.NewBufferString("<pre>")
 	err = json.Indent(buf, src.Bytes(), "", string(indent))
 	if err != nil {
 		return "", false, err

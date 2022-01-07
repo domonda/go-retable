@@ -160,7 +160,11 @@ func (w *Writer) NilValue() template.HTML {
 func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool, caption ...string) error {
 	viewer := w.viewer
 	if viewer == nil {
-		viewer = retable.DefaultViewer
+		var err error
+		viewer, err = retable.SelectViewer(table)
+		if err != nil {
+			return err
+		}
 	}
 	view, err := viewer.NewView(table)
 	if err != nil {

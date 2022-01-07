@@ -5,9 +5,10 @@ import (
 	"reflect"
 )
 
-type Viewer interface {
-	NewView(table interface{}) (View, error)
-}
+var (
+	_ View = new(CachedView)
+	_ View = new(MockView)
+)
 
 // View is an interface implemented by
 // types with table like data

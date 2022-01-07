@@ -8,18 +8,22 @@ import (
 	"unicode/utf8"
 )
 
-func Strings(ctx context.Context, table interface{}, headerRow bool, formatters *TypeFormatters) (rows [][]string, err error) {
-	view, err := DefaultViewer.NewView(table)
+func Strings(ctx context.Context, table interface{}, addHeaderRow bool, formatters *TypeFormatters) (rows [][]string, err error) {
+	viewer, err := SelectViewer(table)
 	if err != nil {
 		return nil, err
 	}
-	return ViewStrings(ctx, view, headerRow, formatters)
+	view, err := viewer.NewView(table)
+	if err != nil {
+		return nil, err
+	}
+	return ViewStrings(ctx, view, addHeaderRow, formatters)
 }
 
-func ViewStrings(ctx context.Context, view View, headerRow bool, formatters *TypeFormatters) (rows [][]string, err error) {
+func ViewStrings(ctx context.Context, view View, addHeaderRow bool, formatters *TypeFormatters) (rows [][]string, err error) {
 	numCols := len(view.Columns())
 
-	if headerRow {
+	if addHeaderRow {
 		// view.Columns() already returns a string slice,
 		// but use rowStrings() for any potential formatting
 		rowVals := make([]reflect.Value, numCols)

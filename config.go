@@ -21,9 +21,16 @@ var (
 		UntaggedTitleFunc: UseTitle("-"),
 	}
 
-	// DefaultViewer references DefaultStructRowsViewer by default
-	// but can be changed to another Viewer implementation.
-	DefaultViewer Viewer = DefaultStructRowsViewer
+	// SelectViewer selects the best matching Viewer implementation
+	// for the passed table.
+	// By default it returns a StringsViewer for a [][]string table
+	// and the DefaultStructRowsViewer for all other cases.
+	SelectViewer = func(table interface{}) (Viewer, error) {
+		if _, ok := table.([][]string); ok {
+			return new(StringsViewer), nil
+		}
+		return DefaultStructRowsViewer, nil
+	}
 )
 
 var (

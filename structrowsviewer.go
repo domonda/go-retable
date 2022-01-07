@@ -90,15 +90,15 @@ func (viewer *StructRowsViewer) NewView(table interface{}) (View, error) {
 	if rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array {
 		return nil, fmt.Errorf("table must be slice or array kind but is %T", table)
 	}
-	structType := rows.Type().Elem()
-	if structType.Kind() == reflect.Ptr {
-		structType = structType.Elem()
+	rowType := rows.Type().Elem()
+	if rowType.Kind() == reflect.Ptr {
+		rowType = rowType.Elem()
 	}
-	if structType.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("row type must be a struct but is %s", structType)
+	if rowType.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("row type must be a struct but is %s", rowType)
 	}
 
-	structFields := StructFieldTypes(structType)
+	structFields := StructFieldTypes(rowType)
 	indices := make([]int, len(structFields))
 	titles := make([]string, 0, len(structFields))
 
