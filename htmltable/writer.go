@@ -197,7 +197,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 	if writeHeaderRow {
 		templData.IsHeaderRow = true
 		for i := range columns {
-			templData.RawCells[i] = template.HTML(template.HTMLEscapeString(columns[i]))
+			templData.RawCells[i] = template.HTML(template.HTMLEscapeString(columns[i])) //#nosec G203
 		}
 		err = w.rowTemplate.Execute(dest, templData)
 		if err != nil {
@@ -230,7 +230,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 					if !isRaw {
 						str = template.HTMLEscapeString(str)
 					}
-					templData.RawCells[col] = template.HTML(str)
+					templData.RawCells[col] = template.HTML(str) //#nosec G203
 					continue
 				}
 			}
@@ -255,7 +255,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 			if !isRaw {
 				str = template.HTMLEscapeString(str)
 			}
-			templData.RawCells[col] = template.HTML(str)
+			templData.RawCells[col] = template.HTML(str) //#nosec G203
 		}
 
 		err = w.rowTemplate.Execute(dest, templData)
