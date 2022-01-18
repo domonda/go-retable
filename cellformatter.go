@@ -14,6 +14,26 @@ type Cell struct {
 	Value reflect.Value
 }
 
+// func (c *Cell) WithValue(v reflect.Value) *Cell {
+// 	return &Cell{
+// 		View:  c.View,
+// 		Row:   c.Row,
+// 		Col:   c.Col,
+// 		Value: v,
+// 	}
+// }
+
+// DerefValue returns a clone of the Cell
+// with the Value field dereferenced via Value.Elem().
+func (c *Cell) DerefValue() *Cell {
+	return &Cell{
+		View:  c.View,
+		Row:   c.Row,
+		Col:   c.Col,
+		Value: c.Value.Elem(),
+	}
+}
+
 // CellFormatter is an interface for formatting reflected values as strings.
 type CellFormatter interface {
 	// FormatCell formats a cell as string

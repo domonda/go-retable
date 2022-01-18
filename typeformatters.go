@@ -22,22 +22,45 @@ func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string
 	if f == nil {
 		return "", false, ErrNotSupported
 	}
-	if typeFmt, ok := f.Types[cell.Value.Type()]; ok {
+	cellType := cell.Value.Type()
+	if typeFmt, ok := f.Types[cellType]; ok {
 		str, raw, err := typeFmt.FormatCell(ctx, cell)
 		if !errors.Is(err, ErrNotSupported) {
 			return str, raw, err
 		}
 	}
 	for interfaceType, interfaceFmt := range f.InterfaceTypes {
-		if cell.Value.Type().Implements(interfaceType) {
+		if cellType.Implements(interfaceType) {
 			str, raw, err := interfaceFmt.FormatCell(ctx, cell)
 			if !errors.Is(err, ErrNotSupported) {
 				return str, raw, err
 			}
 		}
 	}
-	if kindFmt, ok := f.Kinds[cell.Value.Kind()]; ok {
+	if kindFmt, ok := f.Kinds[cellType.Kind()]; ok {
 		return kindFmt.FormatCell(ctx, cell)
+	}
+	// If pointer type had no direct formatter
+	// check if dereferenced value type has a formatter
+	if cellType.Kind() == reflect.Ptr && !cell.Value.IsNil() {
+		derefCellType := cellType.Elem()
+		if typeFmt, ok := f.Types[derefCellType]; ok {
+			str, raw, err := typeFmt.FormatCell(ctx, cell.DerefValue())
+			if !errors.Is(err, ErrNotSupported) {
+				return str, raw, err
+			}
+		}
+		for interfaceType, interfaceFmt := range f.InterfaceTypes {
+			if derefCellType.Implements(interfaceType) {
+				str, raw, err := interfaceFmt.FormatCell(ctx, cell.DerefValue())
+				if !errors.Is(err, ErrNotSupported) {
+					return str, raw, err
+				}
+			}
+		}
+		if kindFmt, ok := f.Kinds[derefCellType.Kind()]; ok {
+			return kindFmt.FormatCell(ctx, cell.DerefValue())
+		}
 	}
 	if f.Default != nil {
 		return f.Default.FormatCell(ctx, cell)
