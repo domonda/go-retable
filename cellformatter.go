@@ -69,6 +69,15 @@ func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, cell *Cell)
 	return fmt.Sprintf(string(format), cell.Value.Interface()), true, nil
 }
 
+// SprintRawCellFormatter returns a CellFormatter
+// that formats a cell's value using fmt.Sprint
+// and returns the result as raw value.
+func SprintRawCellFormatter() CellFormatter {
+	return CellFormatterFunc(func(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
+		return fmt.Sprint(cell.Value.Interface()), true, nil
+	})
+}
+
 // RawCellString implements ValueFormatter by returning
 // the underlying string as raw value.
 type RawCellString string
