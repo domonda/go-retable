@@ -75,6 +75,12 @@ func (w *Writer) WithColumnFormatterFunc(columnIndex int, formatterFunc retable.
 	return w.WithColumnFormatter(columnIndex, formatterFunc)
 }
 
+// WithRawColumn returns a new writer that interprets the collumn
+// with columnIndex as raw HTML strings.
+func (w *Writer) WithRawColumn(columnIndex int) *Writer {
+	return w.WithColumnFormatter(columnIndex, retable.SprintRawCellFormatter())
+}
+
 func (w *Writer) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer {
 	mod := w.clone()
 	mod.typeFormatters = formatter
