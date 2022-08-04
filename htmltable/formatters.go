@@ -12,11 +12,13 @@ import (
 
 var (
 	HTMLPreCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
-		return fmt.Sprintf("<pre>%s</pre>", cell.Value.Interface()), true, nil
+		value := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
+		return "<pre>" + value + "</pre>", true, nil
 	}
 
 	HTMLCodeCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
-		return fmt.Sprintf("<code>%s</code>", cell.Value.Interface()), true, nil
+		value := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
+		return "<code>" + value + "</code>", true, nil
 	}
 
 	// ValueAsHTMLAnchorCellFormatter formats the cell value using fmt.Sprint,
