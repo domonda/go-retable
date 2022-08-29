@@ -16,9 +16,9 @@ var (
 		return "<pre>" + value + "</pre>", true, nil
 	}
 
-	HTMLCodeCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
+	HTMLPreCodeCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
 		value := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
-		return "<code>" + value + "</code>", true, nil
+		return "<pre><code>" + value + "</code></pre>", true, nil
 	}
 
 	// ValueAsHTMLAnchorCellFormatter formats the cell value using fmt.Sprint,
