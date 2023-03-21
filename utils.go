@@ -1,6 +1,8 @@
 package retable
 
 import (
+	"errors"
+	"fmt"
 	"go/token"
 	"reflect"
 	"strings"
@@ -42,6 +44,55 @@ func StructFieldValues(structValue reflect.Value) (values []reflect.Value) {
 		}
 	}
 	return values
+}
+
+// StructFieldIndex returns the index of of the struct field
+// pointed to by fieldPtr within the struct pointed to by structPtr.
+// The returned index counts exported struct fields
+// including the inlined fields of any anonymously embedded structs.
+func StructFieldIndex(structPtr, fieldPtr any) (int, error) {
+	if structPtr == nil {
+		return 0, errors.New("expected struct pointer, got <nil>")
+	}
+	structVal := reflect.ValueOf(structPtr)
+	if structVal.Kind() != reflect.Ptr {
+		return 0, fmt.Errorf("expected struct pointer, got %T", structPtr)
+	}
+	if structVal.IsNil() {
+		return 0, errors.New("expected struct pointer, got <nil>")
+	}
+	structVal = structVal.Elem()
+
+	if fieldPtr == nil {
+		return 0, errors.New("expected struct field pointer, got <nil>")
+	}
+	fieldVal := reflect.ValueOf(fieldPtr)
+	if fieldVal.Kind() != reflect.Ptr {
+		return 0, fmt.Errorf("expected struct field pointer, got %T", fieldPtr)
+	}
+	if fieldVal.IsNil() {
+		return 0, errors.New("expected struct field pointer, got <nil>")
+	}
+	fieldVal = fieldVal.Elem()
+
+	for i, v := range StructFieldValues(structVal) {
+		if v == fieldVal {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("struct field not found in %s", structVal.Type())
+}
+
+// MustStructFieldIndex returns the index of of the struct field
+// pointed to by fieldPtr within the struct pointed to by structPtr.
+// The returned index counts exported struct fields
+// including the inlined fields of any anonymously embedded structs.
+func MustStructFieldIndex(structPtr, fieldPtr any) int {
+	index, err := StructFieldIndex(structPtr, fieldPtr)
+	if err != nil {
+		panic(err)
+	}
+	return index
 }
 
 // SpacePascalCase inserts spaces before upper case
