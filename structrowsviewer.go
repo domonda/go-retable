@@ -6,24 +6,26 @@ import (
 	"strings"
 )
 
-// Ensure ReflectColumnTitles implements ColumnMapper
+// Ensure StructRowsViewer implements Viewer
 var _ Viewer = new(StructRowsViewer)
 
-// StructRowsViewer implements ColumnMapper with a struct field Tag
-// to be used for naming and a UntaggedTitle in case the Tag is not set.
+// StructRowsViewer implements Viewer for tables
+// represented by a slice or array of struct rows.
 type StructRowsViewer struct {
-	// Tag is the struct field tag to be used as column name
+	// Tag is the struct field tag to be used as column title
 	Tag string
-	// IgnoreTitle will result in a column index of -1
-	IgnoreTitle string
-	// UntaggedTitleFunc will be called with the struct field name to
-	// return a column name in case the struct field has no tag named Tag.
-	// If UntaggedTitleFunc is nil, then the struct field name with be used unchanged.
-	UntaggedTitleFunc func(fieldName string) (columnTitle string)
+	// Ignore will result in a column index of -1
+	// for columns with that title
+	Ignore string
+	// Untagged will be called with the struct field name to
+	// return a column title in case the struct field has no tag named Tag.
+	// If Untagged is nil, then the struct field name with be used unchanged.
+	Untagged func(fieldName string) (columnTitle string)
 	// MapIndices is a map from the index of a field in struct
-	// to the column index returned by ColumnTitlesAndRowReflector.
+	// to the column index returned by StructFieldTypes.
 	// If MapIndices is nil, then no mapping will be performed.
-	// Map to the index -1 to not create a column for a struct field.
+	// Mapping a struct field index to -1 will ignore this field
+	// and not create a column for it..
 	MapIndices map[int]int
 }
 
@@ -39,7 +41,7 @@ func (viewer *StructRowsViewer) clone() *StructRowsViewer {
 
 // String implements the fmt.Stringer interface for StructRowsViewer.
 func (viewer *StructRowsViewer) String() string {
-	return fmt.Sprintf("Tag: %q, Ignore: %q", viewer.Tag, viewer.IgnoreTitle)
+	return fmt.Sprintf("StructRowsViewer{Tag: %q, Ignore: %q}", viewer.Tag, viewer.Ignore)
 }
 
 // NewView returns a View for a table made up of a slice
@@ -77,7 +79,7 @@ func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 
 	for i, structField := range structFields {
 		title := viewer.titleFromStructField(structField)
-		if title == viewer.IgnoreTitle {
+		if title == viewer.Ignore {
 			indices[i] = -1
 			continue
 		}
@@ -112,10 +114,10 @@ func (viewer *StructRowsViewer) titleFromStructField(structField reflect.StructF
 			return tag
 		}
 	}
-	if viewer.UntaggedTitleFunc == nil {
+	if viewer.Untagged == nil {
 		return structField.Name
 	}
-	return viewer.UntaggedTitleFunc(structField.Name)
+	return viewer.Untagged(structField.Name)
 }
 
 func (viewer *StructRowsViewer) WithTag(tag string) *StructRowsViewer {
@@ -124,16 +126,9 @@ func (viewer *StructRowsViewer) WithTag(tag string) *StructRowsViewer {
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnoreTitle(ignoreTitle string) *StructRowsViewer {
+func (viewer *StructRowsViewer) WithIgnore(ignore string) *StructRowsViewer {
 	mod := viewer.clone()
-	mod.IgnoreTitle = ignoreTitle
-	return mod
-}
-
-func (viewer *StructRowsViewer) WithIgnoreTitleAndUntagged(ignoreTitle string) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.IgnoreTitle = ignoreTitle
-	mod.UntaggedTitleFunc = UseTitle(ignoreTitle)
+	mod.Ignore = ignore
 	return mod
 }
 
@@ -143,18 +138,22 @@ func (viewer *StructRowsViewer) WithMapIndex(fieldIndex, columnIndex int) *Struc
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnoreIndex(fieldIndex int) *StructRowsViewer {
+func (viewer *StructRowsViewer) WithIgnoreFieldIndex(fieldIndex int) *StructRowsViewer {
 	mod := viewer.clone()
 	mod.MapIndices[fieldIndex] = -1
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnoreIndices(fieldIndices ...int) *StructRowsViewer {
+func (viewer *StructRowsViewer) WithIgnoreFieldIndices(fieldIndices ...int) *StructRowsViewer {
 	mod := viewer.clone()
 	for _, fieldIndex := range fieldIndices {
 		mod.MapIndices[fieldIndex] = -1
 	}
 	return mod
+}
+
+func (viewer *StructRowsViewer) WithIgnoreField(structPtr, fieldPtr any) *StructRowsViewer {
+	return viewer.WithIgnoreFieldIndex(MustStructFieldIndex(structPtr, fieldPtr))
 }
 
 func (viewer *StructRowsViewer) WithMapIndices(mapIndices map[int]int) *StructRowsViewer {

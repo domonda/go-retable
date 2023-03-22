@@ -6,23 +6,25 @@ import (
 )
 
 var (
-	// DefaultStructRowsViewer provides the default ReflectColumnTitles
-	// using "col" as Tag and the SpacePascalCase function for UntaggedTitle.
-	// Implements ColumnMapper.
+	// DefaultStructRowsViewer provides the default StructRowsViewer
+	// using "col" as title tag, ignores "-" titled fields,
+	// and uses SpacePascalCase for untagged fields.
 	DefaultStructRowsViewer = &StructRowsViewer{
-		Tag:               "col",
-		IgnoreTitle:       "-",
-		UntaggedTitleFunc: SpacePascalCase,
+		Tag:      "col",
+		Ignore:   "-",
+		Untagged: SpacePascalCase,
 	}
 
+	// DefaultStructRowsViewerIgnoreUntagged provides the default StructRowsViewer
+	// using "col" as title tag, ignores "-" titled and untitled fields.
 	DefaultStructRowsViewerIgnoreUntagged = &StructRowsViewer{
-		Tag:               "col",
-		IgnoreTitle:       "-",
-		UntaggedTitleFunc: UseTitle("-"),
+		Tag:      "col",
+		Ignore:   "-",
+		Untagged: UseTitle("-"),
 	}
 
 	// SelectViewer selects the best matching Viewer implementation
-	// for the passed table.
+	// for the passed table type.
 	// By default it returns a StringsViewer for a [][]string table
 	// and the DefaultStructRowsViewer for all other cases.
 	SelectViewer = func(table any) (Viewer, error) {
