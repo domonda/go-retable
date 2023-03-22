@@ -26,7 +26,7 @@ const (
 	AlignCenter
 )
 
-type Writer struct {
+type Writer[T any] struct {
 	viewer           retable.Viewer
 	columnFormatters map[int]retable.CellFormatter
 	formatters       *retable.TypeFormatters
@@ -40,8 +40,8 @@ type Writer struct {
 	encoder          Encoder
 }
 
-func NewWriter() *Writer {
-	return &Writer{
+func NewWriter[T any]() *Writer[T] {
+	return &Writer[T]{
 		columnFormatters: make(map[int]retable.CellFormatter),
 		formatters:       nil, // OK to use nil retable.TypeFormatters
 		padding:          NoPadding,
@@ -55,177 +55,15 @@ func NewWriter() *Writer {
 	}
 }
 
-func (w *Writer) clone() *Writer {
-	c := new(Writer)
+func (w *Writer[T]) clone() *Writer[T] {
+	c := new(Writer[T])
 	*c = *w
 	return c
 }
 
-func (w *Writer) WithTableViewer(viewer retable.Viewer) *Writer {
-	mod := w.clone()
-	mod.viewer = viewer
-	return mod
-}
-
-// WithColumnFormatter returns a new writer with the passed formatter registered for columnIndex.
-// If nil is passed as formatter, then a previous registered column formatter is removed.
-func (w *Writer) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer {
-	mod := w.clone()
-	mod.columnFormatters = make(map[int]retable.CellFormatter)
-	for key, val := range w.columnFormatters {
-		mod.columnFormatters[key] = val
-	}
-	if formatter != nil {
-		mod.columnFormatters[columnIndex] = formatter
-	} else {
-		delete(mod.columnFormatters, columnIndex)
-	}
-	return mod
-}
-
-// WithColumnFormatterFunc returns a new writer with the passed formatterFunc registered for columnIndex.
-// If nil is passed as formatterFunc, then a previous registered column formatter is removed.
-func (w *Writer) WithColumnFormatterFunc(columnIndex int, formatterFunc retable.CellFormatterFunc) *Writer {
-	return w.WithColumnFormatter(columnIndex, formatterFunc)
-}
-
-func (w *Writer) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer {
-	mod := w.clone()
-	mod.formatters = formatter
-	return mod
-}
-
-func (w *Writer) WithTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
-	mod := w.clone()
-	mod.formatters = w.formatters.WithTypeFormatter(typ, fmt)
-	return mod
-}
-
-func (w *Writer) WithTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer {
-	mod := w.clone()
-	mod.formatters = w.formatters.WithTypeFormatter(typ, fmt)
-	return mod
-}
-
-func (w *Writer) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer {
-	mod := w.clone()
-	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, fmt)
-	return mod
-}
-
-func (w *Writer) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer {
-	mod := w.clone()
-	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, fmt)
-	return mod
-}
-
-func (w *Writer) WithTypeFormatterReflectFunc(function interface{}) *Writer {
-	fmt, typ, err := retable.ReflectCellFormatterFunc(function, false)
-	if err != nil {
-		panic(err)
-	}
-	return w.WithTypeFormatter(typ, fmt)
-}
-
-func (w *Writer) WithTypeFormatterReflectRawFunc(function interface{}) *Writer {
-	fmt, typ, err := retable.ReflectCellFormatterFunc(function, true)
-	if err != nil {
-		panic(err)
-	}
-	return w.WithTypeFormatter(typ, fmt)
-}
-
-func (w *Writer) WithKindFormatter(kind reflect.Kind, fmt retable.CellFormatter) *Writer {
-	mod := w.clone()
-	mod.formatters = w.formatters.WithKindFormatter(kind, fmt)
-	return mod
-}
-
-func (w *Writer) WithKindFormatterFunc(kind reflect.Kind, fmt retable.CellFormatterFunc) *Writer {
-	mod := w.clone()
-	mod.formatters = w.formatters.WithKindFormatter(kind, fmt)
-	return mod
-}
-
-func (w *Writer) WithPadding(padding Padding) *Writer {
-	mod := w.clone()
-	mod.padding = padding
-	return mod
-}
-
-func (w *Writer) WithQuoteAllFields(quoteAllFields bool) *Writer {
-	mod := w.clone()
-	mod.quoteAllFields = quoteAllFields
-	return mod
-}
-
-func (w *Writer) WithQuoteEmptyFields(quoteEmptyFields bool) *Writer {
-	mod := w.clone()
-	mod.quoteEmptyFields = quoteEmptyFields
-	return mod
-}
-
-func (w *Writer) WithNilValue(nilValue string) *Writer {
-	mod := w.clone()
-	mod.nilValue = nilValue
-	return mod
-}
-
-func (w *Writer) WithEscapeQuotes(escapeQuotes string) *Writer {
-	mod := w.clone()
-	mod.escapeQuotes = escapeQuotes
-	return mod
-}
-
-func (w *Writer) WithDelimiter(delimiter rune) *Writer {
-	mod := w.clone()
-	mod.delimiter = delimiter
-	return mod
-}
-
-func (w *Writer) WithNewLine(newLine string) *Writer {
-	mod := w.clone()
-	mod.newLine = newLine
-	return mod
-}
-
-func (w *Writer) WithEncoder(encoder Encoder) *Writer {
-	mod := w.clone()
-	mod.encoder = encoder
-	return mod
-}
-
-func (w *Writer) QuoteAllFields() bool {
-	return w.quoteAllFields
-}
-
-func (w *Writer) QuoteEmptyFields() bool {
-	return w.quoteEmptyFields
-}
-
-func (w *Writer) Delimiter() rune {
-	return w.delimiter
-}
-
-func (w *Writer) EscapeQuotes() string {
-	return w.escapeQuotes
-}
-
-func (w *Writer) NilValue() string {
-	return w.nilValue
-}
-
-func (w *Writer) NewLine() string {
-	return w.newLine
-}
-
-func (w *Writer) Encoder() Encoder {
-	return w.encoder
-}
-
 // Write calls WriteView with the result of Viewer.NewView(table)
 // using the writer's viewer if not nil or else retable.DefaultViewer.
-func (w *Writer) Write(ctx context.Context, dest io.Writer, table any, writeHeaderRow bool) error {
+func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, writeHeaderRow bool) error {
 	viewer := w.viewer
 	if viewer == nil {
 		var err error
@@ -234,6 +72,10 @@ func (w *Writer) Write(ctx context.Context, dest io.Writer, table any, writeHead
 			return err
 		}
 	}
+	return w.WriteWithViewer(ctx, dest, viewer, table, writeHeaderRow)
+}
+
+func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer retable.Viewer, table T, writeHeaderRow bool) error {
 	view, err := viewer.NewView(table)
 	if err != nil {
 		return err
@@ -241,7 +83,7 @@ func (w *Writer) Write(ctx context.Context, dest io.Writer, table any, writeHead
 	return w.WriteView(ctx, dest, view, writeHeaderRow)
 }
 
-func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) error {
+func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) error {
 	if w.padding != NoPadding {
 		return w.writeViewPadded(ctx, dest, view, writeHeaderRow)
 	}
@@ -280,7 +122,7 @@ func (w *Writer) WriteView(ctx context.Context, dest io.Writer, view retable.Vie
 }
 
 // writeAndResetBuffer writes a buffered row with optional encoding
-func (w *Writer) writeAndResetBuffer(dest io.Writer, buf *bytes.Buffer) (err error) {
+func (w *Writer[T]) writeAndResetBuffer(dest io.Writer, buf *bytes.Buffer) (err error) {
 	data := buf.Bytes()
 	buf.Reset()
 
@@ -295,7 +137,7 @@ func (w *Writer) writeAndResetBuffer(dest io.Writer, buf *bytes.Buffer) (err err
 	return err
 }
 
-func (w *Writer) writeViewPadded(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) (err error) {
+func (w *Writer[T]) writeViewPadded(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool) (err error) {
 	var (
 		rows    [][]string
 		numCols = len(view.Columns())
@@ -384,7 +226,7 @@ func (w *Writer) writeViewPadded(ctx context.Context, dest io.Writer, view retab
 	return nil
 }
 
-func (w *Writer) writeRow(ctx context.Context, dest *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View) (err error) {
+func (w *Writer[T]) writeRow(ctx context.Context, dest *bytes.Buffer, rowVals []reflect.Value, row int, view retable.View) (err error) {
 	// cell will be reused for every column of the row
 	cell := retable.Cell{
 		View: view,
@@ -413,7 +255,7 @@ func (w *Writer) writeRow(ctx context.Context, dest *bytes.Buffer, rowVals []ref
 	return err
 }
 
-func (w *Writer) rowStrings(ctx context.Context, rowVals []reflect.Value, row int, view retable.View) (rowStrs []string, err error) {
+func (w *Writer[T]) rowStrings(ctx context.Context, rowVals []reflect.Value, row int, view retable.View) (rowStrs []string, err error) {
 	rowStrs = make([]string, len(rowVals))
 
 	// cell will be reused for every column of the row
@@ -436,7 +278,7 @@ func (w *Writer) rowStrings(ctx context.Context, rowVals []reflect.Value, row in
 	return rowStrs, nil
 }
 
-func (w *Writer) cellString(ctx context.Context, cell *retable.Cell) (string, error) {
+func (w *Writer[T]) cellString(ctx context.Context, cell *retable.Cell) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
@@ -472,7 +314,7 @@ func (w *Writer) cellString(ctx context.Context, cell *retable.Cell) (string, er
 	return w.escapeStr(fmt.Sprint(v.Interface()), false), nil
 }
 
-func (w *Writer) escapeStr(str string, isRaw bool) string {
+func (w *Writer[T]) escapeStr(str string, isRaw bool) string {
 	if isRaw {
 		return str
 	}
@@ -486,4 +328,166 @@ func (w *Writer) escapeStr(str string, isRaw bool) string {
 		return `""`
 	}
 	return strings.ReplaceAll(str, `"`, w.escapeQuotes)
+}
+
+func (w *Writer[T]) WithTableViewer(viewer retable.Viewer) *Writer[T] {
+	mod := w.clone()
+	mod.viewer = viewer
+	return mod
+}
+
+// WithColumnFormatter returns a new writer with the passed formatter registered for columnIndex.
+// If nil is passed as formatter, then a previous registered column formatter is removed.
+func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer[T] {
+	mod := w.clone()
+	mod.columnFormatters = make(map[int]retable.CellFormatter)
+	for key, val := range w.columnFormatters {
+		mod.columnFormatters[key] = val
+	}
+	if formatter != nil {
+		mod.columnFormatters[columnIndex] = formatter
+	} else {
+		delete(mod.columnFormatters, columnIndex)
+	}
+	return mod
+}
+
+// WithColumnFormatterFunc returns a new writer with the passed formatterFunc registered for columnIndex.
+// If nil is passed as formatterFunc, then a previous registered column formatter is removed.
+func (w *Writer[T]) WithColumnFormatterFunc(columnIndex int, formatterFunc retable.CellFormatterFunc) *Writer[T] {
+	return w.WithColumnFormatter(columnIndex, formatterFunc)
+}
+
+func (w *Writer[T]) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = formatter
+	return mod
+}
+
+func (w *Writer[T]) WithTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = w.formatters.WithTypeFormatter(typ, fmt)
+	return mod
+}
+
+func (w *Writer[T]) WithTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = w.formatters.WithTypeFormatter(typ, fmt)
+	return mod
+}
+
+func (w *Writer[T]) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.CellFormatter) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, fmt)
+	return mod
+}
+
+func (w *Writer[T]) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable.CellFormatterFunc) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, fmt)
+	return mod
+}
+
+func (w *Writer[T]) WithTypeFormatterReflectFunc(function interface{}) *Writer[T] {
+	fmt, typ, err := retable.ReflectCellFormatterFunc(function, false)
+	if err != nil {
+		panic(err)
+	}
+	return w.WithTypeFormatter(typ, fmt)
+}
+
+func (w *Writer[T]) WithTypeFormatterReflectRawFunc(function interface{}) *Writer[T] {
+	fmt, typ, err := retable.ReflectCellFormatterFunc(function, true)
+	if err != nil {
+		panic(err)
+	}
+	return w.WithTypeFormatter(typ, fmt)
+}
+
+func (w *Writer[T]) WithKindFormatter(kind reflect.Kind, fmt retable.CellFormatter) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = w.formatters.WithKindFormatter(kind, fmt)
+	return mod
+}
+
+func (w *Writer[T]) WithKindFormatterFunc(kind reflect.Kind, fmt retable.CellFormatterFunc) *Writer[T] {
+	mod := w.clone()
+	mod.formatters = w.formatters.WithKindFormatter(kind, fmt)
+	return mod
+}
+
+func (w *Writer[T]) WithPadding(padding Padding) *Writer[T] {
+	mod := w.clone()
+	mod.padding = padding
+	return mod
+}
+
+func (w *Writer[T]) WithQuoteAllFields(quoteAllFields bool) *Writer[T] {
+	mod := w.clone()
+	mod.quoteAllFields = quoteAllFields
+	return mod
+}
+
+func (w *Writer[T]) WithQuoteEmptyFields(quoteEmptyFields bool) *Writer[T] {
+	mod := w.clone()
+	mod.quoteEmptyFields = quoteEmptyFields
+	return mod
+}
+
+func (w *Writer[T]) WithNilValue(nilValue string) *Writer[T] {
+	mod := w.clone()
+	mod.nilValue = nilValue
+	return mod
+}
+
+func (w *Writer[T]) WithEscapeQuotes(escapeQuotes string) *Writer[T] {
+	mod := w.clone()
+	mod.escapeQuotes = escapeQuotes
+	return mod
+}
+
+func (w *Writer[T]) WithDelimiter(delimiter rune) *Writer[T] {
+	mod := w.clone()
+	mod.delimiter = delimiter
+	return mod
+}
+
+func (w *Writer[T]) WithNewLine(newLine string) *Writer[T] {
+	mod := w.clone()
+	mod.newLine = newLine
+	return mod
+}
+
+func (w *Writer[T]) WithEncoder(encoder Encoder) *Writer[T] {
+	mod := w.clone()
+	mod.encoder = encoder
+	return mod
+}
+
+func (w *Writer[T]) QuoteAllFields() bool {
+	return w.quoteAllFields
+}
+
+func (w *Writer[T]) QuoteEmptyFields() bool {
+	return w.quoteEmptyFields
+}
+
+func (w *Writer[T]) Delimiter() rune {
+	return w.delimiter
+}
+
+func (w *Writer[T]) EscapeQuotes() string {
+	return w.escapeQuotes
+}
+
+func (w *Writer[T]) NilValue() string {
+	return w.nilValue
+}
+
+func (w *Writer[T]) NewLine() string {
+	return w.newLine
+}
+
+func (w *Writer[T]) Encoder() Encoder {
+	return w.encoder
 }

@@ -12,7 +12,7 @@ func TestWriter_WriteView(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name           string
-		writer         *Writer
+		writer         *Writer[any]
 		view           retable.View
 		writeHeaderRow bool
 		wantDest       string
@@ -20,14 +20,14 @@ func TestWriter_WriteView(t *testing.T) {
 	}{
 		{
 			name:           "empty view",
-			writer:         NewWriter(),
+			writer:         NewWriter[any](),
 			view:           &retable.MockView{},
 			writeHeaderRow: false,
 			wantDest:       ``,
 		},
 		{
 			name:   "simple",
-			writer: NewWriter(),
+			writer: NewWriter[any](),
 			view: &retable.MockView{
 				Cols: []string{"A", "B", "C"},
 				Rows: [][]interface{}{
@@ -43,7 +43,7 @@ func TestWriter_WriteView(t *testing.T) {
 		},
 		{
 			name: "simple padded align left",
-			writer: NewWriter().
+			writer: NewWriter[any]().
 				WithDelimiter('|').
 				WithPadding(AlignLeft),
 			view: &retable.MockView{
@@ -61,7 +61,7 @@ func TestWriter_WriteView(t *testing.T) {
 		},
 		{
 			name: "simple padded align center",
-			writer: NewWriter().
+			writer: NewWriter[any]().
 				WithDelimiter('|').
 				WithPadding(AlignCenter),
 			view: &retable.MockView{
@@ -79,7 +79,7 @@ func TestWriter_WriteView(t *testing.T) {
 		},
 		{
 			name: "simple padded align right",
-			writer: NewWriter().
+			writer: NewWriter[any]().
 				WithDelimiter('|').
 				WithPadding(AlignRight),
 			view: &retable.MockView{
@@ -97,7 +97,7 @@ func TestWriter_WriteView(t *testing.T) {
 		},
 		{
 			name: "command and quoted fields",
-			writer: NewWriter().
+			writer: NewWriter[any]().
 				WithDelimiter(',').
 				WithQuoteAllFields(true),
 			view: &retable.MockView{
