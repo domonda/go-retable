@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-func Strings(ctx context.Context, table interface{}, addHeaderRow bool, formatters *TypeFormatters) (rows [][]string, err error) {
+func Strings(ctx context.Context, table any, addHeaderRow bool, formatters *TypeFormatters) (rows [][]string, err error) {
 	viewer, err := SelectViewer(table)
 	if err != nil {
 		return nil, err

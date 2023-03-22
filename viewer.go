@@ -4,5 +4,5 @@ package retable
 // to create a View for a table.
 type Viewer interface {
 	// NewView creates a View for the passed table
-	NewView(table interface{}) (View, error)
+	NewView(table any) (View, error)
 }

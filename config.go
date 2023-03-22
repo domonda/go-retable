@@ -25,7 +25,7 @@ var (
 	// for the passed table.
 	// By default it returns a StringsViewer for a [][]string table
 	// and the DefaultStructRowsViewer for all other cases.
-	SelectViewer = func(table interface{}) (Viewer, error) {
+	SelectViewer = func(table any) (Viewer, error) {
 		if _, ok := table.([][]string); ok {
 			return new(StringsViewer), nil
 		}

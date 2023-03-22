@@ -37,52 +37,15 @@ func (viewer *StructRowsViewer) clone() *StructRowsViewer {
 	return c
 }
 
-func (viewer *StructRowsViewer) WithTag(tag string) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.Tag = tag
-	return mod
+// String implements the fmt.Stringer interface for StructRowsViewer.
+func (viewer *StructRowsViewer) String() string {
+	return fmt.Sprintf("Tag: %q, Ignore: %q", viewer.Tag, viewer.IgnoreTitle)
 }
 
-func (viewer *StructRowsViewer) WithIgnoreTitle(ignoreTitle string) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.IgnoreTitle = ignoreTitle
-	return mod
-}
-
-func (viewer *StructRowsViewer) WithIgnoreTitleAndUntagged(ignoreTitle string) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.IgnoreTitle = ignoreTitle
-	mod.UntaggedTitleFunc = UseTitle(ignoreTitle)
-	return mod
-}
-
-func (viewer *StructRowsViewer) WithMapIndex(fieldIndex, columnIndex int) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.MapIndices[fieldIndex] = columnIndex
-	return mod
-}
-
-func (viewer *StructRowsViewer) WithIgnoreIndex(fieldIndex int) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.MapIndices[fieldIndex] = -1
-	return mod
-}
-
-func (viewer *StructRowsViewer) WithIgnoreIndices(fieldIndices ...int) *StructRowsViewer {
-	mod := viewer.clone()
-	for _, fieldIndex := range fieldIndices {
-		mod.MapIndices[fieldIndex] = -1
-	}
-	return mod
-}
-
-func (viewer *StructRowsViewer) WithMapIndices(mapIndices map[int]int) *StructRowsViewer {
-	mod := viewer.clone()
-	mod.MapIndices = mapIndices
-	return mod
-}
-
-func (viewer *StructRowsViewer) NewView(table interface{}) (View, error) {
+// NewView returns a View for a table made up of a slice
+// or array of structs.
+// NewView implements the Viewer interface for StructRowsViewer.
+func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 	rows := reflect.ValueOf(table)
 	for rows.Kind() == reflect.Ptr && !rows.IsNil() {
 		rows = rows.Elem()
@@ -155,87 +118,47 @@ func (viewer *StructRowsViewer) titleFromStructField(structField reflect.StructF
 	return viewer.UntaggedTitleFunc(structField.Name)
 }
 
-func (viewer *StructRowsViewer) String() string {
-	return fmt.Sprintf("Tag: %q, Ignore: %q", viewer.Tag, viewer.IgnoreTitle)
+func (viewer *StructRowsViewer) WithTag(tag string) *StructRowsViewer {
+	mod := viewer.clone()
+	mod.Tag = tag
+	return mod
 }
 
-type structRowsView struct {
-	columns []string
-	indices []int
-	rows    reflect.Value
+func (viewer *StructRowsViewer) WithIgnoreTitle(ignoreTitle string) *StructRowsViewer {
+	mod := viewer.clone()
+	mod.IgnoreTitle = ignoreTitle
+	return mod
 }
 
-func (view *structRowsView) Columns() []string { return view.columns }
-func (view *structRowsView) NumRows() int      { return view.rows.Len() }
+func (viewer *StructRowsViewer) WithIgnoreTitleAndUntagged(ignoreTitle string) *StructRowsViewer {
+	mod := viewer.clone()
+	mod.IgnoreTitle = ignoreTitle
+	mod.UntaggedTitleFunc = UseTitle(ignoreTitle)
+	return mod
+}
 
-func (view *structRowsView) ReflectRow(index int) ([]reflect.Value, error) {
-	if index < 0 || index >= view.rows.Len() {
-		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, view.rows.Len())
+func (viewer *StructRowsViewer) WithMapIndex(fieldIndex, columnIndex int) *StructRowsViewer {
+	mod := viewer.clone()
+	mod.MapIndices[fieldIndex] = columnIndex
+	return mod
+}
+
+func (viewer *StructRowsViewer) WithIgnoreIndex(fieldIndex int) *StructRowsViewer {
+	mod := viewer.clone()
+	mod.MapIndices[fieldIndex] = -1
+	return mod
+}
+
+func (viewer *StructRowsViewer) WithIgnoreIndices(fieldIndices ...int) *StructRowsViewer {
+	mod := viewer.clone()
+	for _, fieldIndex := range fieldIndices {
+		mod.MapIndices[fieldIndex] = -1
 	}
-	columnValues := make([]reflect.Value, len(view.columns))
-	structFields := StructFieldValues(view.rows.Index(index))
-	for i, index := range view.indices {
-		if index >= 0 && index < len(view.columns) {
-			columnValues[index] = structFields[i]
-		}
-	}
-	return columnValues, nil
+	return mod
 }
 
-/*
-
-// RowReflector is used to reflect column values from the fields of a struct
-// representing a table row.
-type RowReflector interface {
-	// ReflectRow returns reflection values for struct fields
-	// of structValue representing a table row.
-	ReflectRow(structValue reflect.Value) (columnValues []reflect.Value)
+func (viewer *StructRowsViewer) WithMapIndices(mapIndices map[int]int) *StructRowsViewer {
+	mod := viewer.clone()
+	mod.MapIndices = mapIndices
+	return mod
 }
-
-// RowReflectorFunc implements RowReflector with a function
-type RowReflectorFunc func(structValue reflect.Value) (columnValues []reflect.Value)
-
-func (f RowReflectorFunc) ReflectRow(structValue reflect.Value) (columnValues []reflect.Value) {
-	return f(structValue)
-}
-
-// ColumnMapper is used to map struct type fields to column names
-type ColumnMapper interface {
-	// ColumnTitlesAndRowReflector returns the column titles and indices for structFields.
-	// The length of the titles and indices slices must be identical to the length of structFields.
-	// The indices start at zero, the special index -1 filters removes the column
-	// for the corresponding struct field.
-	ColumnTitlesAndRowReflector(structType reflect.Type) (titles []string, rowReflector RowReflector)
-}
-
-// ColumnMapperFunc implements the ColumnMapper interface with a function
-type ColumnMapperFunc func(structType reflect.Type) (titles []string, rowReflector RowReflector)
-
-func (f ColumnMapperFunc) ColumnTitlesAndRowReflector(structType reflect.Type) (titles []string, rowReflector RowReflector) {
-	return f(structType)
-}
-
-// ColumnTitles implements ColumnMapper by returning the underlying string slice as column titles
-// and the StructFieldValues function of this package as RowReflector.
-// It does not check if the number of column titles and the reflected row values are identical
-// and re-mapping or ignoring of columns is not possible.
-type ColumnTitles []string
-
-func (t ColumnTitles) ColumnTitlesAndRowReflector(structType reflect.Type) (titles []string, rowReflector RowReflector) {
-	return t, RowReflectorFunc(StructFieldValues)
-}
-
-// NoColumnTitles returns a ColumnMapper that returns nil as column titles
-// and the StructFieldValues function of this package as RowReflector.
-func NoColumnTitles() ColumnMapper {
-	return noColumnTitles{}
-}
-
-// noColumnTitles implements ColumnMapper by returning nil as column titles
-// and the StructFieldValues function of this package as RowReflector.
-type noColumnTitles struct{}
-
-func (noColumnTitles) ColumnTitlesAndRowReflector(structType reflect.Type) (titles []string, rowReflector RowReflector) {
-	return nil, RowReflectorFunc(StructFieldValues)
-}
-*/

@@ -225,7 +225,7 @@ func (w *Writer) Encoder() Encoder {
 
 // Write calls WriteView with the result of Viewer.NewView(table)
 // using the writer's viewer if not nil or else retable.DefaultViewer.
-func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool) error {
+func (w *Writer) Write(ctx context.Context, dest io.Writer, table any, writeHeaderRow bool) error {
 	viewer := w.viewer
 	if viewer == nil {
 		var err error

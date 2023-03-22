@@ -25,7 +25,7 @@ type StringsViewer struct {
 	Cols []string
 }
 
-func (v StringsViewer) NewView(table interface{}) (View, error) {
+func (v StringsViewer) NewView(table any) (View, error) {
 	rows, ok := table.([][]string)
 	if !ok {
 		return nil, fmt.Errorf("expected table of type [][]string, but got %T", table)

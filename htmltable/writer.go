@@ -163,7 +163,7 @@ func (w *Writer) NilValue() template.HTML {
 
 // Write calls WriteView with the result of Viewer.NewView(table)
 // using the writer's viewer if not nil or else retable.DefaultViewer.
-func (w *Writer) Write(ctx context.Context, dest io.Writer, table interface{}, writeHeaderRow bool, caption ...string) error {
+func (w *Writer) Write(ctx context.Context, dest io.Writer, table any, writeHeaderRow bool, caption ...string) error {
 	viewer := w.viewer
 	if viewer == nil {
 		var err error
