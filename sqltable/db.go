@@ -8,8 +8,14 @@ import (
 	"github.com/domonda/go-retable"
 )
 
-func NewViewDB(views map[string]retable.View) *sql.DB {
+func NewViewsDB(views map[string]retable.View) *sql.DB {
 	return sql.OpenDB(database{views: views})
+}
+
+func NewViewDB(viewName string, view retable.View) *sql.DB {
+	return NewViewsDB(map[string]retable.View{
+		viewName: view,
+	})
 }
 
 type database struct {
