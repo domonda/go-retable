@@ -84,11 +84,11 @@ func cellString(ctx context.Context, cell *Cell, formatters *TypeFormatters) (st
 	if err == nil {
 		return str, nil
 	}
-	if !errors.Is(err, ErrNotSupported) {
+	if !errors.Is(err, errors.ErrUnsupported) {
 		return "", err
 	}
 
-	// In case of ErrNotSupported from w.formatters
+	// In case of errors.ErrUnsupported from w.formatters
 	// use fallback methods for formatting
 	if ValueIsNil(cell.Value) {
 		return "", nil

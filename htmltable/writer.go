@@ -107,7 +107,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 
 			if colFormatter, ok := w.columnFormatters[col]; ok {
 				str, isRaw, err := colFormatter.FormatCell(ctx, &cell)
-				if err != nil && !errors.Is(err, retable.ErrNotSupported) {
+				if err != nil && !errors.Is(err, errors.ErrUnsupported) {
 					return err
 				}
 				if err == nil {
@@ -121,10 +121,10 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 
 			str, isRaw, err := w.typeFormatters.FormatCell(ctx, &cell)
 			if err != nil {
-				if !errors.Is(err, retable.ErrNotSupported) {
+				if !errors.Is(err, errors.ErrUnsupported) {
 					return err
 				}
-				// In case of retable.ErrNotSupported
+				// In case of errors.ErrUnsupported
 				// use fallback method of formatting
 				if retable.ValueIsNil(val) {
 					templData.RawCells[col] = w.nilValue

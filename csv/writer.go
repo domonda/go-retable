@@ -288,21 +288,21 @@ func (w *Writer[T]) cellString(ctx context.Context, cell *retable.Cell) (string,
 		if err == nil {
 			return w.escapeStr(str, isRaw), nil
 		}
-		if !errors.Is(err, retable.ErrNotSupported) {
+		if !errors.Is(err, errors.ErrUnsupported) {
 			return "", err
 		}
-		// Continue after retable.ErrNotSupported from colFormatter
+		// Continue after errors.ErrUnsupported from colFormatter
 	}
 
 	str, isRaw, err := w.formatters.FormatCell(ctx, cell)
 	if err == nil {
 		return w.escapeStr(str, isRaw), nil
 	}
-	if !errors.Is(err, retable.ErrNotSupported) {
+	if !errors.Is(err, errors.ErrUnsupported) {
 		return "", err
 	}
 
-	// In case of retable.ErrNotSupported from w.formatters
+	// In case of errors.ErrUnsupported from w.formatters
 	// use fallback methods for formatting
 	if retable.ValueIsNil(cell.Value) {
 		return w.escapeStr(w.nilValue, false), nil

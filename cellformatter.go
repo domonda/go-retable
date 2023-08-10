@@ -37,7 +37,7 @@ func (c *Cell) DerefValue() *Cell {
 // CellFormatter is an interface for formatting reflected values as strings.
 type CellFormatter interface {
 	// FormatCell formats a cell as string
-	// or returns a wrapped ErrNotSupported error if
+	// or returns a wrapped errors.ErrUnsupported error if
 	// it doesn't support formatting the value of the cell.
 	// The raw result indicates if the returned string
 	// is in the raw format of the table format and can be

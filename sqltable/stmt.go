@@ -7,9 +7,9 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"slices"
 
 	"github.com/domonda/go-retable"
-	"golang.org/x/exp/slices"
 )
 
 type stmt struct {

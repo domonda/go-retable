@@ -20,19 +20,19 @@ func NewTypeFormatters() *TypeFormatters { return new(TypeFormatters) }
 
 func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
 	if f == nil {
-		return "", false, ErrNotSupported
+		return "", false, errors.ErrUnsupported
 	}
 	cellType := cell.Value.Type()
 	if typeFmt, ok := f.Types[cellType]; ok {
 		str, raw, err := typeFmt.FormatCell(ctx, cell)
-		if !errors.Is(err, ErrNotSupported) {
+		if !errors.Is(err, errors.ErrUnsupported) {
 			return str, raw, err
 		}
 	}
 	for interfaceType, interfaceFmt := range f.InterfaceTypes {
 		if cellType.Implements(interfaceType) {
 			str, raw, err := interfaceFmt.FormatCell(ctx, cell)
-			if !errors.Is(err, ErrNotSupported) {
+			if !errors.Is(err, errors.ErrUnsupported) {
 				return str, raw, err
 			}
 		}
@@ -46,14 +46,14 @@ func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string
 		derefCellType := cellType.Elem()
 		if typeFmt, ok := f.Types[derefCellType]; ok {
 			str, raw, err := typeFmt.FormatCell(ctx, cell.DerefValue())
-			if !errors.Is(err, ErrNotSupported) {
+			if !errors.Is(err, errors.ErrUnsupported) {
 				return str, raw, err
 			}
 		}
 		for interfaceType, interfaceFmt := range f.InterfaceTypes {
 			if derefCellType.Implements(interfaceType) {
 				str, raw, err := interfaceFmt.FormatCell(ctx, cell.DerefValue())
-				if !errors.Is(err, ErrNotSupported) {
+				if !errors.Is(err, errors.ErrUnsupported) {
 					return str, raw, err
 				}
 			}
@@ -65,7 +65,7 @@ func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string
 	if f.Default != nil {
 		return f.Default.FormatCell(ctx, cell)
 	}
-	return "", false, ErrNotSupported
+	return "", false, errors.ErrUnsupported
 }
 
 func (f *TypeFormatters) WithTypeFormatter(typ reflect.Type, fmt CellFormatter) *TypeFormatters {
