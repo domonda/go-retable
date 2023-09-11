@@ -12,6 +12,16 @@ type Format struct {
 	Newline   string `json:"newline"`
 }
 
+// NewFormat returns a Format with the passed separator,
+// UTF-8 encoding, and "\r\n" newlines.
+func NewFormat(separator string) *Format {
+	return &Format{
+		Encoding:  "UTF-8",
+		Separator: separator,
+		Newline:   "\r\n",
+	}
+}
+
 // Validate returns an error in case of an invalid Format.
 // Can be called on nil receiver.
 func (f *Format) Validate() error {
