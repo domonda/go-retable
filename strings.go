@@ -94,7 +94,7 @@ func cellString(ctx context.Context, cell *Cell, formatters *TypeFormatters) (st
 		return "", nil
 	}
 	v := cell.Value
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	return fmt.Sprint(v.Interface()), nil

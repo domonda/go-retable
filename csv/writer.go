@@ -308,7 +308,7 @@ func (w *Writer[T]) cellString(ctx context.Context, cell *retable.Cell) (string,
 		return w.escapeStr(w.nilValue, false), nil
 	}
 	v := cell.Value
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	return w.escapeStr(fmt.Sprint(v.Interface()), false), nil

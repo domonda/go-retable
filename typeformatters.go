@@ -42,7 +42,7 @@ func (f *TypeFormatters) FormatCell(ctx context.Context, cell *Cell) (str string
 	}
 	// If pointer type had no direct formatter
 	// check if dereferenced value type has a formatter
-	if cellType.Kind() == reflect.Ptr && !cell.Value.IsNil() {
+	if cellType.Kind() == reflect.Pointer && !cell.Value.IsNil() {
 		derefCellType := cellType.Elem()
 		if typeFmt, ok := f.Types[derefCellType]; ok {
 			str, raw, err := typeFmt.FormatCell(ctx, cell.DerefValue())

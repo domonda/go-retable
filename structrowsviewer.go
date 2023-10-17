@@ -49,14 +49,14 @@ func (viewer *StructRowsViewer) String() string {
 // NewView implements the Viewer interface for StructRowsViewer.
 func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 	rows := reflect.ValueOf(table)
-	for rows.Kind() == reflect.Ptr && !rows.IsNil() {
+	for rows.Kind() == reflect.Pointer && !rows.IsNil() {
 		rows = rows.Elem()
 	}
 	if rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array {
 		return nil, fmt.Errorf("table must be slice or array kind but is %T", table)
 	}
 	rowType := rows.Type().Elem()
-	if rowType.Kind() == reflect.Ptr {
+	if rowType.Kind() == reflect.Pointer {
 		rowType = rowType.Elem()
 	}
 	if rowType.Kind() != reflect.Struct {

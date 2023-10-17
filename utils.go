@@ -12,7 +12,7 @@ import (
 // StructFieldTypes returns the exported fields of a struct type
 // including the inlined fields of any anonymously embedded structs.
 func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
-	if structType.Kind() == reflect.Ptr {
+	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
 	for i := 0; i < structType.NumField(); i++ {
@@ -30,7 +30,7 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 // StructFieldValues returns the reflect.Value of exported struct fields
 // including the inlined fields of any anonymously embedded structs.
 func StructFieldValues(structValue reflect.Value) (values []reflect.Value) {
-	if structValue.Kind() == reflect.Ptr {
+	if structValue.Kind() == reflect.Pointer {
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
@@ -55,7 +55,7 @@ func StructFieldIndex(structPtr, fieldPtr any) (int, error) {
 		return 0, errors.New("expected struct pointer, got <nil>")
 	}
 	structVal := reflect.ValueOf(structPtr)
-	if structVal.Kind() != reflect.Ptr {
+	if structVal.Kind() != reflect.Pointer {
 		return 0, fmt.Errorf("expected struct pointer, got %T", structPtr)
 	}
 	if structVal.IsNil() {
@@ -67,7 +67,7 @@ func StructFieldIndex(structPtr, fieldPtr any) (int, error) {
 		return 0, errors.New("expected struct field pointer, got <nil>")
 	}
 	fieldVal := reflect.ValueOf(fieldPtr)
-	if fieldVal.Kind() != reflect.Ptr {
+	if fieldVal.Kind() != reflect.Pointer {
 		return 0, fmt.Errorf("expected struct field pointer, got %T", fieldPtr)
 	}
 	if fieldVal.IsNil() {
@@ -138,7 +138,7 @@ func ValueIsNil(val reflect.Value) bool {
 		return true
 	}
 	switch val.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map,
+	case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map,
 		reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		return val.IsNil()
 	case reflect.Struct:

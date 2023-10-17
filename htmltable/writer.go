@@ -130,7 +130,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 					templData.RawCells[col] = w.nilValue
 					continue
 				}
-				if val.Kind() == reflect.Ptr {
+				if val.Kind() == reflect.Pointer {
 					val = val.Elem()
 				}
 				str, isRaw = fmt.Sprint(val.Interface()), false
