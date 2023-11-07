@@ -12,7 +12,8 @@ var _ Viewer = new(StructRowsViewer)
 // StructRowsViewer implements Viewer for tables
 // represented by a slice or array of struct rows.
 type StructRowsViewer struct {
-	// Tag is the struct field tag to be used as column title
+	// Tag is the struct field tag to be used as column title.
+	// If Tag is empty, then every struct field will be treated as untagged.
 	Tag string
 	// Ignore will result in a column index of -1
 	// for columns with that title
@@ -106,12 +107,14 @@ func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 }
 
 func (viewer *StructRowsViewer) titleFromStructField(structField reflect.StructField) string {
-	if tag, ok := structField.Tag.Lookup(viewer.Tag); ok {
-		if i := strings.IndexByte(tag, ','); i != -1 {
-			tag = tag[:i]
-		}
-		if tag != "" {
-			return tag
+	if viewer.Tag != "" {
+		if tag, ok := structField.Tag.Lookup(viewer.Tag); ok {
+			if i := strings.IndexByte(tag, ','); i != -1 {
+				tag = tag[:i]
+			}
+			if tag != "" {
+				return tag
+			}
 		}
 	}
 	if viewer.Untagged == nil {

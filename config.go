@@ -33,7 +33,16 @@ var (
 		}
 		return DefaultStructRowsViewer, nil
 	}
+
+	noTagsStructRowsViewer StructRowsViewer
 )
+
+// NoTagsStructRowsViewer returns a viewer
+// that uses the struct field names as column titles
+// without considering struct field tags.
+func NoTagsStructRowsViewer() Viewer {
+	return &noTagsStructRowsViewer
+}
 
 var (
 	typeOfError   = reflect.TypeOf((*error)(nil)).Elem()
