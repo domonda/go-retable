@@ -13,8 +13,23 @@ import (
 	"github.com/domonda/go-retable"
 )
 
+// Encoder is an interface to encode byte strings.
 type Encoder interface {
 	Bytes([]byte) ([]byte, error)
+}
+
+// EncoderFunc implements the Encoder interface for a function.
+type EncoderFunc func([]byte) ([]byte, error)
+
+func (f EncoderFunc) Bytes(data []byte) ([]byte, error) {
+	return f(data)
+}
+
+// PassthroughEncoder returns an Encoder that returns the passed data unchanged.
+func PassthroughEncoder() Encoder {
+	return EncoderFunc(func(data []byte) ([]byte, error) {
+		return data, nil
+	})
 }
 
 type Padding int
