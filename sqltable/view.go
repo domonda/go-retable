@@ -3,51 +3,66 @@ package sqltable
 import (
 	"context"
 	"database/sql"
-	"reflect"
+	"slices"
 
 	"github.com/domonda/go-retable"
 )
 
-func NewView(ctx context.Context, rows Rows) (retable.View, error) {
+func ScanRowsAsView(ctx context.Context, rows Rows) (*retable.AnyValuesView, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, err
 	}
-	view := &retable.CachedView{Cols: columns}
+	view := &retable.AnyValuesView{Cols: columns}
 
 	defer rows.Close()
 	for rows.Next() {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		var (
-			reflectValues   = make([]reflect.Value, len(columns))
-			reflectScanners = make([]interface{}, len(columns))
-		)
-		for i := range reflectValues {
-			reflectScanners[i] = reflectScanner{&reflectValues[i]}
+		scannedValues := make([]any, len(columns))
+		valueScanners := make([]any, len(columns))
+		for i := range valueScanners {
+			valueScanners[i] = valueScanner{&scannedValues[i]}
 		}
-		err = rows.Scan(reflectScanners...)
+		err = rows.Scan(valueScanners...)
 		if err != nil {
 			return view, err
 		}
-		view.Rows = append(view.Rows, reflectValues)
+		view.Rows = append(view.Rows, scannedValues)
 	}
 	return view, rows.Err()
 }
 
-var _ sql.Scanner = &reflectScanner{}
+var (
+	_ sql.Scanner = new(valueScanner)
+	// _ sql.Scanner = new(reflectValueScanner)
+)
 
-type reflectScanner struct {
-	v *reflect.Value
+type valueScanner struct {
+	dest *any
 }
 
 // Scan implements the database/sql.Scanner interface.
-func (s *reflectScanner) Scan(src interface{}) error {
+func (s valueScanner) Scan(src any) error {
 	if b, ok := src.([]byte); ok {
 		// Copy bytes because they won't be valid after this method call
-		src = append([]byte(nil), b...)
+		src = slices.Clone(b)
 	}
-	*s.v = reflect.ValueOf(src)
+	*s.dest = src
 	return nil
 }
+
+// type reflectValueScanner struct {
+// 	dest *reflect.Value
+// }
+
+// // Scan implements the database/sql.Scanner interface.
+// func (s reflectValueScanner) Scan(src any) error {
+// 	if b, ok := src.([]byte); ok {
+// 		// Copy bytes because they won't be valid after this method call
+// 		src = slices.Clone(b)
+// 	}
+// 	*s.dest = reflect.ValueOf(src)
+// 	return nil
+// }

@@ -1,47 +1,64 @@
 package retable
 
 import (
-	"fmt"
 	"reflect"
 )
 
-// NewViewWithExtraColumns returns a new View that expands the base View
-// with additional columns titled by extraCols and with row values
-// returned by reflectRowExtraCols.
-// The number of values returnd by reflectRowExtraCols must be equal to len(extraCols).
-func NewViewWithExtraColumns(base View, extraCols []string, reflectRowExtraCols func(index int) ([]reflect.Value, error)) View {
-	return &extraColsView{
-		base:            base,
-		extraCols:       extraCols,
-		reflectRowExtra: reflectRowExtraCols,
+var _ View = ExtraColsView(nil)
+
+type ExtraColsView []View
+
+func (e ExtraColsView) Title() string {
+	if len(e) == 0 {
+		return ""
 	}
+	return e[0].Title()
 }
 
-type extraColsView struct {
-	base            View
-	extraCols       []string
-	reflectRowExtra func(index int) ([]reflect.Value, error)
+func (e ExtraColsView) Columns() []string {
+	var columns []string
+	for _, view := range e {
+		columns = append(columns, view.Columns()...)
+	}
+	return columns
 }
 
-func (e *extraColsView) Columns() []string {
-	return append(e.base.Columns(), e.extraCols...)
+func (e ExtraColsView) NumRows() int {
+	maxNumRows := 0
+	for _, view := range e {
+		maxNumRows = max(maxNumRows, view.NumRows())
+	}
+	return maxNumRows
 }
 
-func (e *extraColsView) NumRows() int {
-	return e.base.NumRows()
+func (e ExtraColsView) AnyValue(row, col int) any {
+	if row < 0 || col < 0 {
+		return nil
+	}
+	colLeft := 0
+	for _, view := range e {
+		numCols := len(view.Columns())
+		colRight := colLeft + numCols
+		if col < colRight {
+			return view.AnyValue(row, col-colLeft)
+		}
+		colLeft = colRight
+	}
+	return nil
 }
 
-func (e *extraColsView) ReflectRow(index int) ([]reflect.Value, error) {
-	rowVals, err := e.base.ReflectRow(index)
-	if err != nil {
-		return nil, err
+func (e ExtraColsView) ReflectValue(row, col int) reflect.Value {
+	if row < 0 || col < 0 {
+		return reflect.Value{}
 	}
-	extraVals, err := e.reflectRowExtra(index)
-	if err != nil {
-		return nil, err
+	colLeft := 0
+	for _, view := range e {
+		numCols := len(view.Columns())
+		colRight := colLeft + numCols
+		if col < colRight {
+			return view.ReflectValue(row, col-colLeft)
+		}
+		colLeft = colRight
 	}
-	if len(extraVals) != len(e.extraCols) {
-		return nil, fmt.Errorf("reflected %d extra values for row %d, but expected %d", len(extraVals), index, len(e.extraCols))
-	}
-	return append(rowVals, extraVals...), nil
+	return reflect.Value{}
 }

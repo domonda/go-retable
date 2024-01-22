@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"reflect"
+	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/domonda/go-retable"
 )
+
+var _ driver.Stmt = new(stmt)
 
 type stmt struct {
 	view retable.View
@@ -31,9 +33,9 @@ func newStmt(views map[string]retable.View, query string) (*stmt, error) {
 		return &stmt{view: view}, nil
 	}
 	filtered := &retable.FilteredView{
-		Source: view,
-		Offset: offset,
-		Limit:  limit,
+		Source:    view,
+		RowOffset: offset,
+		RowLimit:  limit,
 	}
 	if !columnsIdentical {
 		filtered.ColumnMapping = make([]int, len(queryColumns))
@@ -63,6 +65,8 @@ func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
 	return &driverRows{view: s.view}, nil
 }
 
+var _ driver.Rows = new(driverRows)
+
 type driverRows struct {
 	view     retable.View
 	rowIndex int
@@ -77,19 +81,21 @@ func (r *driverRows) Close() error {
 	return nil
 }
 
-func (r *driverRows) Next(dest []driver.Value) error {
+// Next is called to populate the next row of data into
+// the provided slice. The provided slice will be the same
+// size as the Columns() are wide.
+//
+// Next should return io.EOF when there are no more rows.
+//
+// The dest should not be written to outside of Next. Care
+// should be taken when closing Rows not to modify
+// a buffer held in dest.
+func (r *driverRows) Next(dest []driver.Value) (err error) {
 	if r.rowIndex < 0 || r.rowIndex >= r.view.NumRows() {
 		return io.EOF
 	}
-	row, err := r.view.ReflectRow(r.rowIndex)
-	if err != nil {
-		return err
-	}
-	if len(row) != len(dest) {
-		panic("Next: len(row) != len(dest)")
-	}
-	for i, v := range row {
-		dest[i], err = driverValue(v)
+	for col := range dest {
+		dest[col], err = driverValue(r.view.AnyValue(r.rowIndex, col))
 		if err != nil {
 			return err
 		}
@@ -98,28 +104,36 @@ func (r *driverRows) Next(dest []driver.Value) error {
 	return nil
 }
 
-func driverValue(v reflect.Value) (driver.Value, error) {
-	if valuer, ok := v.Interface().(driver.Valuer); ok {
+func driverValue(val any) (driver.Value, error) {
+	if valuer, ok := val.(driver.Valuer); ok {
 		return valuer.Value()
 	}
-	// Known conversations to a driver.Value type
-	switch v.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-		return v.Int(), nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		u := v.Uint()
-		if u > math.MaxInt64 {
-			return nil, fmt.Errorf("uint %d does not fit int64", u)
-		}
-		return int64(u), nil
-	case reflect.Float32:
-		return v.Float(), nil
+	if !driver.IsValue(val) {
+		return nil, fmt.Errorf("value %#v is not a driver.Value", val)
 	}
-	// v either has a valid driver.Value type
-	// or no known conversion which might fail later
-	return v.Interface(), nil
+	return val, nil
 }
 
+var queryRegexp = regexp.MustCompile(`^(?:SELECT|select)\s+(\*|(?:[a-zA-Z]\w*|"[a-zA-Z]\w*")(?:\s*,\s*[a-zA-Z]\w*|\s*,\s*"[a-zA-Z]\w*")*)\s+(?:FROM|from)\s+([a-zA-Z][\w.]*|"[a-zA-Z][\w.]*")(?:\s*;)*$`)
+
 func parseQuery(query string) (columns []string, table string, offset, limit int, err error) {
-	panic("TODO")
+	query = strings.TrimSpace(query)
+	m := queryRegexp.FindStringSubmatch(query)
+	if len(m) != 3 {
+		return nil, "", 0, 0, fmt.Errorf("invalid query %q", query)
+	}
+	columns = strings.Split(m[1], ",")
+	for i := range columns {
+		columns[i] = unquote(strings.TrimSpace(columns[i]))
+	}
+	table = unquote(m[2])
+
+	return columns, table, offset, limit, nil
+}
+
+func unquote(str string) string {
+	if len(str) >= 2 && str[0] == '"' && str[len(str)-1] == '"' {
+		return str[1 : len(str)-1]
+	}
+	return str
 }

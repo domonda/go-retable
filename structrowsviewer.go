@@ -3,7 +3,6 @@ package retable
 import (
 	"fmt"
 	"reflect"
-	"strings"
 )
 
 // Ensure StructRowsViewer implements Viewer
@@ -12,43 +11,35 @@ var _ Viewer = new(StructRowsViewer)
 // StructRowsViewer implements Viewer for tables
 // represented by a slice or array of struct rows.
 type StructRowsViewer struct {
-	// Tag is the struct field tag to be used as column title.
-	// If Tag is empty, then every struct field will be treated as untagged.
-	Tag string
-	// Ignore will result in a column index of -1
-	// for columns with that title
-	Ignore string
-	// Untagged will be called with the struct field name to
-	// return a column title in case the struct field has no tag named Tag.
-	// If Untagged is nil, then the struct field name with be used unchanged.
-	Untagged func(fieldName string) (columnTitle string)
+	StructFieldNaming
+
 	// MapIndices is a map from the index of a field in struct
-	// to the column index returned by StructFieldTypes.
+	// to the column index returned by the function StructFieldTypes.
 	// If MapIndices is nil, then no mapping will be performed.
 	// Mapping a struct field index to -1 will ignore this field
 	// and not create a column for it..
 	MapIndices map[int]int
 }
 
-func (viewer *StructRowsViewer) clone() *StructRowsViewer {
+func (v *StructRowsViewer) clone() *StructRowsViewer {
 	c := new(StructRowsViewer)
-	*c = *viewer
-	c.MapIndices = make(map[int]int, len(viewer.MapIndices))
-	for i, j := range viewer.MapIndices {
+	*c = *v
+	c.MapIndices = make(map[int]int, len(v.MapIndices))
+	for i, j := range v.MapIndices {
 		c.MapIndices[i] = j
 	}
 	return c
 }
 
 // String implements the fmt.Stringer interface for StructRowsViewer.
-func (viewer *StructRowsViewer) String() string {
-	return fmt.Sprintf("StructRowsViewer{Tag: %q, Ignore: %q}", viewer.Tag, viewer.Ignore)
+func (v *StructRowsViewer) String() string {
+	return fmt.Sprintf("StructRowsViewer{Tag: %q, Ignore: %q}", v.Tag, v.Ignore)
 }
 
-// NewView returns a View for a table made up of a slice
-// or array of structs.
+// NewView returns a View for a table made up of
+// a slice or array of structs.
 // NewView implements the Viewer interface for StructRowsViewer.
-func (viewer *StructRowsViewer) NewView(table any) (View, error) {
+func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 	rows := reflect.ValueOf(table)
 	for rows.Kind() == reflect.Pointer && !rows.IsNil() {
 		rows = rows.Elem()
@@ -66,7 +57,7 @@ func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 
 	structFields := StructFieldTypes(rowType)
 	indices := make([]int, len(structFields))
-	titles := make([]string, 0, len(structFields))
+	columns := make([]string, 0, len(structFields))
 
 	columnIndexUsed := make(map[int]bool)
 	getNextFreeColumnIndex := func() int {
@@ -79,15 +70,15 @@ func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 	}
 
 	for i, structField := range structFields {
-		title := viewer.titleFromStructField(structField)
-		if title == viewer.Ignore {
+		title := v.StructFieldColumn(structField)
+		if title == v.Ignore {
 			indices[i] = -1
 			continue
 		}
 
 		index := getNextFreeColumnIndex()
-		if viewer.MapIndices != nil {
-			mappedIndex, ok := viewer.MapIndices[i]
+		if v.MapIndices != nil {
+			mappedIndex, ok := v.MapIndices[i]
 			if ok && !columnIndexUsed[mappedIndex] {
 				index = mappedIndex
 			}
@@ -100,67 +91,50 @@ func (viewer *StructRowsViewer) NewView(table any) (View, error) {
 		indices[i] = index
 		columnIndexUsed[index] = true
 
-		titles = append(titles, title)
+		columns = append(columns, title)
 	}
 
-	return &structRowsView{titles, indices, rows}, nil
+	return NewStructRowsView(title, columns, indices, rows), nil
 }
 
-func (viewer *StructRowsViewer) titleFromStructField(structField reflect.StructField) string {
-	if viewer.Tag != "" {
-		if tag, ok := structField.Tag.Lookup(viewer.Tag); ok {
-			if i := strings.IndexByte(tag, ','); i != -1 {
-				tag = tag[:i]
-			}
-			if tag != "" {
-				return tag
-			}
-		}
-	}
-	if viewer.Untagged == nil {
-		return structField.Name
-	}
-	return viewer.Untagged(structField.Name)
-}
-
-func (viewer *StructRowsViewer) WithTag(tag string) *StructRowsViewer {
-	mod := viewer.clone()
+func (v *StructRowsViewer) WithTag(tag string) *StructRowsViewer {
+	mod := v.clone()
 	mod.Tag = tag
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnore(ignore string) *StructRowsViewer {
-	mod := viewer.clone()
+func (v *StructRowsViewer) WithIgnore(ignore string) *StructRowsViewer {
+	mod := v.clone()
 	mod.Ignore = ignore
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithMapIndex(fieldIndex, columnIndex int) *StructRowsViewer {
-	mod := viewer.clone()
+func (v *StructRowsViewer) WithMapIndex(fieldIndex, columnIndex int) *StructRowsViewer {
+	mod := v.clone()
 	mod.MapIndices[fieldIndex] = columnIndex
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnoreFieldIndex(fieldIndex int) *StructRowsViewer {
-	mod := viewer.clone()
+func (v *StructRowsViewer) WithIgnoreFieldIndex(fieldIndex int) *StructRowsViewer {
+	mod := v.clone()
 	mod.MapIndices[fieldIndex] = -1
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnoreFieldIndices(fieldIndices ...int) *StructRowsViewer {
-	mod := viewer.clone()
+func (v *StructRowsViewer) WithIgnoreFieldIndices(fieldIndices ...int) *StructRowsViewer {
+	mod := v.clone()
 	for _, fieldIndex := range fieldIndices {
 		mod.MapIndices[fieldIndex] = -1
 	}
 	return mod
 }
 
-func (viewer *StructRowsViewer) WithIgnoreField(structPtr, fieldPtr any) *StructRowsViewer {
-	return viewer.WithIgnoreFieldIndex(MustStructFieldIndex(structPtr, fieldPtr))
+func (v *StructRowsViewer) WithIgnoreField(structPtr, fieldPtr any) *StructRowsViewer {
+	return v.WithIgnoreFieldIndex(MustStructFieldIndex(structPtr, fieldPtr))
 }
 
-func (viewer *StructRowsViewer) WithMapIndices(mapIndices map[int]int) *StructRowsViewer {
-	mod := viewer.clone()
+func (v *StructRowsViewer) WithMapIndices(mapIndices map[int]int) *StructRowsViewer {
+	mod := v.clone()
 	mod.MapIndices = mapIndices
 	return mod
 }

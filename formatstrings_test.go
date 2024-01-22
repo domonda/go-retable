@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestStrings(t *testing.T) {
+func TestFormatTableAsStrings(t *testing.T) {
 	type args struct {
-		table        interface{}
-		addHeaderRow bool
-		formatters   *TypeFormatters
+		table      any
+		options    []Option
+		formatters *ReflectTypeCellFormatter
 	}
 	tests := []struct {
 		name     string
@@ -21,32 +21,29 @@ func TestStrings(t *testing.T) {
 		{
 			name: "empty [][]string",
 			args: args{
-				table:        [][]string{},
-				addHeaderRow: false,
+				table: [][]string{},
 			},
 			wantRows: nil,
 		},
 		{
 			name: "empty []struct{}",
 			args: args{
-				table:        []struct{}{},
-				addHeaderRow: false,
+				table: []struct{}{},
 			},
 			wantRows: nil,
 		},
 		{
 			name: `[][]string{{"Hello", "World", "!"}} no header`,
 			args: args{
-				table:        [][]string{{"Hello", "World", "!"}},
-				addHeaderRow: false,
+				table: [][]string{{"Hello", "World", "!"}},
 			},
 			wantRows: nil,
 		},
 		{
 			name: `[][]string{{"Hello", "World", "!"}} no header`,
 			args: args{
-				table:        [][]string{{"Hello", "World", "!"}},
-				addHeaderRow: true,
+				table:   [][]string{{"Hello", "World", "!"}},
+				options: []Option{OptionAddHeaderRow},
 			},
 			wantRows: [][]string{{"Hello", "World", "!"}},
 		},
@@ -58,7 +55,7 @@ func TestStrings(t *testing.T) {
 					{"A", "B", "C"},
 					{"First col only"},
 				},
-				addHeaderRow: true,
+				options: []Option{OptionAddHeaderRow},
 			},
 			wantRows: [][]string{
 				{"Hello", "World", "!"},
@@ -69,7 +66,7 @@ func TestStrings(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotRows, err := Strings(context.Background(), tt.args.table, tt.args.addHeaderRow, tt.args.formatters)
+			gotRows, err := FormatTableAsStrings(context.Background(), tt.args.table, tt.args.formatters, tt.args.options...)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Strings() error = %v, wantErr %v", err, tt.wantErr)
 				return

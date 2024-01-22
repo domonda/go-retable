@@ -7,82 +7,91 @@ import (
 	"reflect"
 )
 
-type Cell struct {
-	View  View
-	Row   int
-	Col   int
-	Value reflect.Value
-}
-
-// func (c *Cell) WithValue(v reflect.Value) *Cell {
-// 	return &Cell{
-// 		View:  c.View,
-// 		Row:   c.Row,
-// 		Col:   c.Col,
-// 		Value: v,
-// 	}
-// }
-
-// DerefValue returns a clone of the Cell
-// with the Value field dereferenced via Value.Elem().
-func (c *Cell) DerefValue() *Cell {
-	return &Cell{
-		View:  c.View,
-		Row:   c.Row,
-		Col:   c.Col,
-		Value: c.Value.Elem(),
-	}
-}
-
-// CellFormatter is an interface for formatting reflected values as strings.
+// CellFormatter is an interface for formatting view cells as strings.
 type CellFormatter interface {
-	// FormatCell formats a cell as string
+	// FormatCell formats the view cell at a row/col position as string
 	// or returns a wrapped errors.ErrUnsupported error if
 	// it doesn't support formatting the value of the cell.
 	// The raw result indicates if the returned string
 	// is in the raw format of the table format and can be
 	// used as is or if it has to be sanitized in some way.
-	FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error)
+	FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error)
 }
 
-// CellFormatterFunc implements ValueFormatter for a function.
-type CellFormatterFunc func(ctx context.Context, cell *Cell) (str string, raw bool, err error)
+// CellFormatterFunc implements CellFormatter for a function.
+type CellFormatterFunc func(ctx context.Context, view View, row, col int) (str string, raw bool, err error)
 
-func (f CellFormatterFunc) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-	return f(ctx, cell)
+func (f CellFormatterFunc) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	return f(ctx, view, row, col)
 }
 
-// PrintfCellFormatter implements ValueFormatter by calling
+// PrintfCellFormatter implements CellFormatter by calling
 // fmt.Sprintf with this type's string value as format.
 type PrintfCellFormatter string
 
-func (format PrintfCellFormatter) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-	return fmt.Sprintf(string(format), cell.Value.Interface()), false, nil
+func (format PrintfCellFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	return fmt.Sprintf(string(format), view.AnyValue(row, col)), false, nil
 }
 
-// PrintfRawCellFormatter implements ValueFormatter by calling
+// PrintfRawCellFormatter implements CellFormatter by calling
 // fmt.Sprintf with this type's string value as format.
 // The result will be indicated to be a raw value.
 type PrintfRawCellFormatter string
 
-func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-	return fmt.Sprintf(string(format), cell.Value.Interface()), true, nil
+func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	return fmt.Sprintf(string(format), view.AnyValue(row, col)), true, nil
 }
 
-// SprintRawCellFormatter returns a CellFormatter
+// SprintCellFormatter returns a CellFormatter
 // that formats a cell's value using fmt.Sprint
-// and returns the result as raw value.
-func SprintRawCellFormatter() CellFormatter {
-	return CellFormatterFunc(func(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-		return fmt.Sprint(cell.Value.Interface()), true, nil
+// and returns the result together with the rawResult argument.
+func SprintCellFormatter(rawResult bool) CellFormatter {
+	return CellFormatterFunc(func(ctx context.Context, view View, row, col int) (string, bool, error) {
+		return fmt.Sprint(view.AnyValue(row, col)), rawResult, nil
 	})
 }
 
-// RawCellString implements ValueFormatter by returning
+// UnsupportedCellFormatter is a CellFormatter that always returns errors.ErrUnsupported.
+type UnsupportedCellFormatter struct{}
+
+func (UnsupportedCellFormatter) Format(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	return "", false, errors.ErrUnsupported
+}
+
+// SprintRawCellFormatter returns a CellFormatter
+// that tries the passed formatters in order
+// until they return no error or a non errors.ErrUnsupported error.
+// If all formatters return errors.ErrUnsupported
+// then fmt.Sprint is used as fallback or
+// an empty string returned for nil.
+// In case of the fallback the raw bool is always false.
+func TryFormattersOrSprint(formatters ...CellFormatter) CellFormatter {
+	return CellFormatterFunc(func(ctx context.Context, view View, row, col int) (string, bool, error) {
+		for _, f := range formatters {
+			str, raw, err := f.FormatCell(ctx, view, row, col)
+			if !errors.Is(err, errors.ErrUnsupported) {
+				return str, raw, err
+			}
+		}
+
+		// Fallback for no formatters passed or when
+		// all formatters returned errors.ErrUnsupported
+		v := view.ReflectValue(row, col)
+		if IsNullLike(v) {
+			return "", false, nil
+		}
+		if v.Kind() == reflect.Pointer {
+			v = v.Elem()
+		}
+		return fmt.Sprint(v.Interface()), false, nil
+	})
+}
+
+// RawCellString implements CellFormatter by returning
 // the underlying string as raw value.
 type RawCellString string
 
-func (rawStr RawCellString) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
+func (rawStr RawCellString) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
 	return string(rawStr), true, nil
 }
 
@@ -92,39 +101,47 @@ func (rawStr RawCellString) FormatCell(ctx context.Context, cell *Cell) (str str
 // with the string value of LayoutFormatter.
 type LayoutFormatter string
 
-func (f LayoutFormatter) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-	formatter, ok := cell.Value.Interface().(interface{ Format(string) string })
+func (f LayoutFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	formatter, ok := view.AnyValue(row, col).(interface{ Format(string) string })
 	if !ok {
-		return "", false, fmt.Errorf("%s does not implement interface{ Format(string) string }", cell.Value.Type())
+		return "", false, fmt.Errorf("%T does not implement interface{ Format(string) string }", view.AnyValue(row, col))
 	}
 	return formatter.Format(string(f)), false, nil
 }
 
-// TrueString formats bool cells by
+// StringIfTrue formats bool cells by
 // returning the underlying string as non-raw value
 // for true and an empty string as non-raw value for false.
-type TrueString string
+type StringIfTrue string
 
-func (f TrueString) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-	if cell.Value.Bool() {
-		str = string(f)
+func (f StringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	if view.ReflectValue(row, col).Bool() {
+		return string(f), false, nil
 	}
-	return str, false, nil
+	return "", false, nil
 }
 
-// TrueRawString formats bool cells by
+// RawStringIfTrue formats bool cells by
 // returning the underlying string as raw value
 // for true and an empty string as raw value for false.
-type TrueRawString string
+type RawStringIfTrue string
 
-func (f TrueRawString) FormatCell(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
-	if cell.Value.Bool() {
-		str = string(f)
+func (f RawStringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+	if view.ReflectValue(row, col).Bool() {
+		return string(f), true, nil
 	}
-	return str, true, nil
+	return "", true, nil
 }
 
-func ReflectCellFormatterFunc(function interface{}, rawResult bool) (formatter CellFormatterFunc, valType reflect.Type, err error) {
+// ReflectCellFormatterFunc uses reflection to convert the passed function
+// into a CellFormatterFunc.
+// The function can have zero to two arguments and one or two results.
+// In case of two arguments the first argument must be of type context.Context.
+// The first result must be of type string and the optional second result of type error.
+// The returned CellFormatterFunc will return the passed rawResult argument
+// as raw result value.
+func ReflectCellFormatterFunc(function any, rawResult bool) (formatter CellFormatterFunc, valType reflect.Type, err error) {
+	// Check if function is really a function
 	fv := reflect.ValueOf(function)
 	if !fv.IsValid() {
 		return nil, nil, errors.New("nil function")
@@ -133,6 +150,8 @@ func ReflectCellFormatterFunc(function interface{}, rawResult bool) (formatter C
 	if ft.Kind() != reflect.Func {
 		return nil, nil, fmt.Errorf("expected function but got %T", function)
 	}
+
+	// Check results of function
 	if ft.NumOut() == 0 {
 		return nil, nil, errors.New("function needs result")
 	}
@@ -142,18 +161,19 @@ func ReflectCellFormatterFunc(function interface{}, rawResult bool) (formatter C
 	if ft.Out(0).Kind() != reflect.String {
 		return nil, nil, fmt.Errorf("function result must be a string kind, but is %s", ft.Out(0))
 	}
-	if ft.NumOut() == 2 && ft.Out(1) != typeOfError {
-		return nil, nil, fmt.Errorf("second function result must be error, but is %s", ft.Out(1))
-	}
-	var (
-		ctxIndex  = -1
-		valIndex  = -1
-		cellIndex = -1
-		errIndex  = -1
-	)
+	errIndex := -1
 	if ft.NumOut() == 2 {
+		if ft.Out(1) != typeOfError {
+			return nil, nil, fmt.Errorf("second function result must be error, but is %s", ft.Out(1))
+		}
 		errIndex = 1
 	}
+
+	// Check arguments of function
+	var (
+		ctxIndex = -1
+		valIndex = -1
+	)
 	for i := 0; i < ft.NumIn(); i++ {
 		switch ft.In(i) {
 		case typeOfContext:
@@ -161,11 +181,6 @@ func ReflectCellFormatterFunc(function interface{}, rawResult bool) (formatter C
 				return nil, nil, errors.New("second context.Context argument not allowed")
 			}
 			ctxIndex = i
-		case typeOfCellPtr:
-			if cellIndex != -1 {
-				return nil, nil, errors.New("second retable.Cell argument not allowed")
-			}
-			cellIndex = i
 		default:
 			if valIndex != -1 {
 				return nil, nil, errors.New("too many arguments")
@@ -174,19 +189,18 @@ func ReflectCellFormatterFunc(function interface{}, rawResult bool) (formatter C
 			valType = ft.In(i)
 		}
 	}
-	if valIndex == -1 {
-		return nil, nil, errors.New("no cell value argument")
-	}
 
-	formatter = func(ctx context.Context, cell *Cell) (str string, raw bool, err error) {
+	formatter = func(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
+		if err = ctx.Err(); err != nil {
+			return "", false, err
+		}
 		args := make([]reflect.Value, ft.NumIn())
 		if ctxIndex != -1 {
 			args[ctxIndex] = reflect.ValueOf(ctx)
 		}
-		if cellIndex != -1 {
-			args[cellIndex] = reflect.ValueOf(cell)
+		if valIndex != -1 {
+			args[valIndex] = view.ReflectValue(row, col)
 		}
-		args[valIndex] = cell.Value
 		res := fv.Call(args)
 		if errIndex != -1 && !res[errIndex].IsNil() {
 			return "", false, res[errIndex].Interface().(error)

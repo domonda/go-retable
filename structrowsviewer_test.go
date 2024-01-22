@@ -4,7 +4,7 @@ package retable
 // 	tests := []struct {
 // 		name        string
 // 		n           *StructRowsViewer
-// 		structSlice interface{}
+// 		structSlice any
 // 		wantTitles  []string
 // 		// wantRowReflector RowReflector
 // 	}{

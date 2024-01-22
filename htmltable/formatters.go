@@ -11,21 +11,21 @@ import (
 )
 
 var (
-	HTMLPreCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
-		value := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
+	HTMLPreCellFormatter retable.CellFormatterFunc = func(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
+		value := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
 		return "<pre>" + value + "</pre>", true, nil
 	}
 
-	HTMLPreCodeCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
-		value := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
+	HTMLPreCodeCellFormatter retable.CellFormatterFunc = func(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
+		value := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
 		return "<pre><code>" + value + "</code></pre>", true, nil
 	}
 
 	// ValueAsHTMLAnchorCellFormatter formats the cell value using fmt.Sprint,
 	// escapes it for HTML and returns an HTML anchor element with the
 	// value as id and inner text.
-	ValueAsHTMLAnchorCellFormatter retable.CellFormatterFunc = func(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
-		value := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
+	ValueAsHTMLAnchorCellFormatter retable.CellFormatterFunc = func(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
+		value := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
 		return fmt.Sprintf("<a id='%[1]s'>%[1]s</a>", value), true, nil
 	}
 
@@ -35,9 +35,9 @@ var (
 
 type JSONCellFormatter string
 
-func (indent JSONCellFormatter) FormatCell(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
+func (indent JSONCellFormatter) FormatCell(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
 	var src bytes.Buffer
-	_, err = fmt.Fprintf(&src, "%s", cell.Value.Interface())
+	_, err = fmt.Fprintf(&src, "%s", view.AnyValue(row, col))
 	if err != nil {
 		return "", false, err
 	}
@@ -54,7 +54,7 @@ func (indent JSONCellFormatter) FormatCell(ctx context.Context, cell *retable.Ce
 // with the class of the underlying string value.
 type HTMLSpanClassCellFormatter string
 
-func (class HTMLSpanClassCellFormatter) FormatCell(ctx context.Context, cell *retable.Cell) (str string, raw bool, err error) {
-	text := template.HTMLEscapeString(fmt.Sprint(cell.Value.Interface()))
+func (class HTMLSpanClassCellFormatter) FormatCell(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
+	text := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
 	return fmt.Sprintf("<span class='%s'>%s</span>", class, text), true, nil
 }

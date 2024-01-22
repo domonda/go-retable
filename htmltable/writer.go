@@ -16,8 +16,9 @@ type Writer[T any] struct {
 	tableClass       string
 	viewer           retable.Viewer
 	columnFormatters map[int]retable.CellFormatter
-	typeFormatters   *retable.TypeFormatters
+	typeFormatters   *retable.ReflectTypeCellFormatter
 	nilValue         template.HTML
+	headerRow        bool
 	headerTemplate   *template.Template
 	rowTemplate      *template.Template
 	footerTemplate   *template.Template
@@ -29,6 +30,7 @@ func NewWriter[T any]() *Writer[T] {
 		columnFormatters: make(map[int]retable.CellFormatter),
 		typeFormatters:   nil, // OK to use nil retable.TypeFormatters
 		nilValue:         "",
+		headerRow:        false,
 		headerTemplate:   HeaderTemplate,
 		rowTemplate:      RowTemplate,
 		footerTemplate:   FooterTemplate,
@@ -37,7 +39,7 @@ func NewWriter[T any]() *Writer[T] {
 
 // Write calls WriteView with the result of Viewer.NewView(table)
 // using the writer's viewer if not nil or else retable.DefaultViewer.
-func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, writeHeaderRow bool, caption ...string) error {
+func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, caption ...string) error {
 	viewer := w.viewer
 	if viewer == nil {
 		var err error
@@ -46,30 +48,31 @@ func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, writeHea
 			return err
 		}
 	}
-	return w.WriteWithViewer(ctx, dest, viewer, table, writeHeaderRow, caption...)
+	return w.WriteWithViewer(ctx, dest, viewer, table, caption...)
 }
 
-func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer retable.Viewer, table T, writeHeaderRow bool, caption ...string) error {
-	view, err := viewer.NewView(table)
+func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer retable.Viewer, table T, caption ...string) error {
+	view, err := viewer.NewView(strings.Join(caption, " "), table)
 	if err != nil {
 		return err
 	}
-	return w.WriteView(ctx, dest, view, writeHeaderRow, caption...)
+	return w.WriteView(ctx, dest, view)
 }
 
-func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View, writeHeaderRow bool, caption ...string) error {
+func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
 	var (
 		columns   = view.Columns()
+		numCols   = len(columns)
 		templData = &RowTemplateContext{
 			TemplateContext: TemplateContext{
 				TableClass: w.tableClass,
-				Caption:    strings.Join(caption, " "),
+				Caption:    view.Title(),
 			},
-			RawCells: make([]template.HTML, len(columns)), // will be reused with updated elements
+			RawCells: make([]template.HTML, numCols),
 		}
 	)
 
@@ -78,7 +81,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 		return err
 	}
 
-	if writeHeaderRow {
+	if w.headerRow {
 		templData.IsHeaderRow = true
 		for i := range columns {
 			templData.RawCells[i] = template.HTML(template.HTMLEscapeString(columns[i])) //#nosec G203
@@ -91,22 +94,11 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 		templData.RowIndex++
 	}
 
-	// cell will be reused with updated Row and Col fields
-	cell := retable.Cell{View: view}
-
 	for row, numRows := 0, view.NumRows(); row < numRows; row++ {
-		rowVals, err := view.ReflectRow(row)
-		if err != nil {
-			return err
-		}
-
-		cell.Row = row
-		for col, val := range rowVals {
-			cell.Col = col
-			cell.Value = val
+		for col := 0; col < numCols; col++ {
 
 			if colFormatter, ok := w.columnFormatters[col]; ok {
-				str, isRaw, err := colFormatter.FormatCell(ctx, &cell)
+				str, isRaw, err := colFormatter.FormatCell(ctx, view, row, col)
 				if err != nil && !errors.Is(err, errors.ErrUnsupported) {
 					return err
 				}
@@ -115,25 +107,26 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 						str = template.HTMLEscapeString(str)
 					}
 					templData.RawCells[col] = template.HTML(str) //#nosec G203
-					continue
+					continue                                     // next column cell
 				}
 			}
 
-			str, isRaw, err := w.typeFormatters.FormatCell(ctx, &cell)
+			str, isRaw, err := w.typeFormatters.FormatCell(ctx, view, row, col)
 			if err != nil {
 				if !errors.Is(err, errors.ErrUnsupported) {
 					return err
 				}
 				// In case of errors.ErrUnsupported
 				// use fallback method of formatting
-				if retable.ValueIsNil(val) {
+				v := view.ReflectValue(row, col)
+				if retable.IsNullLike(v) {
 					templData.RawCells[col] = w.nilValue
-					continue
+					continue // next column cell
 				}
-				if val.Kind() == reflect.Pointer {
-					val = val.Elem()
+				if v.Kind() == reflect.Pointer {
+					v = v.Elem()
 				}
-				str, isRaw = fmt.Sprint(val.Interface()), false
+				str, isRaw = fmt.Sprint(v.Interface()), false
 			}
 
 			if !isRaw {
@@ -157,6 +150,12 @@ func (w *Writer[T]) clone() *Writer[T] {
 	c := new(Writer[T])
 	*c = *w
 	return c
+}
+
+func (w *Writer[T]) WithHeaderRow(headerRow bool) *Writer[T] {
+	mod := w.clone()
+	mod.headerRow = headerRow
+	return mod
 }
 
 func (w *Writer[T]) WithTableClass(tableClass string) *Writer[T] {
@@ -196,10 +195,10 @@ func (w *Writer[T]) WithColumnFormatterFunc(columnIndex int, formatterFunc retab
 // WithRawColumn returns a new writer that interprets the collumn
 // with columnIndex as raw HTML strings.
 func (w *Writer[T]) WithRawColumn(columnIndex int) *Writer[T] {
-	return w.WithColumnFormatter(columnIndex, retable.SprintRawCellFormatter())
+	return w.WithColumnFormatter(columnIndex, retable.SprintCellFormatter(true))
 }
 
-func (w *Writer[T]) WithTypeFormatters(formatter *retable.TypeFormatters) *Writer[T] {
+func (w *Writer[T]) WithTypeFormatters(formatter *retable.ReflectTypeCellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.typeFormatters = formatter
 	return mod
@@ -217,7 +216,7 @@ func (w *Writer[T]) WithTypeFormatterFunc(typ reflect.Type, fmt retable.CellForm
 	return mod
 }
 
-func (w *Writer[T]) WithTypeFormatterReflectFunc(function interface{}) *Writer[T] {
+func (w *Writer[T]) WithTypeFormatterReflectFunc(function any) *Writer[T] {
 	fmt, typ, err := retable.ReflectCellFormatterFunc(function, false)
 	if err != nil {
 		panic(err)
@@ -225,7 +224,7 @@ func (w *Writer[T]) WithTypeFormatterReflectFunc(function interface{}) *Writer[T
 	return w.WithTypeFormatter(typ, fmt)
 }
 
-func (w *Writer[T]) WithTypeFormatterReflectRawFunc(function interface{}) *Writer[T] {
+func (w *Writer[T]) WithTypeFormatterReflectRawFunc(function any) *Writer[T] {
 	fmt, typ, err := retable.ReflectCellFormatterFunc(function, true)
 	if err != nil {
 		panic(err)

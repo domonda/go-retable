@@ -1,29 +1,63 @@
 package retable
 
 import (
-	"fmt"
 	"reflect"
 )
 
-type structRowsView struct {
+type StructRowsView struct {
+	title   string
 	columns []string
 	indices []int
-	rows    reflect.Value
+	rows    reflect.Value // slice of structs
+
+	cachedRow           int
+	cachedValues        []any
+	cachedReflectValues []reflect.Value
 }
 
-func (view *structRowsView) Columns() []string { return view.columns }
-func (view *structRowsView) NumRows() int      { return view.rows.Len() }
+func NewStructRowsView(title string, columns []string, indices []int, rows reflect.Value) View {
+	if rows.Kind() != reflect.Slice && rows.Kind() != reflect.Array {
+		panic("rows must be a slice or array")
+	}
+	return &StructRowsView{
+		title:     title,
+		columns:   columns,
+		indices:   indices,
+		rows:      rows,
+		cachedRow: -1,
+	}
+}
 
-func (view *structRowsView) ReflectRow(index int) ([]reflect.Value, error) {
-	if index < 0 || index >= view.rows.Len() {
-		return nil, fmt.Errorf("row index %d out of bounds [0..%d)", index, view.rows.Len())
+func (view *StructRowsView) Title() string     { return view.title }
+func (view *StructRowsView) Columns() []string { return view.columns }
+func (view *StructRowsView) NumRows() int      { return view.rows.Len() }
+
+func (view *StructRowsView) AnyValue(row, col int) any {
+	if row < 0 || col < 0 || row >= view.rows.Len() || col >= len(view.columns) {
+		return nil
 	}
-	columnValues := make([]reflect.Value, len(view.columns))
-	structFields := StructFieldValues(view.rows.Index(index))
-	for i, index := range view.indices {
-		if index >= 0 && index < len(view.columns) {
-			columnValues[index] = structFields[i]
-		}
+	if row != view.cachedRow {
+		view.cachedRow = row
+		view.cachedValues = nil
+		view.cachedReflectValues = nil
 	}
-	return columnValues, nil
+	if view.cachedValues == nil {
+		view.cachedValues = StructFieldValues(view.rows.Index(row))
+	}
+	return view.cachedValues[col]
+}
+
+func (view *StructRowsView) ReflectValue(row, col int) reflect.Value {
+	if row < 0 || col < 0 || row >= view.rows.Len() || col >= len(view.columns) {
+		return reflect.Value{}
+	}
+	if row != view.cachedRow {
+		view.cachedRow = row
+		view.cachedValues = nil
+		view.cachedReflectValues = nil
+	}
+	if view.cachedReflectValues == nil {
+		view.cachedReflectValues = StructFieldReflectValues(view.rows.Index(row))
+	}
+	return view.cachedReflectValues[col]
 }

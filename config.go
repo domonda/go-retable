@@ -3,24 +3,38 @@ package retable
 import (
 	"context"
 	"reflect"
+	"time"
 )
 
 var (
-	// DefaultStructRowsViewer provides the default StructRowsViewer
+	// DefaultStructFieldNaming provides the default StructFieldNaming
 	// using "col" as title tag, ignores "-" titled fields,
 	// and uses SpacePascalCase for untagged fields.
-	DefaultStructRowsViewer = &StructRowsViewer{
+	DefaultStructFieldNaming = StructFieldNaming{
 		Tag:      "col",
 		Ignore:   "-",
 		Untagged: SpacePascalCase,
 	}
 
-	// DefaultStructRowsViewerIgnoreUntagged provides the default StructRowsViewer
-	// using "col" as title tag, ignores "-" titled and untitled fields.
-	DefaultStructRowsViewerIgnoreUntagged = &StructRowsViewer{
+	// DefaultStructRowsViewer provides the default StructRowsViewer
+	// using "col" as title tag, ignores "-" titled fields,
+	// and uses SpacePascalCase for untagged fields.
+	DefaultStructRowsViewer = &StructRowsViewer{
+		StructFieldNaming: DefaultStructFieldNaming,
+	}
+
+	// DefaultStructFieldNamingIgnoreUntagged provides the default StructFieldNaming
+	// using "col" as title tag, ignores "-" titled as well as untitled fields.
+	DefaultStructFieldNamingIgnoreUntagged = StructFieldNaming{
 		Tag:      "col",
 		Ignore:   "-",
 		Untagged: UseTitle("-"),
+	}
+
+	// DefaultStructRowsViewerIgnoreUntagged provides the default StructRowsViewer
+	// using "col" as title tag, ignores "-" titled as well as untitled fields.
+	DefaultStructRowsViewerIgnoreUntagged = &StructRowsViewer{
+		StructFieldNaming: DefaultStructFieldNamingIgnoreUntagged,
 	}
 
 	// SelectViewer selects the best matching Viewer implementation
@@ -45,7 +59,9 @@ func NoTagsStructRowsViewer() Viewer {
 }
 
 var (
-	typeOfError   = reflect.TypeOf((*error)(nil)).Elem()
-	typeOfContext = reflect.TypeOf((*context.Context)(nil)).Elem()
-	typeOfCellPtr = reflect.TypeOf((*Cell)(nil))
+	typeOfError       = reflect.TypeOf((*error)(nil)).Elem()
+	typeOfContext     = reflect.TypeOf((*context.Context)(nil)).Elem()
+	typeOfView        = reflect.TypeOf((*View)(nil)).Elem()
+	typeOfTime        = reflect.TypeOf(time.Time{})
+	typeOfEmptyStruct = reflect.TypeOf(struct{}{})
 )

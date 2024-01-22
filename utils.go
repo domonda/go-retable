@@ -1,12 +1,14 @@
 package retable
 
 import (
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"go/token"
 	"reflect"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // StructFieldTypes returns the exported fields of a struct type
@@ -27,20 +29,41 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 	return fields
 }
 
-// StructFieldValues returns the reflect.Value of exported struct fields
+// StructFieldReflectValues returns the reflect.Value of exported struct fields
 // including the inlined fields of any anonymously embedded structs.
-func StructFieldValues(structValue reflect.Value) (values []reflect.Value) {
+func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 	if structValue.Kind() == reflect.Pointer {
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
+	values := make([]reflect.Value, 0, structType.NumField())
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+		switch {
+		case field.Anonymous:
+			values = append(values, StructFieldReflectValues(structValue.Field(i))...)
+		case token.IsExported(field.Name):
+			values = append(values, structValue.Field(i))
+		}
+	}
+	return values
+}
+
+// StructFieldValues returns the values of exported struct fields
+// including the inlined fields of any anonymously embedded structs.
+func StructFieldValues(structValue reflect.Value) []any {
+	if structValue.Kind() == reflect.Pointer {
+		structValue = structValue.Elem()
+	}
+	structType := structValue.Type()
+	values := make([]any, 0, structType.NumField())
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
 		switch {
 		case field.Anonymous:
 			values = append(values, StructFieldValues(structValue.Field(i))...)
 		case token.IsExported(field.Name):
-			values = append(values, structValue.Field(i))
+			values = append(values, structValue.Field(i).Interface())
 		}
 	}
 	return values
@@ -75,7 +98,7 @@ func StructFieldIndex(structPtr, fieldPtr any) (int, error) {
 	}
 	fieldVal = fieldVal.Elem()
 
-	for i, v := range StructFieldValues(structVal) {
+	for i, v := range StructFieldReflectValues(structVal) {
 		if v == fieldVal {
 			return i, nil
 		}
@@ -124,16 +147,47 @@ func SpacePascalCase(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// StringColumnWidths returns the column widths of the passed
+// table as count of UTF-8 runes.
+func StringColumnWidths(rows [][]string, numCols int) []int {
+	if numCols < 0 {
+		for _, row := range rows {
+			if rowCols := len(row); rowCols > numCols {
+				numCols = rowCols
+			}
+		}
+		if numCols <= 0 {
+			return nil
+		}
+	}
+	colWidths := make([]int, numCols)
+	for row := range rows {
+		for col := 0; col < numCols; col++ {
+			numRunes := utf8.RuneCountInString(rows[row][col])
+			if numRunes > colWidths[col] {
+				colWidths[col] = numRunes
+			}
+		}
+	}
+	return colWidths
+}
+
 // UseTitle returns a function that
 // always returns the passed columnTitle.
 func UseTitle(columnTitle string) func(fieldName string) (columnTitle string) {
 	return func(string) string { return columnTitle }
 }
 
-// ValueIsNil return true if passed reflect.Value
-// is not valid, nil (of a type that can be nil),
-// or is of type struct{}
-func ValueIsNil(val reflect.Value) bool {
+// IsNullLike return true if passed reflect.Value
+// fulfills any of the following conditions:
+//   - is not valid
+//   - nil (of a type that can be nil),
+//   - is of type struct{},
+//   - implements the IsNull() bool method which returns true,
+//   - implements the IsZero() bool method which returns true,
+//   - implements the driver.Valuer interface which returns nil, nil.
+func IsNullLike(val reflect.Value) bool {
+	// Treat zero value of reflect.Value as nil
 	if !val.IsValid() {
 		return true
 	}
@@ -141,11 +195,67 @@ func ValueIsNil(val reflect.Value) bool {
 	case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map,
 		reflect.Chan, reflect.Func, reflect.UnsafePointer:
 		return val.IsNil()
-	case reflect.Struct:
-		if t := val.Type(); t.NumField() == 0 && t.NumMethod() == 0 {
-			// Treat a value of type struct{} like nil
+	}
+	// Treat struct{}{} as nil
+	if val.Type() == typeOfEmptyStruct {
+		return true
+	}
+	if nullable, ok := val.Interface().(interface{ IsNull() bool }); ok && nullable.IsNull() {
+		return true
+	}
+	if zeroable, ok := val.Interface().(interface{ IsZero() bool }); ok && zeroable.IsZero() {
+		return true
+	}
+	if valuer, ok := val.Interface().(driver.Valuer); ok {
+		if v, e := valuer.Value(); v == nil && e == nil {
 			return true
 		}
 	}
 	return false
+}
+
+// IsStringRowEmpty returns true if all cells in the row
+// are empty strings or if the length of the row is zero.
+func IsStringRowEmpty(row []string) bool {
+	for _, cell := range row {
+		if cell != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func RemoveEmptyStringRows(rows [][]string) [][]string {
+	for i := len(rows) - 1; i >= 0; i-- {
+		if IsStringRowEmpty(rows[i]) {
+			rows = append(rows[:i], rows[i+1:]...)
+		}
+	}
+	return rows
+}
+
+// RemoveEmptyStringColumns removes all columns that only contain empty strings
+// and returns the new number of columns.
+func RemoveEmptyStringColumns(rows [][]string) (numCols int) {
+	for _, row := range rows {
+		numCols = max(numCols, len(row))
+	}
+	for c := numCols - 1; c >= 0; c-- {
+		empty := true
+		for _, row := range rows {
+			if c < len(row) && row[c] != "" {
+				empty = false
+				break
+			}
+		}
+		if empty {
+			for r, row := range rows {
+				if c < len(row) {
+					rows[r] = append(row[:c], row[c+1:]...)
+				}
+			}
+			numCols--
+		}
+	}
+	return numCols
 }

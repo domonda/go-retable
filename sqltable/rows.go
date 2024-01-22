@@ -12,7 +12,7 @@ type Rows interface {
 	// Scan copies the columns in the current row into the values pointed
 	// at by dest. The number of values in dest must be the same as the
 	// number of columns in Rows.
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 
 	// Close closes the Rows, preventing further enumeration. If Next is called
 	// and returns false and there are no further result sets,

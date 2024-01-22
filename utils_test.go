@@ -1,7 +1,10 @@
 package retable
 
 import (
+	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSpacePascalCase(t *testing.T) {
@@ -68,4 +71,162 @@ func TestStructFieldIndex(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValueLikeNil(t *testing.T) {
+	var nilInterface any
+	var nilInt *int
+	var nilSlice []int
+	tests := []struct {
+		name string
+		val  reflect.Value
+		want bool
+	}{
+		// true
+		{name: "reflect.Value{}", val: reflect.Value{}, want: true},
+		{name: "<nil> interface{}", val: reflect.ValueOf(nilInterface), want: true},
+		{name: "<nil> int", val: reflect.ValueOf(nilInt), want: true},
+		{name: "<nil> []int", val: reflect.ValueOf(nilSlice), want: true},
+		{name: "struct{}{}", val: reflect.ValueOf(struct{}{}), want: true},
+
+		// false
+		{name: "any(0)", val: reflect.ValueOf(any(0)), want: false},
+		{name: "empty string", val: reflect.ValueOf(""), want: false},
+		{name: "empty slice", val: reflect.ValueOf([]int{}), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsNullLike(tt.val); got != tt.want {
+				t.Errorf("ValueLikeNil() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRemoveEmptyStringRows(t *testing.T) {
+	type args struct {
+	}
+	tests := []struct {
+		name string
+		rows [][]string
+		want [][]string
+	}{
+		{name: "nil", rows: nil, want: nil},
+		{name: "empty", rows: [][]string{}, want: [][]string{}},
+		{
+			name: "1 empty row",
+			rows: [][]string{
+				{"", "", ""},
+			},
+			want: [][]string{},
+		},
+		{
+			name: "0 1 0",
+			rows: [][]string{
+				{"", "", ""},
+				{"", "X", ""},
+				{"", "", ""},
+			},
+			want: [][]string{
+				{"", "X", ""},
+			},
+		},
+		{
+			name: "nil 1 nil",
+			rows: [][]string{
+				nil,
+				{"", "X", ""},
+				nil,
+			},
+			want: [][]string{
+				{"", "X", ""},
+			},
+		},
+		{
+			name: "mixed",
+			rows: [][]string{
+				{""},
+				{"", "X", ""},
+				{"", "", ""},
+				nil,
+				{"A", "B", "C", "D"},
+				{"", ""},
+			},
+			want: [][]string{
+				{"", "X", ""},
+				{"A", "B", "C", "D"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RemoveEmptyStringRows(tt.rows); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("RemoveEmptyStringRows() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRemoveEmptyStringColumns(t *testing.T) {
+	tests := []struct {
+		name        string
+		rows        [][]string
+		wantNumCols int
+		wantRows    [][]string
+	}{
+		{name: "nil", rows: nil, wantNumCols: 0, wantRows: nil},
+		{name: "empty", rows: [][]string{}, wantNumCols: 0, wantRows: [][]string{}},
+		{
+			name: "1 empty row",
+			rows: [][]string{
+				{"", "", ""},
+			},
+			wantNumCols: 0,
+			wantRows:    [][]string{{}},
+		},
+		{
+			name: "mixed rem col 0 and 2",
+			rows: [][]string{
+				{""},
+				{"", "X", ""},
+				{"", "", ""},
+				nil,
+				{"", "A", "", "B"},
+				{"", "", "", ""},
+			},
+			wantNumCols: 2,
+			wantRows: [][]string{
+				{},
+				{"X"},
+				{""},
+				nil,
+				{"A", "B"},
+				{"", ""},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotNumCols := RemoveEmptyStringColumns(tt.rows)
+			require.Equal(t, tt.wantNumCols, gotNumCols, "number of columns")
+			require.True(t, equalStringRows(tt.wantRows, tt.rows), "rows are equal")
+		})
+	}
+}
+
+func equalStringRows(a, b [][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for row := range a {
+		if len(a[row]) != len(b[row]) {
+			return false
+		}
+		for col := range a[row] {
+			if a[row][col] != b[row][col] {
+				return false
+			}
+		}
+	}
+	return true
 }

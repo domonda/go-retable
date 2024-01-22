@@ -1,13 +1,17 @@
 package retable
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestReflectCellFormatterFunc(t *testing.T) {
 	type args struct {
-		function  interface{}
+		function  any
 		rawResult bool
 	}
 	tests := []struct {
@@ -19,99 +23,109 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 		{
 			name: "func(int) string",
 			args: args{
-				function: func(int) string { return "" },
+				function:  func(arg int) string { return fmt.Sprint(arg) },
+				rawResult: false,
 			},
 			wantValType: reflect.TypeOf(int(0)),
 		},
 		{
 			name: "func(int) (string, error)",
 			args: args{
-				function: func(int) (string, error) { return "", nil },
+				function:  func(arg int) (string, error) { return fmt.Sprint(arg), nil },
+				rawResult: false,
 			},
 			wantValType: reflect.TypeOf(int(0)),
 		},
 		{
 			name: "func(context.Context, int) string",
 			args: args{
-				function: func(int) string { return "" },
+				function:  func(_ context.Context, arg int) string { return fmt.Sprint(arg) },
+				rawResult: false,
 			},
 			wantValType: reflect.TypeOf(int(0)),
 		},
 		{
 			name: "func(context.Context, int) (string, error)",
 			args: args{
-				function: func(int) (string, error) { return "", nil },
+				function:  func(_ context.Context, arg int) (string, error) { return fmt.Sprint(arg), nil },
+				rawResult: false,
 			},
 			wantValType: reflect.TypeOf(int(0)),
 		},
 		{
-			name: "func(context.Context, int, *Cell) string",
+			name: "func() string",
 			args: args{
-				function: func(int) string { return "" },
+				function:  func() string { return "666" },
+				rawResult: false,
 			},
-			wantValType: reflect.TypeOf(int(0)),
+			wantValType: nil,
 		},
 		{
-			name: "func(context.Context, int, *Cell) (string, error)",
+			name: "func() (string, error)",
 			args: args{
-				function: func(int) (string, error) { return "", nil },
+				function:  func() (string, error) { return "666", nil },
+				rawResult: false,
 			},
-			wantValType: reflect.TypeOf(int(0)),
+			wantValType: nil,
 		},
 
 		// Invalid
 		{
 			name: "nil func",
 			args: args{
-				function: nil,
+				function:  nil,
+				rawResult: false,
 			},
 			wantErr: true,
 		},
 		{
 			name: "func(int)",
 			args: args{
-				function: func(int) {},
+				function:  func(int) {},
+				rawResult: false,
 			},
 			wantErr: true,
 		},
 		{
-			name: "func(context.Context, int, *Cell) (error, string)",
+			name: "func(int) (error, string)",
 			args: args{
-				function: func(int) (error, string) { return nil, "" },
+				function:  func(int) (error, string) { return nil, "" },
+				rawResult: false,
 			},
 			wantErr: true,
 		},
 		{
-			name: "func(context.Context, int, *Cell) (error, string)",
+			name: "func(context.Context, int) (error, string)",
 			args: args{
-				function: func(int) (error, string) { return nil, "" },
+				function:  func(context.Context, int) (error, string) { return nil, "" },
+				rawResult: false,
+			},
+			wantErr: true,
+		},
+		{
+			name: "func(context.Context, int) (string, bool, error)",
+			args: args{
+				function:  func(context.Context, int) (string, bool, error) { return "", false, nil },
+				rawResult: false,
 			},
 			wantErr: true,
 		},
 	}
+	view1int := &AnyValuesView{Cols: []string{"Col A"}, Rows: [][]any{{666}}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotFormatter, gotValType, err := ReflectCellFormatterFunc(tt.args.function, tt.args.rawResult)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ReflectCellFormatterFunc() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+			require.Equalf(t, tt.wantErr, err != nil, "ReflectCellFormatterFunc() error = %v, wantErr %v", err, tt.wantErr)
 			if err != nil {
 				return
 			}
-			if gotFormatter == nil {
-				t.Error("ReflectCellFormatterFunc() gotFormatter = <nil>")
-			}
-			_, gotRaw, err := gotFormatter(nil, &Cell{Value: reflect.ValueOf(0)})
-			if gotRaw != tt.args.rawResult {
-				t.Errorf("gotFormatter() raw = %v, want %v", gotRaw, tt.args.rawResult)
-			}
-			if err != nil {
-				t.Errorf("gotFormatter() returned %v", err)
-			}
-			if gotValType != tt.wantValType {
-				t.Errorf("ReflectCellFormatterFunc() gotValType = %v, want %v", gotValType, tt.wantValType)
-			}
+			require.NotNil(t, gotFormatter, "ReflectCellFormatterFunc() gotFormatter = <nil>")
+			require.Equalf(t, tt.wantValType, gotValType, "ReflectCellFormatterFunc() gotValType = %v, want %v", gotValType, tt.wantValType)
+
+			gotStr, gotRaw, err := gotFormatter(context.Background(), view1int, 0, 0)
+			require.Equalf(t, tt.args.rawResult, gotRaw, "ReflectCellFormatterFunc() raw = %v, want %v", gotRaw, tt.args.rawResult)
+			require.Equalf(t, "666", gotStr, "ReflectCellFormatterFunc() str = %v, want %v", gotStr, "666")
+			require.NoErrorf(t, err, "gotFormatter() error = %v", err)
 		})
 	}
 }
