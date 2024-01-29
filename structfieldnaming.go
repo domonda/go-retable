@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+var _ Viewer = new(StructFieldNaming)
+
 // StructFieldNaming defines how struct fields
 // are mapped to column titles as used by View.
 //
@@ -13,6 +15,8 @@ import (
 // and is equal to the zero value
 // which will use all exported struct fields
 // with their field name as column title.
+//
+// StructFieldNaming implements the Viewer interface.
 type StructFieldNaming struct {
 	// Tag is the struct field tag to be used as column title.
 	// If Tag is empty, then every struct field will be treated as untagged.

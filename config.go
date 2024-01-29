@@ -10,31 +10,20 @@ var (
 	// DefaultStructFieldNaming provides the default StructFieldNaming
 	// using "col" as title tag, ignores "-" titled fields,
 	// and uses SpacePascalCase for untagged fields.
+	// Implements the Viewer interface.
 	DefaultStructFieldNaming = StructFieldNaming{
 		Tag:      "col",
 		Ignore:   "-",
 		Untagged: SpacePascalCase,
 	}
 
-	// DefaultStructRowsViewer provides the default StructRowsViewer
-	// using "col" as title tag, ignores "-" titled fields,
-	// and uses SpacePascalCase for untagged fields.
-	DefaultStructRowsViewer = &StructRowsViewer{
-		StructFieldNaming: DefaultStructFieldNaming,
-	}
-
 	// DefaultStructFieldNamingIgnoreUntagged provides the default StructFieldNaming
 	// using "col" as title tag, ignores "-" titled as well as untitled fields.
+	// Implements the Viewer interface.
 	DefaultStructFieldNamingIgnoreUntagged = StructFieldNaming{
 		Tag:      "col",
 		Ignore:   "-",
 		Untagged: UseTitle("-"),
-	}
-
-	// DefaultStructRowsViewerIgnoreUntagged provides the default StructRowsViewer
-	// using "col" as title tag, ignores "-" titled as well as untitled fields.
-	DefaultStructRowsViewerIgnoreUntagged = &StructRowsViewer{
-		StructFieldNaming: DefaultStructFieldNamingIgnoreUntagged,
 	}
 
 	// SelectViewer selects the best matching Viewer implementation
@@ -45,7 +34,7 @@ var (
 		if _, ok := table.([][]string); ok {
 			return new(StringsViewer), nil
 		}
-		return DefaultStructRowsViewer, nil
+		return &DefaultStructFieldNaming, nil
 	}
 
 	noTagsStructRowsViewer StructRowsViewer
