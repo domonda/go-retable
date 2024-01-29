@@ -36,15 +36,19 @@ var (
 		}
 		return &DefaultStructFieldNaming, nil
 	}
-
-	noTagsStructRowsViewer StructRowsViewer
 )
 
-// NoTagsStructRowsViewer returns a viewer
+// DefaultStructRowsViewer returns a StructRowsViewer
+// that uses DefaultStructFieldNaming and no MapIndices.
+func DefaultStructRowsViewer() *StructRowsViewer {
+	return &StructRowsViewer{StructFieldNaming: DefaultStructFieldNaming}
+}
+
+// NoTagsStructRowsViewer returns a StructRowsViewer
 // that uses the struct field names as column titles
 // without considering struct field tags.
-func NoTagsStructRowsViewer() Viewer {
-	return &noTagsStructRowsViewer
+func NoTagsStructRowsViewer() *StructRowsViewer {
+	return &StructRowsViewer{}
 }
 
 var (
