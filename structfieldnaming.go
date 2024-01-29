@@ -64,3 +64,11 @@ func (n *StructFieldNaming) ColumnStructFieldValue(strct reflect.Value, column s
 	}
 	return reflect.Value{}
 }
+
+// NewView returns a View for a table made up of
+// a slice or array of structs.
+// NewView implements the Viewer interface for StructFieldNaming.
+func (n *StructFieldNaming) NewView(title string, table any) (View, error) {
+	viewer := StructRowsViewer{StructFieldNaming: *n}
+	return viewer.NewView(title, table)
+}
