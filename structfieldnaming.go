@@ -76,3 +76,15 @@ func (n *StructFieldNaming) NewView(title string, table any) (View, error) {
 	viewer := StructRowsViewer{StructFieldNaming: *n}
 	return viewer.NewView(title, table)
 }
+
+func (n *StructFieldNaming) WithTag(tag string) *StructFieldNaming {
+	mod := *n
+	mod.Tag = tag
+	return &mod
+}
+
+func (n *StructFieldNaming) WithIgnore(ignore string) *StructFieldNaming {
+	mod := *n
+	mod.Ignore = ignore
+	return &mod
+}

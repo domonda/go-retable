@@ -1,10 +1,13 @@
 package retable
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
 	"go/token"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 	"unicode"
@@ -49,9 +52,27 @@ func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 	return values
 }
 
-// StructFieldValues returns the values of exported struct fields
+// IndexedStructFieldReflectValues returns the reflect.Value of exported struct fields
 // including the inlined fields of any anonymously embedded structs.
-func StructFieldValues(structValue reflect.Value) []any {
+func IndexedStructFieldReflectValues(structValue reflect.Value, numVals int, indices []int) []reflect.Value {
+	// TODO optimized algorithm that does not allocate a slice for all values but only numVals
+	allVals := StructFieldReflectValues(structValue)
+	if len(allVals) != len(indices) {
+		panic(fmt.Errorf("got %d indices for struct with %d fields", len(indices), len(allVals)))
+	}
+	vals := make([]reflect.Value, numVals)
+	for i, index := range indices {
+		if index < 0 {
+			continue
+		}
+		vals[index] = allVals[i]
+	}
+	return vals
+}
+
+// StructFieldAnyValues returns the values of exported struct fields
+// including the inlined fields of any anonymously embedded structs.
+func StructFieldAnyValues(structValue reflect.Value) []any {
 	if structValue.Kind() == reflect.Pointer {
 		structValue = structValue.Elem()
 	}
@@ -61,12 +82,30 @@ func StructFieldValues(structValue reflect.Value) []any {
 		field := structType.Field(i)
 		switch {
 		case field.Anonymous:
-			values = append(values, StructFieldValues(structValue.Field(i))...)
+			values = append(values, StructFieldAnyValues(structValue.Field(i))...)
 		case token.IsExported(field.Name):
 			values = append(values, structValue.Field(i).Interface())
 		}
 	}
 	return values
+}
+
+// IndexedStructFieldAnyValues returns the values of exported struct fields
+// including the inlined fields of any anonymously embedded structs.
+func IndexedStructFieldAnyValues(structValue reflect.Value, numVals int, indices []int) []any {
+	// TODO optimized algorithm that does not allocate a slice for all values but only numVals
+	allVals := StructFieldAnyValues(structValue)
+	if len(allVals) != len(indices) {
+		panic(fmt.Errorf("got %d indices for struct with %d fields", len(indices), len(allVals)))
+	}
+	vals := make([]any, numVals)
+	for i, index := range indices {
+		if index < 0 {
+			continue
+		}
+		vals[index] = allVals[i]
+	}
+	return vals
 }
 
 // StructFieldIndex returns the index of of the struct field
@@ -149,24 +188,22 @@ func SpacePascalCase(name string) string {
 
 // StringColumnWidths returns the column widths of the passed
 // table as count of UTF-8 runes.
-func StringColumnWidths(rows [][]string, numCols int) []int {
-	if numCols < 0 {
-		for _, row := range rows {
-			if rowCols := len(row); rowCols > numCols {
-				numCols = rowCols
-			}
-		}
-		if numCols <= 0 {
-			return nil
+// maxCols limits the number of columns to consider,
+// if maxCols is -1, then all columns are considered.
+func StringColumnWidths(rows [][]string, maxCols int) []int {
+	if maxCols < 0 {
+		for _, r := range rows {
+			maxCols = max(maxCols, len(r))
 		}
 	}
-	colWidths := make([]int, numCols)
+	if maxCols == 0 {
+		return nil
+	}
+	colWidths := make([]int, maxCols)
 	for row := range rows {
-		for col := 0; col < numCols; col++ {
+		for col := 0; col < maxCols && col < len(rows[row]); col++ {
 			numRunes := utf8.RuneCountInString(rows[row][col])
-			if numRunes > colWidths[col] {
-				colWidths[col] = numRunes
-			}
+			colWidths[col] = max(colWidths[col], numRunes)
 		}
 	}
 	return colWidths
@@ -258,4 +295,83 @@ func RemoveEmptyStringColumns(rows [][]string) (numCols int) {
 		}
 	}
 	return numCols
+}
+
+func FprintlnView(w io.Writer, view View) error {
+	rows, err := FormatViewAsStrings(context.Background(), view, nil, OptionAddHeaderRow)
+	if err != nil {
+		return err
+	}
+	if view.Title() != "" {
+		_, err = fmt.Fprintf(w, "%s:\n", view.Title())
+		if err != nil {
+			return err
+		}
+	}
+	colWidths := StringColumnWidths(rows, -1)
+	for _, rowStrs := range rows {
+		for col, colWidth := range colWidths {
+			switch {
+			case col == 0:
+				_, err = w.Write([]byte("| "))
+			case col < len(colWidths):
+				_, err = w.Write([]byte(" | "))
+			}
+			if err != nil {
+				return err
+			}
+			str := ""
+			if col < len(rowStrs) {
+				str = rowStrs[col]
+			}
+			_, err = io.WriteString(w, str)
+			if err != nil {
+				return err
+			}
+			strLen := utf8.RuneCountInString(str)
+			for i := strLen; i < colWidth; i++ {
+				_, err = w.Write([]byte{' '})
+				if err != nil {
+					return err
+				}
+			}
+		}
+		_, err = w.Write([]byte(" |\n"))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func SprintlnView(w io.Writer, view View) (string, error) {
+	var b strings.Builder
+	err := FprintlnView(&b, view)
+	return b.String(), err
+}
+
+func PrintlnView(view View) error {
+	return FprintlnView(os.Stdout, view)
+}
+
+func FprintlnTable(w io.Writer, title string, table any) error {
+	viewer, err := SelectViewer(table)
+	if err != nil {
+		return err
+	}
+	view, err := viewer.NewView(title, table)
+	if err != nil {
+		return err
+	}
+	return FprintlnView(w, view)
+}
+
+func SprintlnTable(w io.Writer, title string, table any) (string, error) {
+	var b strings.Builder
+	err := FprintlnTable(&b, title, table)
+	return b.String(), err
+}
+
+func PrintlnTable(title string, table any) error {
+	return FprintlnTable(os.Stdout, title, table)
 }

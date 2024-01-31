@@ -33,16 +33,46 @@ var (
 	_ retable.CellFormatter = HTMLSpanClassCellFormatter("")
 )
 
+// JSONCellFormatter formats the cell value as JSON in a <pre> HTML element.
+// The string value of the formatter is used as indentation for the JSON
+// or if empty, then the JSON is compacted.
+// Any value that formats to an empty string (like nil)
+// will not be interpreted as JSON and "", false, nil will be returned.
 type JSONCellFormatter string
 
 func (indent JSONCellFormatter) FormatCell(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
-	var src bytes.Buffer
-	_, err = fmt.Fprintf(&src, "%s", view.AnyValue(row, col))
-	if err != nil {
-		return "", false, err
+	val := view.AnyValue(row, col)
+	if val == nil {
+		return "", false, nil
+	}
+	var valJSON []byte
+	switch x := val.(type) {
+	case json.RawMessage:
+		valJSON = x
+	case json.Marshaler:
+		valJSON, err = x.MarshalJSON()
+		if err != nil {
+			return "", false, err
+		}
+	case []byte:
+		valJSON = x
+	case string:
+		valJSON = []byte(x)
+	default:
+		valJSON, err = json.Marshal(val)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if len(valJSON) == 0 {
+		return "", false, nil
 	}
 	buf := bytes.NewBufferString("<pre>")
-	err = json.Indent(buf, src.Bytes(), "", string(indent))
+	if indent != "" {
+		err = json.Indent(buf, valJSON, "", string(indent))
+	} else {
+		err = json.Compact(buf, valJSON)
+	}
 	if err != nil {
 		return "", false, err
 	}

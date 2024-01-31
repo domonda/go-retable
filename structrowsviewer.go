@@ -70,8 +70,8 @@ func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 	}
 
 	for i, structField := range structFields {
-		title := v.StructFieldColumn(structField)
-		if title == v.Ignore {
+		column := v.StructFieldColumn(structField)
+		if column == v.Ignore {
 			indices[i] = -1
 			continue
 		}
@@ -91,7 +91,7 @@ func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 		indices[i] = index
 		columnIndexUsed[index] = true
 
-		columns = append(columns, title)
+		columns = append(columns, column)
 	}
 
 	return NewStructRowsView(title, columns, indices, rows), nil

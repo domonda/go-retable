@@ -3,6 +3,7 @@ package retable
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -229,4 +230,46 @@ func equalStringRows(a, b [][]string) bool {
 		}
 	}
 	return true
+}
+
+func ExamplePrintlnView() {
+	PrintlnView(&StringsView{
+		Tit:  "ExamplePrintlnView",
+		Cols: []string{"A", "B", "C"},
+		Rows: [][]string{
+			{"1", "2222222222", "3"},
+			{"", "", "3333"},
+			{"Last row"},
+		},
+	})
+
+	// Output:
+	// ExamplePrintlnView:
+	// | A        | B          | C    |
+	// | 1        | 2222222222 | 3    |
+	// |          |            | 3333 |
+	// | Last row |            |      |
+}
+
+func ExamplePrintlnTable() {
+	type Row struct {
+		A string
+		B int
+		C *time.Time
+	}
+	t := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	PrintlnTable("ExamplePrintlnTable", []Row{
+		{A: "1", B: -1, C: &t},
+		{A: "", B: 2222222222, C: nil},
+		{A: "Last row", B: 0, C: nil},
+	})
+
+	// Output:
+	// ExamplePrintlnTable:
+	// | A        | B          | C                             |
+	// | 1        | -1         | 2024-01-02 03:04:05 +0000 UTC |
+	// |          | 2222222222 |                               |
+	// | Last row | 0          |                               |
+
 }

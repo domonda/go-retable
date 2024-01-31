@@ -27,6 +27,7 @@ type Writer[T any] struct {
 func NewWriter[T any]() *Writer[T] {
 	return &Writer[T]{
 		tableClass:       "",
+		viewer:           nil,
 		columnFormatters: make(map[int]retable.CellFormatter),
 		typeFormatters:   nil, // OK to use nil retable.TypeFormatters
 		nilValue:         "",
