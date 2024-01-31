@@ -10,6 +10,14 @@ func SingleColView[T any](column string, rows []T) View {
 	}
 }
 
+func SingleCellView[T any](title, column string, value T) View {
+	return &singleColsView[T]{
+		columns:        []string{column},
+		rows:           []T{value},
+		isReflectValue: reflect.TypeOf(value) == reflect.TypeOf(reflect.Value{}),
+	}
+}
+
 type singleColsView[T any] struct {
 	columns        []string
 	rows           []T
