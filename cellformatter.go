@@ -65,9 +65,13 @@ func (UnsupportedCellFormatter) Format(ctx context.Context, view View, row, col 
 // then fmt.Sprint is used as fallback or
 // an empty string returned for nil.
 // In case of the fallback the raw bool is always false.
+// nil formatters are ignored.
 func TryFormattersOrSprint(formatters ...CellFormatter) CellFormatter {
 	return CellFormatterFunc(func(ctx context.Context, view View, row, col int) (string, bool, error) {
 		for _, f := range formatters {
+			if f == nil {
+				continue
+			}
 			str, raw, err := f.FormatCell(ctx, view, row, col)
 			if !errors.Is(err, errors.ErrUnsupported) {
 				return str, raw, err
