@@ -2,12 +2,11 @@ module github.com/domonda/go-retable/exceltable
 
 go 1.22
 
-replace github.com/domonda/go-retable => ../
+replace github.com/domonda/go-retable => ..
 
-require (
-	github.com/domonda/go-retable v0.0.0-20240131100000-86e589224328
-	github.com/xuri/excelize/v2 v2.8.1
-)
+require github.com/domonda/go-retable v0.0.0-00010101000000-000000000000 // replaced
+
+require github.com/xuri/excelize/v2 v2.8.1
 
 require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
