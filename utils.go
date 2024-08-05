@@ -186,6 +186,55 @@ func SpacePascalCase(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// SpaceGoCase inserts spaces before upper case
+// characters within Go case like names.
+// The last upper case character in a sequence of upper case
+// characters is interpreted as the start of a new word
+// and a space is inserted before it.
+// It also replaces underscore '_' characters with spaces.
+// Usable for ReflectColumnTitles.UntaggedTitle
+func SpaceGoCase(name string) string {
+	var b strings.Builder
+	b.Grow(len(name) + 4)
+	beforeLastWasUpper := false
+	lastWasUpper := true
+	lastWasSpace := true
+	for _, r := range name {
+		if r == '_' {
+			if !lastWasSpace {
+				b.WriteByte(' ')
+			}
+			lastWasUpper = false
+			lastWasSpace = true
+			continue
+		}
+		isUpper := unicode.IsUpper(r)
+		switch {
+		case isUpper && !lastWasUpper && !lastWasSpace:
+			// First upper case rune after lower case non-space rune
+			// "CamelCase" -> "Camel Case"
+			b.WriteByte(' ')
+		case !isUpper && lastWasUpper && beforeLastWasUpper:
+			// First lower case rune after two upper case runes assumes that
+			// the upper case part before the last upper case rune is an all upper case acronym
+			// "HTTPServer" -> "HTTP Server"
+			s := b.String()
+			lastR, lenLastR := utf8.DecodeLastRuneInString(s)
+			if lastR != utf8.RuneError {
+				b.Reset()
+				b.WriteString(s[:len(s)-lenLastR])
+				b.WriteByte(' ')
+				b.WriteRune(lastR)
+			}
+		}
+		b.WriteRune(r)
+		beforeLastWasUpper = lastWasUpper
+		lastWasUpper = isUpper
+		lastWasSpace = unicode.IsSpace(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // StringColumnWidths returns the column widths of the passed
 // table as count of UTF-8 runes.
 // maxCols limits the number of columns to consider,
