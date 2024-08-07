@@ -27,8 +27,8 @@ type StringParser struct {
 
 func NewStringParser() *StringParser {
 	c := &StringParser{
-		TrueStrings:  []string{"true", "TRUE", "yes", "YES", "1"},
-		FalseStrings: []string{"false", "FALSE", "no", "NO", "0"},
+		TrueStrings:  []string{"true", "True", "TRUE", "yes", "Yes", "YES", "1"},
+		FalseStrings: []string{"false", "False", "FALSE", "no", "No", "NO", "0"},
 		NilStrings:   []string{"", "nil", "<nil>", "null", "NULL"},
 		TimeFormats:  timeFormats,
 	}
