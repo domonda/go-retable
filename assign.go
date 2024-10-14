@@ -9,9 +9,10 @@ import (
 )
 
 // SmartAssign assigns src to dst by converting src to dst type
-// as smart as possible using the passed dstScanner and srcFormatter.
-// dstScanner can be nil
-// srcFormatter can be nil
+// as smart as possible using the passed dstScanner and srcFormatter
+// to convert types from and to strings.
+//
+// Both dstScanner and srcFormatter can be nil.
 func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Formatter) (err error) {
 	if !dst.IsValid() {
 		return fmt.Errorf("dst value is invalid")
@@ -218,5 +219,5 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 
 	}
 
-	return fmt.Errorf("%w: assigning %s to %s", errors.ErrUnsupported, srcType, dstType)
+	return fmt.Errorf("%w: assigning %s %#v to %s", errors.ErrUnsupported, srcType, src, dstType)
 }
