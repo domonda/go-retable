@@ -47,7 +47,7 @@ type FormatDetectionConfig struct {
 	EncodingTests []string `json:"encodingTests"`
 }
 
-func NewFormatDetectionConfig() *FormatDetectionConfig {
+func NewDefaultFormatDetectionConfig() *FormatDetectionConfig {
 	return &FormatDetectionConfig{
 		Encodings: []string{
 			"UTF-8",

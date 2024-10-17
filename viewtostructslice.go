@@ -26,7 +26,7 @@ import (
 // to call Validate() methods on the struct field values.
 //
 // The arguments dstScanner, srcFormatter, and validate can be nil.
-func ViewToStructSlice[T any](view View, naming *StructFieldNaming, requiredCols []string, dstScanner Scanner, srcFormatter Formatter, validate func(reflect.Value) error) ([]T, error) {
+func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner Scanner, srcFormatter Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
 	rowType := reflect.TypeFor[T]()
 	if rowType.Kind() != reflect.Struct && (rowType.Kind() != reflect.Pointer || rowType.Elem().Kind() != reflect.Struct) {
 		return nil, fmt.Errorf("slice element type %s is not a struct or pointer to struct", rowType)

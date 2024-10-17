@@ -9,10 +9,10 @@ import (
 
 // ParseDetectFormat returns a slice of strings per row
 // with the format detected via the optional FormatDetectionConfig.
-func ParseDetectFormat(csv []byte, configOrNil *FormatDetectionConfig) (rows [][]string, format *Format, err error) {
-	config := configOrNil
+// NewDefaultFormatDetectionConfig() will be used if config is nil.
+func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]string, format *Format, err error) {
 	if config == nil {
-		config = NewFormatDetectionConfig()
+		config = NewDefaultFormatDetectionConfig()
 	}
 
 	format, lines, err := detectFormatAndSplitLines(csv, config)
