@@ -31,6 +31,8 @@ type StructFieldNaming struct {
 }
 
 // String implements the fmt.Stringer interface for StructFieldNaming.
+//
+// Valid to call with nil receiver.
 func (n *StructFieldNaming) String() string {
 	if n == nil {
 		return `StructFieldNaming{Tag: "", Ignore: ""}`
@@ -39,12 +41,17 @@ func (n *StructFieldNaming) String() string {
 }
 
 // StructFieldColumn returns the column title for a struct field.
-func (n *StructFieldNaming) StructFieldColumn(structField reflect.StructField) string {
+//
+// Valid to call with nil receiver.
+func (n *StructFieldNaming) StructFieldColumn(field reflect.StructField) string {
+	if !field.IsExported() || field.Anonymous {
+		return ""
+	}
 	if n == nil {
-		return structField.Name
+		return field.Name
 	}
 	if n.Tag != "" {
-		if tag, ok := structField.Tag.Lookup(n.Tag); ok {
+		if tag, ok := field.Tag.Lookup(n.Tag); ok {
 			if i := strings.IndexByte(tag, ','); i != -1 {
 				tag = tag[:i]
 			}
@@ -54,19 +61,77 @@ func (n *StructFieldNaming) StructFieldColumn(structField reflect.StructField) s
 		}
 	}
 	if n.Untagged == nil {
-		return structField.Name
+		return field.Name
 	}
-	return n.Untagged(structField.Name)
+	return n.Untagged(field.Name)
 }
 
-func (n *StructFieldNaming) ColumnStructFieldValue(strct reflect.Value, column string) reflect.Value {
-	strctType := strct.Type()
-	for i := 0; i < strctType.NumField(); i++ {
-		if n.StructFieldColumn(strctType.Field(i)) == column {
-			return strct.Field(i)
+func (n *StructFieldNaming) IsIgnored(column string) bool {
+	return column == "" || (n != nil && column == n.Ignore)
+}
+
+// ColumnStructFieldValue returns the reflect.Value of the struct field
+// that is mapped to the column title.
+//
+// Valid to call with nil receiver.
+func (n *StructFieldNaming) ColumnStructFieldValue(structVal reflect.Value, column string) reflect.Value {
+	if n.IsIgnored(column) {
+		return reflect.Value{}
+	}
+	if structVal.Kind() == reflect.Pointer {
+		structVal = structVal.Elem()
+	}
+	structType := structVal.Type()
+	if structType.Kind() != reflect.Struct {
+		panic("expected struct or pointer to struct instead of " + structVal.Type().String())
+	}
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+		if field.Anonymous {
+			// Recurse into anonymous embedded structs
+			if v := n.ColumnStructFieldValue(structVal.Field(i), column); v.IsValid() {
+				return v
+			}
+			continue
+		}
+		if n.StructFieldColumn(field) == column {
+			return structVal.Field(i)
 		}
 	}
 	return reflect.Value{}
+}
+
+// Columns returns the column titles for a struct
+// or a pointer to a struct.
+//
+// It panics for non struct or struct pointer types.
+//
+// Valid to call with nil receiver.
+func (n *StructFieldNaming) Columns(strct any) []string {
+	return n.columns(reflect.TypeOf(strct))
+}
+
+func (n *StructFieldNaming) columns(t reflect.Type) []string {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		panic("expected struct or pointer to struct instead of " + t.String())
+	}
+	columns := make([]string, 0, t.NumField())
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if field.Anonymous {
+			// Recurse into anonymous embedded structs
+			columns = append(columns, n.columns(field.Type)...)
+			continue
+		}
+		column := n.StructFieldColumn(field)
+		if !n.IsIgnored(column) {
+			columns = append(columns, column)
+		}
+	}
+	return columns
 }
 
 // NewView returns a View for a table made up of
