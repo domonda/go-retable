@@ -2,6 +2,7 @@ package retable
 
 import (
 	"reflect"
+	"strings"
 )
 
 // StringsView is a View that uses strings as values.
@@ -21,10 +22,14 @@ var _ View = new(StringsView)
 // NewStringsView returns a StringsView using either
 // the optional cols arguments as column names
 // or the first row if no cols have been passed.
+// Whitespace will be trimmed from the column names.
 func NewStringsView(title string, rows [][]string, cols ...string) *StringsView {
 	if len(cols) == 0 && len(rows) > 0 {
 		cols = rows[0]
 		rows = rows[1:]
+	}
+	for i, col := range cols {
+		cols[i] = strings.TrimSpace(col)
 	}
 	return &StringsView{Tit: title, Cols: cols, Rows: rows}
 }
@@ -55,7 +60,11 @@ func (view *StringsView) ReflectValue(row, col int) reflect.Value {
 
 // NewHeaderView returns a View using
 // the passed cols as column names and also as first row.
+// Whitespace will be trimmed from the column names.
 func NewHeaderView(cols ...string) *HeaderView {
+	for i, col := range cols {
+		cols[i] = strings.TrimSpace(col)
+	}
 	return &HeaderView{Cols: cols}
 }
 

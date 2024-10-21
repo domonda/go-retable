@@ -153,3 +153,12 @@ func ReplaceNewlineWithSpacefunc(rows [][]string) {
 		}
 	}
 }
+
+// TrimSpace removes leading and trailing spaces from all fields.
+func TrimSpace(rows [][]string) {
+	for _, row := range rows {
+		for col, field := range row {
+			row[col] = strings.TrimSpace(field)
+		}
+	}
+}
