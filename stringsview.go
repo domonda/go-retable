@@ -1,7 +1,6 @@
 package retable
 
 import (
-	"reflect"
 	"strings"
 )
 
@@ -38,7 +37,7 @@ func (view *StringsView) Title() string     { return view.Tit }
 func (view *StringsView) Columns() []string { return view.Cols }
 func (view *StringsView) NumRows() int      { return len(view.Rows) }
 
-func (view *StringsView) AnyValue(row, col int) any {
+func (view *StringsView) Cell(row, col int) any {
 	if row < 0 || col < 0 || row >= len(view.Rows) || col >= len(view.Cols) {
 		return nil
 	}
@@ -46,16 +45,6 @@ func (view *StringsView) AnyValue(row, col int) any {
 		return ""
 	}
 	return view.Rows[row][col]
-}
-
-func (view *StringsView) ReflectValue(row, col int) reflect.Value {
-	if row < 0 || col < 0 || row >= len(view.Rows) || col >= len(view.Cols) {
-		return reflect.Value{}
-	}
-	if col >= len(view.Rows[row]) {
-		return reflect.ValueOf("")
-	}
-	return reflect.ValueOf(view.Rows[row][col])
 }
 
 // NewHeaderView returns a View using
@@ -86,16 +75,9 @@ func (view *HeaderView) Title() string     { return view.Tit }
 func (view *HeaderView) Columns() []string { return view.Cols }
 func (view *HeaderView) NumRows() int      { return 1 }
 
-func (view *HeaderView) AnyValue(row, col int) any {
+func (view *HeaderView) Cell(row, col int) any {
 	if row != 0 || col < 0 || col >= len(view.Cols) {
 		return nil
 	}
 	return view.Cols[col]
-}
-
-func (view *HeaderView) ReflectValue(row, col int) reflect.Value {
-	if row != 0 || col < 0 || col >= len(view.Cols) {
-		return reflect.Value{}
-	}
-	return reflect.ValueOf(view.Cols[col])
 }

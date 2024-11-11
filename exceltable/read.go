@@ -114,14 +114,14 @@ func (view *sheetStringsView) Title() string     { return view.sheet }
 func (view *sheetStringsView) Columns() []string { return view.columns }
 func (view *sheetStringsView) NumRows() int      { return len(view.rows) }
 
-func (view *sheetStringsView) AnyValue(row, col int) any {
+func (view *sheetStringsView) Cell(row, col int) any {
 	if row < 0 || col < 0 || row >= len(view.rows) || col >= len(view.rows[row]) {
 		return nil
 	}
 	return view.rows[row][col]
 }
 
-func (view *sheetStringsView) ReflectValue(row, col int) reflect.Value {
+func (view *sheetStringsView) ReflectCell(row, col int) reflect.Value {
 	if row < 0 || col < 0 || row >= len(view.rows) || col >= len(view.rows[row]) {
 		return reflect.Value{}
 	}
@@ -139,14 +139,14 @@ func (view *sheetStringsView) ReflectValue(row, col int) reflect.Value {
 // func (view *sheetView) Columns() []string { return view.columns }
 // func (view *sheetView) NumRows() int      { return view.numRows }
 
-// func (view *sheetView) AnyValue(row, col int) any {
+// func (view *sheetView) Cell(row, col int) any {
 // 	if row < 0 || col < 0 || row >= view.numRows || col >= len(view.columns) {
 // 		return nil
 // 	}
 // 	panic("TODO")
 // }
 
-// func (view *sheetView) ReflectValue(row, col int) reflect.Value {
+// func (view *sheetView) ReflectCell(row, col int) reflect.Value {
 // 	if row < 0 || col < 0 || row >= view.numRows || col >= len(view.columns) {
 // 		return reflect.Value{}
 // 	}

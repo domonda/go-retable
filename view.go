@@ -22,10 +22,37 @@ type View interface {
 	Columns() []string
 	// Numrows returns the number of rows
 	NumRows() int
-	// AnyValue returns the empty interface value of the cell at the given row and column.
+	// Cell returns the empty interface value of the cell at the given row and column.
 	// If row and col are out of bounds then nil is returned.
-	AnyValue(row, col int) any
-	// Value returns the reflect.Value of the cell at the given row and column.
+	Cell(row, col int) any
+}
+
+// ReflectCellView expands the View interface
+// with a method to return the reflect.Value
+// of the cell at the given row and column.
+type ReflectCellView interface {
+	View
+
+	// ReflectCell returns the reflect.Value of the cell at the given row and column.
 	// If row and col are out of bounds then the zero value is returned.
-	ReflectValue(row, col int) reflect.Value
+	ReflectCell(row, col int) reflect.Value
+}
+
+// AsReflectCellView returns the passed view as
+// a ReflectCellView if it implements the interface,
+// otherwise it wraps the view with a helper type
+// to create a ReflectCellView.
+func AsReflectCellView(view View) ReflectCellView {
+	if v, ok := view.(ReflectCellView); ok {
+		return v
+	}
+	return wrapAsReflectCellView{view}
+}
+
+type wrapAsReflectCellView struct {
+	View
+}
+
+func (w wrapAsReflectCellView) ReflectCell(row, col int) reflect.Value {
+	return reflect.ValueOf(w.View.Cell(row, col))
 }

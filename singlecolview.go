@@ -36,7 +36,7 @@ func (s *singleColsView[T]) NumRows() int {
 	return len(s.rows)
 }
 
-func (s *singleColsView[T]) AnyValue(row, col int) any {
+func (s *singleColsView[T]) Cell(row, col int) any {
 	if row < 0 || row >= len(s.rows) || col != 0 {
 		return nil
 	}
@@ -52,7 +52,7 @@ func (s *singleColsView[T]) AnyValue(row, col int) any {
 	return v.Interface()
 }
 
-func (s *singleColsView[T]) ReflectValue(row, col int) reflect.Value {
+func (s *singleColsView[T]) ReflectCell(row, col int) reflect.Value {
 	if row < 0 || row >= len(s.rows) || col != 0 {
 		return reflect.Value{}
 	}

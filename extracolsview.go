@@ -1,9 +1,5 @@
 package retable
 
-import (
-	"reflect"
-)
-
 var _ View = ExtraColsView(nil)
 
 type ExtraColsView []View
@@ -31,7 +27,7 @@ func (e ExtraColsView) NumRows() int {
 	return maxNumRows
 }
 
-func (e ExtraColsView) AnyValue(row, col int) any {
+func (e ExtraColsView) Cell(row, col int) any {
 	if row < 0 || col < 0 {
 		return nil
 	}
@@ -40,25 +36,9 @@ func (e ExtraColsView) AnyValue(row, col int) any {
 		numCols := len(view.Columns())
 		colRight := colLeft + numCols
 		if col < colRight {
-			return view.AnyValue(row, col-colLeft)
+			return view.Cell(row, col-colLeft)
 		}
 		colLeft = colRight
 	}
 	return nil
-}
-
-func (e ExtraColsView) ReflectValue(row, col int) reflect.Value {
-	if row < 0 || col < 0 {
-		return reflect.Value{}
-	}
-	colLeft := 0
-	for _, view := range e {
-		numCols := len(view.Columns())
-		colRight := colLeft + numCols
-		if col < colRight {
-			return view.ReflectValue(row, col-colLeft)
-		}
-		colLeft = colRight
-	}
-	return reflect.Value{}
 }

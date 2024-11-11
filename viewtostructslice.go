@@ -33,6 +33,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 	}
 
 	viewCols := view.Columns()
+	reflectView := AsReflectCellView(view)
 
 	if len(requiredCols) > 0 {
 		var v reflect.Value
@@ -63,7 +64,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			if !dst.IsValid() {
 				continue
 			}
-			src := view.ReflectValue(rowIndex, colIndex)
+			src := reflectView.ReflectCell(rowIndex, colIndex)
 			if !src.IsValid() {
 				continue
 			}

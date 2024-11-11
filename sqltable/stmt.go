@@ -95,7 +95,7 @@ func (r *driverRows) Next(dest []driver.Value) (err error) {
 		return io.EOF
 	}
 	for col := range dest {
-		dest[col], err = driverValue(r.view.AnyValue(r.rowIndex, col))
+		dest[col], err = driverValue(r.view.Cell(r.rowIndex, col))
 		if err != nil {
 			return err
 		}

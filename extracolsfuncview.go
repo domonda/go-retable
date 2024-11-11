@@ -4,9 +4,9 @@ import (
 	"reflect"
 )
 
-func ExtraColsAnyValueFuncView(left View, columns []string, anyValue func(row, col int) any) View {
+func ExtraColsAnyValueFuncView(left View, columns []string, anyValue func(row, col int) any) ReflectCellView {
 	return &extraColsFuncView{
-		left:     left,
+		left:     AsReflectCellView(left),
 		columns:  columns,
 		anyValue: anyValue,
 		reflectValue: func(row, col int) reflect.Value {
@@ -15,9 +15,9 @@ func ExtraColsAnyValueFuncView(left View, columns []string, anyValue func(row, c
 	}
 }
 
-func ExtraColsReflectValueFuncView(left View, columns []string, reflectValue func(row, col int) reflect.Value) View {
+func ExtraColsReflectValueFuncView(left View, columns []string, reflectValue func(row, col int) reflect.Value) ReflectCellView {
 	return &extraColsFuncView{
-		left:    left,
+		left:    AsReflectCellView(left),
 		columns: columns,
 		anyValue: func(row, col int) any {
 			v := reflectValue(row, col)
@@ -31,7 +31,7 @@ func ExtraColsReflectValueFuncView(left View, columns []string, reflectValue fun
 }
 
 type extraColsFuncView struct {
-	left         View
+	left         ReflectCellView
 	columns      []string
 	anyValue     func(row, col int) any
 	reflectValue func(row, col int) reflect.Value
@@ -49,18 +49,18 @@ func (e *extraColsFuncView) NumRows() int {
 	return e.left.NumRows()
 }
 
-func (e *extraColsFuncView) AnyValue(row, col int) any {
+func (e *extraColsFuncView) Cell(row, col int) any {
 	numLeftCols := len(e.left.Columns())
 	if col < numLeftCols {
-		return e.left.AnyValue(row, col)
+		return e.left.Cell(row, col)
 	}
 	return e.anyValue(row, col-numLeftCols)
 }
 
-func (e *extraColsFuncView) ReflectValue(row, col int) reflect.Value {
+func (e *extraColsFuncView) ReflectCell(row, col int) reflect.Value {
 	numLeftCols := len(e.left.Columns())
 	if col < numLeftCols {
-		return e.left.ReflectValue(row, col)
+		return e.left.ReflectCell(row, col)
 	}
 	return e.reflectValue(row, col-numLeftCols)
 }

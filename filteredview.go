@@ -1,7 +1,5 @@
 package retable
 
-import "reflect"
-
 var _ View = new(FilteredView)
 
 type FilteredView struct {
@@ -51,7 +49,7 @@ func (view *FilteredView) NumRows() int {
 	return n
 }
 
-func (view *FilteredView) AnyValue(row, col int) any {
+func (view *FilteredView) Cell(row, col int) any {
 	numRows := view.NumRows()
 	numCols := view.NumCols()
 	if row < 0 || col < 0 || row >= numRows || col >= numCols {
@@ -61,18 +59,5 @@ func (view *FilteredView) AnyValue(row, col int) any {
 	if view.ColumnMapping != nil {
 		col = view.ColumnMapping[col]
 	}
-	return view.Source.AnyValue(row, col)
-}
-
-func (view *FilteredView) ReflectValue(row, col int) reflect.Value {
-	numRows := view.NumRows()
-	numCols := view.NumCols()
-	if row < 0 || col < 0 || row >= numRows || col >= numCols {
-		return reflect.Value{}
-	}
-	row += max(view.RowOffset, 0)
-	if view.ColumnMapping != nil {
-		col = view.ColumnMapping[col]
-	}
-	return view.Source.ReflectValue(row, col)
+	return view.Source.Cell(row, col)
 }

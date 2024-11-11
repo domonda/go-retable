@@ -28,7 +28,7 @@ func (f *ReflectTypeCellFormatter) FormatCell(ctx context.Context, view View, ro
 	if err = ctx.Err(); err != nil {
 		return "", false, err
 	}
-	cellVal := view.ReflectValue(row, col)
+	cellVal := AsReflectCellView(view).ReflectCell(row, col)
 	cellType := cellVal.Type()
 	if typeFmt, ok := f.Types[cellType]; ok {
 		str, raw, err := typeFmt.FormatCell(ctx, view, row, col)

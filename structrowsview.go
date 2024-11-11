@@ -70,7 +70,7 @@ func (view *StructRowsView) Title() string     { return view.title }
 func (view *StructRowsView) Columns() []string { return view.columns }
 func (view *StructRowsView) NumRows() int      { return view.rows.Len() }
 
-func (view *StructRowsView) AnyValue(row, col int) any {
+func (view *StructRowsView) Cell(row, col int) any {
 	if row < 0 || col < 0 || row >= view.rows.Len() || col >= len(view.columns) {
 		return nil
 	}
@@ -89,7 +89,7 @@ func (view *StructRowsView) AnyValue(row, col int) any {
 	return view.cachedValues[col]
 }
 
-func (view *StructRowsView) ReflectValue(row, col int) reflect.Value {
+func (view *StructRowsView) ReflectCell(row, col int) reflect.Value {
 	if row < 0 || col < 0 || row >= view.rows.Len() || col >= len(view.columns) {
 		return reflect.Value{}
 	}

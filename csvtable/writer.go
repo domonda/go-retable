@@ -309,7 +309,7 @@ func (w *Writer[T]) cellString(ctx context.Context, view retable.View, row, col 
 	// Continue after errors.ErrUnsupported
 
 	// Use fallback methods for formatting
-	v := view.ReflectValue(row, col)
+	v := retable.AsReflectCellView(view).ReflectCell(row, col)
 	if retable.IsNullLike(v) {
 		return w.escapeString(w.nilValue, false), nil
 	}

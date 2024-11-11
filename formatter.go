@@ -33,7 +33,7 @@ func (UnsupportedFormatter) Format(v reflect.Value) (string, error) {
 
 func CellFormatterFromFormatter(f Formatter, rawResult bool) CellFormatter {
 	return CellFormatterFunc(func(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
-		str, err = f.Format(view.ReflectValue(row, col))
+		str, err = f.Format(AsReflectCellView(view).ReflectCell(row, col))
 		return str, rawResult, err
 	})
 }

@@ -30,7 +30,7 @@ func (f CellFormatterFunc) FormatCell(ctx context.Context, view View, row, col i
 type PrintfCellFormatter string
 
 func (format PrintfCellFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
-	return fmt.Sprintf(string(format), view.AnyValue(row, col)), false, nil
+	return fmt.Sprintf(string(format), view.Cell(row, col)), false, nil
 }
 
 // PrintfRawCellFormatter implements CellFormatter by calling
@@ -39,7 +39,7 @@ func (format PrintfCellFormatter) FormatCell(ctx context.Context, view View, row
 type PrintfRawCellFormatter string
 
 func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
-	return fmt.Sprintf(string(format), view.AnyValue(row, col)), true, nil
+	return fmt.Sprintf(string(format), view.Cell(row, col)), true, nil
 }
 
 // SprintCellFormatter returns a CellFormatter
@@ -47,7 +47,7 @@ func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, 
 // and returns the result together with the rawResult argument.
 func SprintCellFormatter(rawResult bool) CellFormatter {
 	return CellFormatterFunc(func(ctx context.Context, view View, row, col int) (string, bool, error) {
-		return fmt.Sprint(view.AnyValue(row, col)), rawResult, nil
+		return fmt.Sprint(view.Cell(row, col)), rawResult, nil
 	})
 }
 
@@ -80,7 +80,7 @@ func TryFormattersOrSprint(formatters ...CellFormatter) CellFormatter {
 
 		// Fallback for no formatters passed or when
 		// all formatters returned errors.ErrUnsupported
-		v := view.ReflectValue(row, col)
+		v := AsReflectCellView(view).ReflectCell(row, col)
 		if IsNullLike(v) {
 			return "", false, nil
 		}
@@ -106,9 +106,9 @@ func (rawStr RawCellString) FormatCell(ctx context.Context, view View, row, col 
 type LayoutFormatter string
 
 func (f LayoutFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
-	formatter, ok := view.AnyValue(row, col).(interface{ Format(string) string })
+	formatter, ok := view.Cell(row, col).(interface{ Format(string) string })
 	if !ok {
-		return "", false, fmt.Errorf("%T does not implement interface{ Format(string) string }", view.AnyValue(row, col))
+		return "", false, fmt.Errorf("%T does not implement interface{ Format(string) string }", view.Cell(row, col))
 	}
 	return formatter.Format(string(f)), false, nil
 }
@@ -119,7 +119,7 @@ func (f LayoutFormatter) FormatCell(ctx context.Context, view View, row, col int
 type StringIfTrue string
 
 func (f StringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
-	if view.ReflectValue(row, col).Bool() {
+	if view.Cell(row, col).(bool) {
 		return string(f), false, nil
 	}
 	return "", false, nil
@@ -131,7 +131,7 @@ func (f StringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (
 type RawStringIfTrue string
 
 func (f RawStringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
-	if view.ReflectValue(row, col).Bool() {
+	if view.Cell(row, col).(bool) {
 		return string(f), true, nil
 	}
 	return "", true, nil
@@ -203,7 +203,7 @@ func ReflectCellFormatterFunc(function any, rawResult bool) (formatter CellForma
 			args[ctxIndex] = reflect.ValueOf(ctx)
 		}
 		if valIndex != -1 {
-			args[valIndex] = view.ReflectValue(row, col)
+			args[valIndex] = AsReflectCellView(view).ReflectCell(row, col)
 		}
 		res := fv.Call(args)
 		if errIndex != -1 && !res[errIndex].IsNil() {

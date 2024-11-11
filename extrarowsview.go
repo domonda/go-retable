@@ -1,9 +1,5 @@
 package retable
 
-import (
-	"reflect"
-)
-
 var _ View = ExtraRowView(nil)
 
 type ExtraRowView []View
@@ -30,7 +26,7 @@ func (e ExtraRowView) NumRows() int {
 	return numRows
 }
 
-func (e ExtraRowView) AnyValue(row, col int) any {
+func (e ExtraRowView) Cell(row, col int) any {
 	if row < 0 || col < 0 || col >= len(e.Columns()) {
 		return nil
 	}
@@ -39,25 +35,9 @@ func (e ExtraRowView) AnyValue(row, col int) any {
 		numRows := view.NumRows()
 		rowBottom := rowTop + numRows
 		if row < rowBottom {
-			return view.AnyValue(row-rowTop, col)
+			return view.Cell(row-rowTop, col)
 		}
 		rowTop = rowBottom
 	}
 	return nil
-}
-
-func (e ExtraRowView) ReflectValue(row, col int) reflect.Value {
-	if row < 0 || col < 0 || col >= len(e.Columns()) {
-		return reflect.Value{}
-	}
-	rowTop := 0
-	for _, view := range e {
-		numRows := view.NumRows()
-		rowBottom := rowTop + numRows
-		if row < rowBottom {
-			return view.ReflectValue(row-rowTop, col)
-		}
-		rowTop = rowBottom
-	}
-	return reflect.Value{}
 }

@@ -75,6 +75,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 			},
 			RawCells: make([]template.HTML, numCols),
 		}
+		reflectView = retable.AsReflectCellView(view)
 	)
 
 	err := w.headerTemplate.Execute(dest, templData.TemplateContext)
@@ -119,7 +120,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 				}
 				// In case of errors.ErrUnsupported
 				// use fallback method of formatting
-				v := view.ReflectValue(row, col)
+				v := reflectView.ReflectCell(row, col)
 				if retable.IsNullLike(v) {
 					templData.RawCells[col] = w.nilValue
 					continue // next column cell

@@ -1,9 +1,5 @@
 package retable
 
-import (
-	"reflect"
-)
-
 var _ View = new(AnyValuesView)
 
 // AnyValuesView is a View implementation
@@ -25,7 +21,7 @@ func NewAnyValuesViewFrom(source View) *AnyValuesView {
 	for row := 0; row < source.NumRows(); row++ {
 		view.Rows[row] = make([]any, len(source.Columns()))
 		for col := range view.Rows[row] {
-			view.Rows[row][col] = source.AnyValue(row, col)
+			view.Rows[row][col] = source.Cell(row, col)
 		}
 	}
 	return view
@@ -35,16 +31,9 @@ func (view *AnyValuesView) Title() string     { return view.Tit }
 func (view *AnyValuesView) Columns() []string { return view.Cols }
 func (view *AnyValuesView) NumRows() int      { return len(view.Rows) }
 
-func (view *AnyValuesView) AnyValue(row, col int) any {
+func (view *AnyValuesView) Cell(row, col int) any {
 	if row < 0 || col < 0 || row >= len(view.Rows) || col >= len(view.Rows[row]) {
 		return nil
 	}
 	return view.Rows[row][col]
-}
-
-func (view *AnyValuesView) ReflectValue(row, col int) reflect.Value {
-	if row < 0 || col < 0 || row >= len(view.Rows) || col >= len(view.Rows[row]) {
-		return reflect.Value{}
-	}
-	return reflect.ValueOf(view.Rows[row][col])
 }

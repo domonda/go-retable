@@ -12,12 +12,12 @@ import (
 
 var (
 	HTMLPreCellFormatter retable.CellFormatterFunc = func(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
-		value := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
+		value := template.HTMLEscapeString(fmt.Sprint(view.Cell(row, col)))
 		return "<pre>" + value + "</pre>", true, nil
 	}
 
 	HTMLPreCodeCellFormatter retable.CellFormatterFunc = func(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
-		value := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
+		value := template.HTMLEscapeString(fmt.Sprint(view.Cell(row, col)))
 		return "<pre><code>" + value + "</code></pre>", true, nil
 	}
 
@@ -25,7 +25,7 @@ var (
 	// escapes it for HTML and returns an HTML anchor element with the
 	// value as id and inner text.
 	ValueAsHTMLAnchorCellFormatter retable.CellFormatterFunc = func(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
-		value := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
+		value := template.HTMLEscapeString(fmt.Sprint(view.Cell(row, col)))
 		return fmt.Sprintf("<a id='%[1]s'>%[1]s</a>", value), true, nil
 	}
 
@@ -41,7 +41,7 @@ var (
 type JSONCellFormatter string
 
 func (indent JSONCellFormatter) FormatCell(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
-	val := view.AnyValue(row, col)
+	val := view.Cell(row, col)
 	if val == nil {
 		return "", false, nil
 	}
@@ -85,6 +85,6 @@ func (indent JSONCellFormatter) FormatCell(ctx context.Context, view retable.Vie
 type HTMLSpanClassCellFormatter string
 
 func (class HTMLSpanClassCellFormatter) FormatCell(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
-	text := template.HTMLEscapeString(fmt.Sprint(view.AnyValue(row, col)))
+	text := template.HTMLEscapeString(fmt.Sprint(view.Cell(row, col)))
 	return fmt.Sprintf("<span class='%s'>%s</span>", class, text), true, nil
 }
