@@ -1,6 +1,6 @@
 module github.com/domonda/go-retable/exceltable
 
-go 1.23
+go 1.24
 
 replace github.com/domonda/go-retable => ..
 
@@ -12,9 +12,9 @@ require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/richardlehane/mscfb v1.0.4 // indirect
 	github.com/richardlehane/msoleps v1.0.4 // indirect
-	github.com/xuri/efp v0.0.0-20240408161823-9ad904a10d6d // indirect
-	github.com/xuri/nfp v0.0.0-20240318013403-ab9948c2c4a7 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	github.com/xuri/efp v0.0.0-20250227110027-3491fafc2b79 // indirect
+	github.com/xuri/nfp v0.0.0-20250226145837-86d5fc24b2ba // indirect
+	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/net v0.39.0 // indirect
+	golang.org/x/text v0.24.0 // indirect
 )
