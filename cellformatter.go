@@ -178,7 +178,7 @@ func ReflectCellFormatterFunc(function any, rawResult bool) (formatter CellForma
 		ctxIndex = -1
 		valIndex = -1
 	)
-	for i := 0; i < ft.NumIn(); i++ {
+	for i := range ft.NumIn() {
 		switch ft.In(i) {
 		case typeOfContext:
 			if ctxIndex != -1 {
