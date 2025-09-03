@@ -54,7 +54,6 @@ func NoTagsStructRowsViewer() *StructRowsViewer {
 var (
 	typeOfError       = reflect.TypeOf((*error)(nil)).Elem()
 	typeOfContext     = reflect.TypeOf((*context.Context)(nil)).Elem()
-	typeOfView        = reflect.TypeOf((*View)(nil)).Elem()
 	typeOfTime        = reflect.TypeOf(time.Time{})
 	typeOfEmptyStruct = reflect.TypeOf(struct{}{})
 )
