@@ -2,7 +2,9 @@ github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xW
 github.com/buger/jsonparser v1.1.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cention-sany/utf7 v0.0.0-20170124080048-26cad61bd60a/go.mod h1:2GxOXOlEPAMFPfp014mK1SWq8G8BN8o7/dfYqJrVGn8=
 github.com/domonda/go-errs v0.0.0-20240702051036-0e696c849b5f/go.mod h1:qLWt1z3aIg12+Dbxu9bMydFOHEi92vWE7vAHcHLd8n8=
+github.com/domonda/go-errs v0.0.0-20250509130707-0373cd8156d7 h1:QLHl18/T8GFUBz06w2jPJevhh/QGa46qYItPual73OE=
 github.com/domonda/go-errs v0.0.0-20250509130707-0373cd8156d7/go.mod h1:d1vM8jnNOby2gJSsbnCYPE/WadNbdxHTCE0sDUTMVSs=
+github.com/domonda/go-pretty v0.0.0-20240110134850-17385799142f h1:5eA74m451PqlqCXyJzWXp95Quj4PZ6Lm/ndKBuiNhe4=
 github.com/domonda/go-pretty v0.0.0-20240110134850-17385799142f/go.mod h1:3QkM8UJdyJMeKZiIo7hYzSkQBpRS3k0gOHw4ysyEIB4=
 github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f/go.mod h1:Pcatq5tYkCW2Q6yrR2VRHlbHpZ/R4/7qyL1TCF7vl14=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=

@@ -2,6 +2,7 @@ package csvtable
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/domonda/go-types/charset"
@@ -60,7 +61,7 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 
 func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (format *Format, lines [][]byte, err error) {
 	if config == nil {
-		panic("config must not be nil")
+		return nil, nil, errors.New("FormatDetectionConfig must not be nil")
 	}
 
 	format = new(Format)
@@ -336,7 +337,7 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 
 						// Remove quotes of joined field
 						if field[0] != '"' || field[len(field)-1] != '"' {
-							panic("csv.Read is broken")
+							return nil, errors.New("should never happen: csv.Read is broken")
 						}
 						field = field[1 : len(field)-1]
 
