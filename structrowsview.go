@@ -3,6 +3,7 @@ package retable
 import (
 	"fmt"
 	"reflect"
+	"sync"
 )
 
 // StructRowsView is a View implementation that provides efficient access
@@ -29,8 +30,7 @@ import (
 //   - Subsequent cell access for the same row uses cached values (O(1))
 //   - Memory usage scales with the number of structs in the underlying slice
 //
-// This type is not thread-safe due to internal caching. Create separate
-// views for concurrent access to the same data.
+// This type is thread-safe for concurrent read access.
 type StructRowsView struct {
 	title   string
 	columns []string
@@ -38,8 +38,10 @@ type StructRowsView struct {
 	rows    reflect.Value // slice of structs
 
 	// Caching fields to optimize repeated access to the same row
-	cachedRow           int           // -1 when cache is invalid
-	cachedValues        []any         // cached any values for cachedRow
+	// Protected by mutex for thread-safe concurrent access
+	mutex               sync.RWMutex
+	cachedRow           int             // -1 when cache is invalid
+	cachedValues        []any           // cached any values for cachedRow
 	cachedReflectValues []reflect.Value // cached reflect.Value values for cachedRow
 }
 
@@ -165,6 +167,10 @@ func (view *StructRowsView) Cell(row, col int) any {
 	if row < 0 || col < 0 || row >= view.rows.Len() || col >= len(view.columns) {
 		return nil
 	}
+
+	view.mutex.Lock()
+	defer view.mutex.Unlock()
+
 	if row != view.cachedRow {
 		view.cachedRow = row
 		view.cachedValues = nil
@@ -211,6 +217,10 @@ func (view *StructRowsView) ReflectCell(row, col int) reflect.Value {
 	if row < 0 || col < 0 || row >= view.rows.Len() || col >= len(view.columns) {
 		return reflect.Value{}
 	}
+
+	view.mutex.Lock()
+	defer view.mutex.Unlock()
+
 	if row != view.cachedRow {
 		view.cachedRow = row
 		view.cachedValues = nil
