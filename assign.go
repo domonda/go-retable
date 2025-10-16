@@ -8,11 +8,91 @@ import (
 	"strconv"
 )
 
-// SmartAssign assigns src to dst by converting src to dst type
-// as smart as possible using the passed dstScanner and srcFormatter
-// to convert types from and to strings.
+// SmartAssign performs intelligent type conversion when assigning src to dst.
+// It attempts multiple conversion strategies in order of preference, making it
+// suitable for converting between different types in data mapping scenarios.
 //
-// Both dstScanner and srcFormatter can be nil.
+// Type Conversion Strategies (in order):
+//
+//  1. Null handling: If src implements IsNull() bool and returns true,
+//     dst is set to its zero value.
+//
+//  2. Direct conversion: If src type is convertible to dst type using
+//     reflect.Value.Convert, the conversion is performed directly.
+//
+//  3. Nil pointer handling: If src is a nil pointer, dst is set to its zero value.
+//
+//  4. Custom formatting: If dst is a string type and srcFormatter is provided,
+//     srcFormatter.Format is used to convert src to string.
+//
+//  5. TextMarshaler: If src implements encoding.TextMarshaler, its MarshalText
+//     method is used to get a text representation for further conversion.
+//
+//  6. Stringer: If src implements fmt.Stringer, its String method is used
+//     to get a string representation for further conversion.
+//
+//  7. Time parsing: If src is a string and dst is time.Time or *time.Time,
+//     ParseTime is used to convert the string to a time value.
+//
+//  8. Pointer dereferencing: If src is a non-nil pointer, SmartAssign is
+//     recursively called with the dereferenced value.
+//
+//  9. Empty struct handling: If src is an empty struct (struct{}), dst is
+//     set to its zero value.
+//
+//  10. Boolean conversions:
+//     - bool to numeric types: true becomes 1, false becomes 0
+//     - bool to string: "true" or "false"
+//     - numeric types to bool: non-zero becomes true, zero becomes false
+//     - string to bool: parsed using strconv.ParseBool
+//
+//  11. String to numeric conversions:
+//     - String to int/uint: parsed using strconv.ParseInt/ParseUint
+//     - String to float: parsed using strconv.ParseFloat
+//
+//  12. Fallback string conversion: Any type can be converted to string
+//     using fmt.Sprint as a last resort.
+//
+//  13. Pointer allocation: If dst is a pointer type and previous strategies
+//     failed, a new instance is created and SmartAssign is recursively
+//     called to assign to the dereferenced pointer.
+//
+// Parameters:
+//   - dst: The destination reflect.Value to assign to. Must be valid and settable.
+//   - src: The source reflect.Value to assign from. Must be valid.
+//   - dstScanner: Optional Scanner for custom string-to-type conversions (can be nil).
+//   - srcFormatter: Optional Formatter for custom type-to-string conversions (can be nil).
+//
+// Returns:
+//   - error: nil on success, or an error describing why the assignment failed.
+//     Returns errors.ErrUnsupported if no conversion strategy could handle
+//     the type combination.
+//
+// Example:
+//
+//	// Convert string to int
+//	var result int
+//	dst := reflect.ValueOf(&result).Elem()
+//	src := reflect.ValueOf("42")
+//	err := SmartAssign(dst, src, nil, nil)
+//	// result == 42
+//
+//	// Convert bool to string
+//	var str string
+//	dst = reflect.ValueOf(&str).Elem()
+//	src = reflect.ValueOf(true)
+//	err = SmartAssign(dst, src, nil, nil)
+//	// str == "true"
+//
+//	// Convert with custom formatter
+//	formatter := FormatterFunc(func(v reflect.Value) (string, error) {
+//	    return fmt.Sprintf("#%v", v.Interface()), nil
+//	})
+//	var output string
+//	dst = reflect.ValueOf(&output).Elem()
+//	src = reflect.ValueOf(42)
+//	err = SmartAssign(dst, src, nil, formatter)
+//	// output == "#42"
 func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Formatter) (err error) {
 	if !dst.IsValid() {
 		return fmt.Errorf("dst value is invalid")
