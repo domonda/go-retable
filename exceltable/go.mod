@@ -4,7 +4,7 @@ go 1.24.0
 
 replace github.com/domonda/go-retable => ..
 
-require github.com/domonda/go-retable v0.0.0 // replaced
+require github.com/domonda/go-retable v0.0.0-00010101000000-000000000000 // replaced
 
 require github.com/xuri/excelize/v2 v2.10.0
 
