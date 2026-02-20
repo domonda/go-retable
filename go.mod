@@ -1,11 +1,11 @@
 module github.com/domonda/go-retable
 
-go 1.24.0
+go 1.24.3
 
 require (
-	github.com/domonda/go-types v0.0.0-20260115133137-07f43dd1f81f
+	github.com/domonda/go-types v0.0.0-20260220143713-72cce92cd491
 	github.com/stretchr/testify v1.11.1
-	github.com/ungerik/go-fs v0.0.0-20260118110456-0ae82a14cadb
+	github.com/ungerik/go-fs v0.0.0-20260219100950-c557c096177d
 )
 
 require (
@@ -16,6 +16,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
