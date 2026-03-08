@@ -2,6 +2,7 @@ package retable
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -246,15 +247,11 @@ func (p *StringParser) ParseFloat(str string) (float64, error) {
 //	b, _ := parser.ParseBool("no")    // false, nil
 //	b, err := parser.ParseBool("maybe") // false, error
 func (p *StringParser) ParseBool(str string) (bool, error) {
-	for _, val := range p.TrueStrings {
-		if str == val {
-			return true, nil
-		}
+	if slices.Contains(p.TrueStrings, str) {
+		return true, nil
 	}
-	for _, val := range p.FalseStrings {
-		if str == val {
-			return false, nil
-		}
+	if slices.Contains(p.FalseStrings, str) {
+		return false, nil
 	}
 	return false, fmt.Errorf("cannot parse %q as bool", str)
 }

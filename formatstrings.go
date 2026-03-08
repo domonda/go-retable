@@ -82,7 +82,7 @@ func FormatViewAsStrings(ctx context.Context, view View, formatter CellFormatter
 		// but use formatter for any additional formatting of strings
 		headerView := NewHeaderViewFrom(view)
 		rowStrings := make([]string, numCols)
-		for col := 0; col < numCols; col++ {
+		for col := range numCols {
 			rowStrings[col], _, err = formatter.FormatCell(ctx, headerView, 0, col)
 			if err != nil {
 				return nil, err
@@ -91,9 +91,9 @@ func FormatViewAsStrings(ctx context.Context, view View, formatter CellFormatter
 		rows = append(rows, rowStrings)
 	}
 
-	for row := 0; row < numRows; row++ {
+	for row := range numRows {
 		rowStrings := make([]string, numCols)
-		for col := 0; col < numCols; col++ {
+		for col := range numCols {
 			rowStrings[col], _, err = formatter.FormatCell(ctx, view, row, col)
 			if err != nil {
 				return nil, err

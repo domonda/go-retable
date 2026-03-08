@@ -26,7 +26,7 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 				function:  func(arg int) string { return fmt.Sprint(arg) },
 				rawResult: false,
 			},
-			wantValType: reflect.TypeOf(int(0)),
+			wantValType: reflect.TypeFor[int](),
 		},
 		{
 			name: "func(int) (string, error)",
@@ -34,7 +34,7 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 				function:  func(arg int) (string, error) { return fmt.Sprint(arg), nil },
 				rawResult: false,
 			},
-			wantValType: reflect.TypeOf(int(0)),
+			wantValType: reflect.TypeFor[int](),
 		},
 		{
 			name: "func(context.Context, int) string",
@@ -42,7 +42,7 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 				function:  func(_ context.Context, arg int) string { return fmt.Sprint(arg) },
 				rawResult: false,
 			},
-			wantValType: reflect.TypeOf(int(0)),
+			wantValType: reflect.TypeFor[int](),
 		},
 		{
 			name: "func(context.Context, int) (string, error)",
@@ -50,7 +50,7 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 				function:  func(_ context.Context, arg int) (string, error) { return fmt.Sprint(arg), nil },
 				rawResult: false,
 			},
-			wantValType: reflect.TypeOf(int(0)),
+			wantValType: reflect.TypeFor[int](),
 		},
 		{
 			name: "func() string",

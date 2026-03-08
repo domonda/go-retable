@@ -50,7 +50,7 @@ func SingleColView[T any](column string, rows []T) View {
 	return &singleColsView[T]{
 		columns:        []string{column},
 		rows:           rows,
-		isReflectValue: reflect.TypeOf(rows).Elem() == reflect.TypeOf(reflect.Value{}),
+		isReflectValue: reflect.TypeFor[[]T]().Elem() == reflect.TypeFor[reflect.Value](),
 	}
 }
 
@@ -99,7 +99,7 @@ func SingleCellView[T any](title, column string, value T) View {
 	return &singleColsView[T]{
 		columns:        []string{column},
 		rows:           []T{value},
-		isReflectValue: reflect.TypeOf(value) == reflect.TypeOf(reflect.Value{}),
+		isReflectValue: reflect.TypeOf(value) == reflect.TypeFor[reflect.Value](),
 	}
 }
 

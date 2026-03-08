@@ -21,7 +21,7 @@ func ExampleWriter() {
 
 	NewWriter[[]Row]().
 		WithHeaderRow(true).
-		WithTypeFormatter(reflect.TypeOf(json.RawMessage(nil)), JSONCellFormatter("")).
+		WithTypeFormatter(reflect.TypeFor[json.RawMessage](), JSONCellFormatter("")).
 		Write(context.Background(), os.Stdout, table, "Table Title")
 
 	// Output:

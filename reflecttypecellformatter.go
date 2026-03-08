@@ -3,6 +3,7 @@ package retable
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 )
 
@@ -343,21 +344,15 @@ func (f *ReflectTypeCellFormatter) cloneOrNew() *ReflectTypeCellFormatter {
 	c := &ReflectTypeCellFormatter{Default: f.Default}
 	if len(f.Types) > 0 {
 		c.Types = make(map[reflect.Type]CellFormatter, len(f.Types))
-		for key, val := range f.Types {
-			c.Types[key] = val
-		}
+		maps.Copy(c.Types, f.Types)
 	}
 	if len(f.InterfaceTypes) > 0 {
 		c.InterfaceTypes = make(map[reflect.Type]CellFormatter, len(f.InterfaceTypes))
-		for key, val := range f.InterfaceTypes {
-			c.InterfaceTypes[key] = val
-		}
+		maps.Copy(c.InterfaceTypes, f.InterfaceTypes)
 	}
 	if len(f.Kinds) > 0 {
 		c.Kinds = make(map[reflect.Kind]CellFormatter, len(f.Kinds))
-		for key, val := range f.Kinds {
-			c.Kinds[key] = val
-		}
+		maps.Copy(c.Kinds, f.Kinds)
 	}
 	return c
 }

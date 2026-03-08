@@ -138,17 +138,17 @@ func NoTagsStructRowsViewer() *StructRowsViewer {
 var (
 	// typeOfError is the reflect.Type of the error interface.
 	// Used internally to identify error types during reflection operations.
-	typeOfError = reflect.TypeOf((*error)(nil)).Elem()
+	typeOfError = reflect.TypeFor[error]()
 
 	// typeOfContext is the reflect.Type of the context.Context interface.
 	// Used internally to identify context types during reflection operations.
-	typeOfContext = reflect.TypeOf((*context.Context)(nil)).Elem()
+	typeOfContext = reflect.TypeFor[context.Context]()
 
 	// typeOfTime is the reflect.Type of time.Time.
 	// Used internally to identify time.Time values for special formatting.
-	typeOfTime = reflect.TypeOf(time.Time{})
+	typeOfTime = reflect.TypeFor[time.Time]()
 
 	// typeOfEmptyStruct is the reflect.Type of struct{}.
 	// Used internally to identify empty structs, which are often treated as null-like values.
-	typeOfEmptyStruct = reflect.TypeOf(struct{}{})
+	typeOfEmptyStruct = reflect.TypeFor[struct{}]()
 )

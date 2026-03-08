@@ -2,6 +2,7 @@ package retable
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 )
 
@@ -89,9 +90,7 @@ func (v *StructRowsViewer) clone() *StructRowsViewer {
 	c := new(StructRowsViewer)
 	*c = *v
 	c.MapIndices = make(map[int]int, len(v.MapIndices))
-	for i, j := range v.MapIndices {
-		c.MapIndices[i] = j
-	}
+	maps.Copy(c.MapIndices, v.MapIndices)
 	return c
 }
 

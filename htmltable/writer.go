@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"maps"
 	"reflect"
 	"strings"
 
@@ -187,7 +188,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 	}
 
 	for row, numRows := 0, view.NumRows(); row < numRows; row++ {
-		for col := 0; col < numCols; col++ {
+		for col := range numCols {
 
 			if colFormatter, ok := w.columnFormatters[col]; ok {
 				str, isRaw, err := colFormatter.FormatCell(ctx, view, row, col)
@@ -299,9 +300,7 @@ func (w *Writer[T]) WithTableViewer(viewer retable.Viewer) *Writer[T] {
 func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.columnFormatters = make(map[int]retable.CellFormatter)
-	for key, val := range w.columnFormatters {
-		mod.columnFormatters[key] = val
-	}
+	maps.Copy(mod.columnFormatters, w.columnFormatters)
 	if formatter != nil {
 		mod.columnFormatters[columnIndex] = formatter
 	} else {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"strings"
 	"unicode/utf8"
@@ -260,7 +261,7 @@ func (w *Writer[T]) ViewStrings(ctx context.Context, view retable.View) ([][]str
 		}
 		rows = append(rows, rowStrs)
 	}
-	for row := 0; row < numRows; row++ {
+	for row := range numRows {
 		rowStrs, err := w.rowStrings(ctx, view, row)
 		if err != nil {
 			return nil, err
@@ -352,9 +353,7 @@ func (w *Writer[T]) WithTableViewer(viewer retable.Viewer) *Writer[T] {
 func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter retable.CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.columnFormatters = make(map[int]retable.CellFormatter)
-	for key, val := range w.columnFormatters {
-		mod.columnFormatters[key] = val
-	}
+	maps.Copy(mod.columnFormatters, w.columnFormatters)
 	if formatter != nil {
 		mod.columnFormatters[columnIndex] = formatter
 	} else {
