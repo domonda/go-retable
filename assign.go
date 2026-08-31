@@ -128,6 +128,20 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 		return nil
 	}
 
+	// Assign the zero value for an empty source string
+	// unless the destination is a string type itself.
+	// An empty cell of a CSV file or a spreadsheet means
+	// "no value" and must not be an error for a numeric,
+	// boolean or time destination, the same way a null
+	// source assigns the zero value above.
+	// Without this the conversions further down would
+	// fail to parse the empty string and the value would
+	// fall through to the unsupported operation error.
+	if srcKind == reflect.String && src.Len() == 0 && dstKind != reflect.String {
+		dst.Set(reflect.Zero(dstType))
+		return nil
+	}
+
 	// Convert assigns directly if possible
 	if srcType.ConvertibleTo(dstType) {
 		// Check because conversion can panic
