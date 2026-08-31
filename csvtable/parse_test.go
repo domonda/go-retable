@@ -210,6 +210,33 @@ var testRows = map[string][]string{
 		"0-9x9-05",
 		"ATx",
 	},
+	// A quoted field can end with an escaped quote before the separator,
+	// like a JSON object with a string as last value.
+	// See Sentry DOMONDA-SERVER-FH4.
+	`"14/12/2025","Look Beautiful Products GmbH","{""orderTransactionId"":""019b1d3ebc9b72c59a12e32e8d8ff142"",""pluginVersion"":""10.1.1""}","Debit"`: {
+		",", // separator
+		`14/12/2025`,
+		`Look Beautiful Products GmbH`,
+		`{"orderTransactionId":"019b1d3ebc9b72c59a12e32e8d8ff142","pluginVersion":"10.1.1"}`,
+		`Debit`,
+	},
+
+	// Every line of the file is a quoted field with doubled quotes inside,
+	// as produced by exporting an already exported CSV file.
+	`"""a"",""b"""`: {
+		",", // separator
+		`"a","b"`,
+	},
+
+	// A quoted field whose content ends with the separator,
+	// so the closing quote is the only content of the split field.
+	`a,"b,",c`: {
+		",", // separator
+		`a`,
+		`b,`,
+		`c`,
+	},
+
 	`300150;GH "Zum Ganster";;`: {
 		";", // separator
 		`300150`,
@@ -228,7 +255,7 @@ func TestParseStrings(t *testing.T) {
 			assert.NotNil(t, format, "returned Format")
 			assert.Equal(t, "UTF-8", format.Encoding, "UTF-8 encoding expected")
 			assert.Equalf(t, refSeparator, format.Separator, "'s' separator expected", refSeparator)
-			SetRowsWithNonUniformColumnsNil(rows)
+			rows = SetRowsWithNonUniformColumnsNil(rows)
 			rows = RemoveEmptyRows(rows)
 			assert.Len(t, rows, 1, "one CSV row expected")
 			if len(rows) == 1 {

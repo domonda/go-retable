@@ -448,124 +448,117 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 		fields := bytes.Split(line, separator)
 		for i := 0; i < len(fields); i++ {
 			field := fields[i]
-			if len(field) < 2 {
+			if len(field) == 0 {
 				continue
 			}
 
-			leftQuotes, rightQuotes := countQuotesLeftRight(field)
+			leftQuotes := countQuotesLeft(field)
+			totalQuotes := bytes.Count(field, []byte{'"'})
 			switch {
-			case leftQuotes == 0 && rightQuotes == 0:
-				// Unquoted field
-
-			case leftQuotes == 1 && rightQuotes == 1, // Quoted field
-				leftQuotes == 3 && rightQuotes == 1, // Quoted field beginning with escapted quote
-				leftQuotes == 1 && rightQuotes == 3, // Quoted field ending with escapted quote
-				leftQuotes == 3 && rightQuotes == 3, // Quoted field with escaped quotes inside
-				leftQuotes == 2 && rightQuotes == 2: // Field not quoted, but escaped quotes inside
-
+			case len(field) > 1 && totalQuotes == len(field):
+				// Field consists only of quotes, which is an escaped empty
+				// field `""`, an escaped quote `""""`, and so on.
 				// Remove outermost quotes
 				field = field[1 : len(field)-1]
 
-			case leftQuotes == 0 && rightQuotes >= 1:
-				// Field begins without a quote but ends with at least one.
-				// This is field internal quoting, no special handling needed
-
-			case leftQuotes >= 1 && rightQuotes == 0:
-				// Field begins with quote but does not end with one
-
-				if leftQuotes == 2 {
-					// Begins with two quotes wich is an escaped quote,
-					// but not with a tripple quote.
-					// No special handling needed, will be unescaped futher down
-
-				} else {
-
-					joinLineIndex := -1
-					if i == len(fields)-1 {
-						// When last field of the line begins with a quote but does not end with one
-						// then search following lines for a first field that ends with a quote
-						// which will be the right side of this field wrongly splitted into more
-						// lines because it contained newline characters.
-						// Newlines are allowed in quoted CSV fields.
-						for joinLineIndex = lineIndex + 1; joinLineIndex < len(lines); joinLineIndex++ {
-							joinLine := lines[joinLineIndex]
-							joinLineFields := bytes.Split(joinLine, separator)
-							if len(joinLineFields) > 0 && bytes.HasSuffix(joinLineFields[0], []byte{'"'}) {
-								// Found the line where the first field holds the closing quote for the multi-line field
-								break
-							}
-						}
-					}
-
-					if joinLineIndex > lineIndex && joinLineIndex < len(lines) {
-						// Join lines until including joinLineIndex as multi line field
-						// then empty those lines so line indices are still correct
-
+			case leftQuotes%2 == 1 && totalQuotes%2 == 1:
+				// An odd number of leading quotes opens a quoted field
+				// and an odd total number of quotes means that the field
+				// is not closed again within itself, so it was wrongly split
+				// by a separator or newline inside the quoted field
+				// and has to be joined together again.
+				joinLineIndex := -1
+				if i == len(fields)-1 {
+					// When last field of the line begins with a quote but does not end with one
+					// then search following lines for a first field that ends with a quote
+					// which will be the right side of this field wrongly splitted into more
+					// lines because it contained newline characters.
+					// Newlines are allowed in quoted CSV fields.
+					for joinLineIndex = lineIndex + 1; joinLineIndex < len(lines); joinLineIndex++ {
 						joinLine := lines[joinLineIndex]
 						joinLineFields := bytes.Split(joinLine, separator)
-
-						// Join lines between lineIndex and joinLineIndex
-						for index := lineIndex + 1; index < joinLineIndex; index++ {
-							field = append(field, []byte(newlineReplacement)...)
-							field = append(field, lines[index]...)
-						}
-
-						// Join first field of line joinLineIndex
-						field = append(field, []byte(newlineReplacement)...)
-						field = append(field, joinLineFields[0]...)
-
-						// Remove quotes of joined field
-						if field[0] != '"' || field[len(field)-1] != '"' {
-							return nil, errors.New("should never happen: csv.Read is broken")
-						}
-						field = field[1 : len(field)-1]
-
-						// Append following fields after first joined field of line joinLineIndex
-						fields = append(fields, joinLineFields[1:]...)
-
-						// Empty lines that have been joined
-						for i := lineIndex + 1; i <= joinLineIndex; i++ {
-							lines[i] = nil
-						}
-
-					} else {
-
-						// Begins with quote but does not end with one
-						// means that a separator was in a quoted field
-						// that has been wrongly splitted into multiple fields.
-						// Needs merging of fields:
-						for r := i + 1; r < len(fields); r++ {
-							// Find following field that does not begin
-							// with a quote, but ends with exactly one
-							rField := fields[r]
-							if len(rField) < 2 {
-								continue
-							}
-							rLeftQuotes, rRightQuotes := countQuotesLeftRight(rField)
-							var (
-								rLeftOK  = rLeftQuotes == 0 || rLeftQuotes == 2 // right field may only begin with an escaped quote
-								rRightOK = (leftQuotes == 1 && rRightQuotes == 1) || (leftQuotes == 1 && rRightQuotes == 3) || (leftQuotes == 3 && rRightQuotes == 1) || (leftQuotes == 3 && rRightQuotes == 3)
-							)
-							if rLeftOK && rRightOK {
-								// Join fields [i..j]
-								field = bytes.Join(fields[i:r+1], separator)
-								// Remove quotes
-								field = field[1 : len(field)-1]
-								// Shift remaining slice fields over the ones joined into fields[i]
-								copy(fields[i+1:], fields[r+1:])
-								fields = fields[:len(fields)-(r-i)]
-								break
-							}
+						if len(joinLineFields) > 0 && countQuotesRight(joinLineFields[0])%2 == 1 {
+							// Found the line where the first field holds the closing quote for the multi-line field
+							break
 						}
 					}
 				}
 
+				if joinLineIndex > lineIndex && joinLineIndex < len(lines) {
+					// Join lines until including joinLineIndex as multi line field
+					// then empty those lines so line indices are still correct
+
+					joinLine := lines[joinLineIndex]
+					joinLineFields := bytes.Split(joinLine, separator)
+
+					// Join lines between lineIndex and joinLineIndex
+					for index := lineIndex + 1; index < joinLineIndex; index++ {
+						field = append(field, []byte(newlineReplacement)...)
+						field = append(field, lines[index]...)
+					}
+
+					// Join first field of line joinLineIndex
+					field = append(field, []byte(newlineReplacement)...)
+					field = append(field, joinLineFields[0]...)
+
+					// Remove quotes of joined field
+					if field[0] != '"' || field[len(field)-1] != '"' {
+						return nil, errors.New("should never happen: csv.Read is broken")
+					}
+					field = field[1 : len(field)-1]
+
+					// Append following fields after first joined field of line joinLineIndex
+					fields = append(fields, joinLineFields[1:]...)
+
+					// Empty lines that have been joined
+					for i := lineIndex + 1; i <= joinLineIndex; i++ {
+						lines[i] = nil
+					}
+
+				} else {
+
+					// Begins with quote but does not end with one
+					// means that a separator was in a quoted field
+					// that has been wrongly splitted into multiple fields.
+					// Needs merging of fields:
+					for r := i + 1; r < len(fields); r++ {
+						// Find following field that does not begin
+						// with a quote, but ends with exactly one
+						rField := fields[r]
+						if len(rField) == 0 {
+							continue
+						}
+						var closesField bool
+						if rLeftQuotes := countQuotesLeft(rField); rLeftQuotes == len(rField) {
+							// Field consists only of quotes, so it closes the
+							// quoted field if one quote is left unescaped
+							closesField = rLeftQuotes%2 == 1
+						} else {
+							// The right field may only begin with escaped quotes
+							// and must end with an unescaped closing quote
+							closesField = rLeftQuotes%2 == 0 && countQuotesRight(rField)%2 == 1
+						}
+						if closesField {
+							// Join fields [i..j]
+							field = bytes.Join(fields[i:r+1], separator)
+							// Remove quotes
+							field = field[1 : len(field)-1]
+							// Shift remaining slice fields over the ones joined into fields[i]
+							copy(fields[i+1:], fields[r+1:])
+							fields = fields[:len(fields)-(r-i)]
+							break
+						}
+					}
+				}
+
+			case leftQuotes%2 == 1:
+				// Quoted field that is closed again within itself.
+				// Remove outermost quotes
+				field = field[1 : len(field)-1]
+
 			default:
-				return nil, fmt.Errorf("can't handle CSV field `%s` in line `%s`", field, line)
-				// Examples for this error:
-				// /var/domonda-data/documents/39/d20/301/65394733/b7e967e7f98ec1e8/2019-01-03_09-46-50.435/doc.csv
-				// Double embedded fields:
-				// /var/domonda-data/documents/c9/727/af8/9cdf4afd/981ad4331d0fb6ca/2019-11-04_08-18-13.602/doc.csv
+				// Field is not quoted, so all its quotes are literal
+				// and only have to be unescaped further down
 			}
 
 			fields[i] = bytes.ReplaceAll(field, []byte(`""`), []byte{'"'})

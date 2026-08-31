@@ -328,7 +328,7 @@ func (w *Writer[T]) escapeString(str string, isRaw bool) string {
 	// \n alone is valid within quotes
 	str = strings.ReplaceAll(str, "\r", "")
 	switch {
-	case w.quoteAllFields || strings.ContainsRune(str, w.delimiter) || strings.ContainsRune(str, '\n'):
+	case w.quoteAllFields || strings.ContainsRune(str, w.delimiter) || strings.ContainsRune(str, '\n') || strings.ContainsRune(str, '"'):
 		return `"` + strings.ReplaceAll(str, `"`, w.escapeQuotes) + `"`
 	case w.quoteEmptyFields && str == "":
 		return `""`
