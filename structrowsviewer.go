@@ -151,7 +151,11 @@ func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 
 	structFields := StructFieldTypes(rowType)
 	indices := make([]int, len(structFields))
-	columns := make([]string, 0, len(structFields))
+	// columnNames is indexed by column position, not by struct field order,
+	// because MapIndices can move a field to any column. Appending in field
+	// order would label the columns correctly only for an identity mapping.
+	columnNames := make([]string, len(structFields))
+	numColumns := 0
 
 	columnIndexUsed := make(map[int]bool)
 	getNextFreeColumnIndex := func() int {
@@ -185,10 +189,11 @@ func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 		indices[i] = index
 		columnIndexUsed[index] = true
 
-		columns = append(columns, column)
+		columnNames[index] = column
+		numColumns++
 	}
 
-	return NewStructRowsView(title, columns, indices, rows), nil
+	return NewStructRowsView(title, columnNames[:numColumns], indices, rows), nil
 }
 
 // WithTag returns a copy of the StructRowsViewer with the Tag field set
