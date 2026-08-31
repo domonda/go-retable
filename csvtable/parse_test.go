@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"strconv"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -249,6 +250,15 @@ var testRows = map[string][]string{
 		`c`,
 	},
 
+	// A carriage return within a quoted field is field data and must survive
+	// splitting the lines, it is not residue of a wider line ending.
+	"A;\"first\n\rsecond\";B\n": {
+		";", // separator
+		`A`,
+		"first\n\rsecond",
+		`B`,
+	},
+
 	`300150;GH "Zum Ganster";;`: {
 		";", // separator
 		`300150`,
@@ -349,6 +359,42 @@ func Test_closesQuotedField(t *testing.T) {
 	for field, want := range testData {
 		t.Run(field, func(t *testing.T) {
 			assert.Equal(t, want, closesQuotedField([]byte(field)), "closesQuotedField(%q)", field)
+		})
+	}
+}
+
+func Test_sanitizeUTF8(t *testing.T) {
+	tests := []struct {
+		name string
+		str  []byte
+		want string
+	}{
+		{name: "empty", str: nil, want: ""},
+		{name: "ASCII is unchanged", str: []byte("abc"), want: "abc"},
+		{name: "valid UTF-8 is unchanged", str: []byte("Jänner 20€"), want: "Jänner 20€"},
+		{name: "no-break space becomes a space", str: []byte("a\u00a0b"), want: "a b"},
+		{name: "replacement character becomes a space", str: []byte("a\ufffdb"), want: "a b"},
+		{name: "invalid byte becomes a space", str: []byte{'a', 0xff, 'b'}, want: "a b"},
+		{
+			// Every invalid byte is replaced on its own,
+			// they are not decoded as one broken sequence.
+			name: "every invalid byte becomes a space",
+			str:  []byte{'a', 0xff, 0xfe, 'b'},
+			want: "a  b",
+		},
+		{
+			// A failed encoding detection is not reported,
+			// the undecodable bytes just become spaces.
+			name: "Windows 1252 read as UTF-8 loses its umlaut",
+			str:  []byte{'M', 0xfc, 'l', 'l', 'e', 'r'},
+			want: "M ller",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeUTF8(tt.str)
+			assert.Equal(t, tt.want, string(got))
+			assert.True(t, utf8.Valid(got), "result must be valid UTF-8")
 		})
 	}
 }
@@ -586,6 +632,16 @@ func TestParseDetectFormat_Detection(t *testing.T) {
 			csv:          "a;b\r\nc;d\r\n",
 			wantSep:      ";",
 			wantNewline:  "\r\n",
+			wantFirstRow: []string{"a", "b"},
+		},
+		{
+			// Splitting a \n\r file by \n would leave a \r at the start of
+			// every line, which can't be trimmed away without destroying a
+			// carriage return within a quoted field.
+			name:         "LFCR line endings",
+			csv:          "a;b\n\rc;d\n\re;f\n\r",
+			wantSep:      ";",
+			wantNewline:  "\n\r",
 			wantFirstRow: []string{"a", "b"},
 		},
 		{
