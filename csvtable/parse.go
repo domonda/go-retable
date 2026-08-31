@@ -211,11 +211,16 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 
 	// Newlines within a quoted field are part of its value and were not
 	// counted, so a single quoted \r\n can't switch a whole \n separated
-	// file to \r\n line endings. \r\n wins a tie because it is the
-	// standard, and a \r\n file has no \n of its own to count.
-	if numLF := structure.numLF - structure.numCRLF; structure.numCRLF > 0 && structure.numCRLF >= numLF {
+	// file to \r\n line endings. A wider line ending wins a tie because a
+	// file using one has no bare \n of its own to count, and \r\n wins over
+	// \n\r because it is the standard.
+	numBareLF := structure.numLF - structure.numCRLF - structure.numLFCR
+	switch {
+	case structure.numCRLF > 0 && structure.numCRLF >= structure.numLFCR && structure.numCRLF >= numBareLF:
 		format.Newline = "\r\n"
-	} else {
+	case structure.numLFCR > 0 && structure.numLFCR >= numBareLF:
+		format.Newline = "\n\r"
+	default:
 		format.Newline = "\n"
 	}
 
@@ -301,15 +306,19 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 }
 
 // splitLines splits csv into lines separated by newline and removes
-// stray newline characters from both ends of every line.
+// stray newline characters from the end of every line.
 //
-// Trimming is part of splitting because a file can use a line ending
-// wider than the newline it is split by, which would otherwise leak
-// into the last field of every line.
+// Trimming is part of splitting because a file can use a line ending wider
+// than the newline it is split by, which would otherwise leak into the last
+// field of every line.
+//
+// Only the end of a line is trimmed. A \r at the start of a line is not
+// residue of a \n\r line ending, because those are detected and split by,
+// but a carriage return within a quoted field that has to be preserved.
 func splitLines(csv []byte, newline string) [][]byte {
 	lines := bytes.Split(csv, []byte(newline))
 	for i := range lines {
-		lines[i] = bytes.Trim(lines[i], "\r\n")
+		lines[i] = bytes.TrimRight(lines[i], "\r\n")
 	}
 	return lines
 }
@@ -320,8 +329,9 @@ var separatorCandidates = []byte{',', ';', '\t', '|'}
 
 // csvStructure is what scanStructure counted outside of quoted fields.
 type csvStructure struct {
-	numLF      int // Newlines, of which numCRLF are the \n of a \r\n
+	numLF      int // Newlines, of which numCRLF and numLFCR are part of a wider line ending
 	numCRLF    int
+	numLFCR    int
 	numRecords int // Records with any content, a record can span several lines
 
 	// columnsPerRecord maps for every separatorCandidates index
@@ -391,6 +401,10 @@ func scanStructure(csv []byte, skipQuoted bool) *csvStructure {
 			endRecord()
 		case '\n':
 			s.numLF++
+			if i+1 < len(csv) && csv[i+1] == '\r' {
+				i++
+				s.numLFCR++
+			}
 			endRecord()
 		default:
 			recordHasContent = true
@@ -739,6 +753,31 @@ func closesQuotedField(field []byte) bool {
 	return leftQuotes%2 == 0 && countQuotesRight(field)%2 == 1
 }
 
+// sanitizeUTF8 replaces every byte that is not valid UTF-8, every U+FFFD
+// replacement character, and every no-break space with a plain space,
+// and returns the result as a newly allocated slice.
+//
+// Invalid bytes are replaced one by one, so a two byte sequence becomes two
+// spaces. The result is always valid UTF-8, so the parser and everything
+// downstream can treat the data as text without checking it again.
+//
+// A no-break space is replaced because it reads as a space but is not one to
+// code that trims or compares field values, and spreadsheet exports are full
+// of them. Note that this also changes field values that legitimately contain
+// one.
+//
+// Sanitizing hides a failed encoding detection instead of reporting it: data
+// decoded with the wrong encoding loses its undecodable bytes to spaces rather
+// than raising an error, so `Müller` in Windows 1252 read as UTF-8 becomes
+// `M ller`. Both callers sanitize directly after decoding, so a caller that
+// has to know whether the encoding was right must check the decoded data
+// itself.
+//
+// Example:
+//
+//	sanitizeUTF8([]byte("Jänner"))        // Returns: "Jänner"
+//	sanitizeUTF8([]byte("a\u00a0b"))      // Returns: "a b"
+//	sanitizeUTF8([]byte{'M', 0xfc, 'l'})  // Returns: "M l"
 func sanitizeUTF8(str []byte) []byte {
 	return bytes.Map(
 		func(r rune) rune {
