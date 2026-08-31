@@ -8,6 +8,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `csvtable` no longer aborts a whole file with `can't handle CSV field` when a
+  field's quoting is not one of a handful of hard-coded shapes. `readLines` split
+  every line on the separator and then classified the fragments by their leading
+  and trailing quote-run counts, and the combinations `(1,2)`, `(2,1)`, `(2,3)` and
+  `(3,2)` were simply missing from that table. A JSON object inside a quoted field
+  hits this: after splitting on the comma, `"{""orderTransactionId"":""019b...142""`
+  ends with an escaped quote pair. Field handling is now decided by quote parity,
+  an odd leading quote run opens a quoted field and an odd total quote count means
+  it is not closed again within the field, which covers every combination.
+- An unterminated quote in `csvtable` no longer silently swallows every row up to
+  the next line whose first field ends with a quote. It reported no error and could
+  lose an unbounded number of rows. The unclosed field now keeps its literal text
+  and the following rows are parsed normally.
+- The closing part of a quoted field split by both a separator and a newline is
+  found again. The search stopped at the first field of a line, so a field split
+  both ways was never rejoined.
+- The outer quotes of a field are only removed when the field really ends with a
+  quote. `"a"x` became `a"`, silently dropping the last character.
+- A carriage return inside a quoted field survives line splitting. `splitLines`
+  trimmed newline characters from both ends of every line, so `A;"first\n\rsecond";B`
+  returned `first\nsecond`. `\n\r` line endings are now detected and split by, so
+  only the end of a line has to be trimmed.
+- `csvtable` separator detection no longer lets the content of a quoted field vote
+  on the structure of the file, and scores candidates by how uniform the resulting
+  column count is instead of by how often they occur. A semicolon-separated file
+  whose text columns contain commas was detected as comma-separated, and every row
+  came out garbage without an error. Line endings are picked by count for the same
+  reason, so a single `\r\n` inside a quoted field no longer switches an otherwise
+  `\n` file to Windows line endings.
+- `csvtable.ParseDetectFormat` returns a `Format` that passes its own `Validate()`
+  for empty input, instead of one with an empty separator that callers could not
+  reuse. A quote or a control character other than tab is rejected as a separator,
+  both in a `sep=` header line and in `Format.Validate`.
+- A `sep=` header line no longer leaks a carriage return into the last field of
+  every line, and `ParseWithFormat` and `ParseDetectFormat` agree on the same bytes.
+- `csvtable.SetRowsWithNonUniformColumnsNil` no longer sets every row of a single
+  column table to `nil`. Single column rows are excluded from the majority vote so
+  that header and trailer lines cannot outvote the table rows, which left a table
+  that only has single column rows with no majority at all. They now count when no
+  row has more than one column.
+- The `csvtable` writer quotes a field containing a quote instead of only doubling
+  its quotes. The unquoted form was readable by `ParseWithFormat` but rejected by
+  `encoding/csv` with `bare " in non-quoted-field`.
+- Column formatters are no longer applied to the column titles of a `csvtable`
+  header row, and a nil interface cell reports `errors.ErrUnsupported` instead of
+  panicking on an invalid `reflect.Value`.
 - `ViewWithTitle` no longer panics when a cell value is not a pointer or interface.
   Its `ReflectCell` called `reflect.Value.Elem()` on every cell, which panics with
   `reflect: call of reflect.Value.Elem on string Value` for the string cells of
@@ -35,6 +81,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `csvtable.DetectTableBounds` and `csvtable.TableBounds` locate the actual table
+  within rows that also contain header and trailer lines, which exports put around
+  it as a title, a reporting period or a total. The table width is the column count
+  of the majority of rows, the column titles are the row of that width matching the
+  most expected titles, and the data is the rows of that width after it.
+  `ReadStringsToStructSlice` uses it when `requiredCols` are passed, so a statement
+  starting with `Kontoauszug Nr. 4` no longer takes that line as its column titles
+  and reports every required column as missing. Without `requiredCols` the first
+  non-empty row is still used, so existing callers are unaffected.
+- `|` is a `csvtable` separator candidate, alongside `,`, `;` and tab.
+- `csvtable.ReplaceNewlineWithSpace`, replacing all newline variants in one pass so
+  a Windows newline does not become two spaces. The misspelled
+  `ReplaceNewlineWithSpacefunc` remains as a deprecated alias, because it is part of
+  the published API.
+- A csvtable chapter in the README covering import into structs, parsing, format
+  detection, table bounds, row cleanup, writing, and how malformed CSV is handled
+  including the known limits.
 - `StringsView` implements `ReflectCellView` natively. `AsReflectCellView` now
   returns the view itself instead of allocating a wrapper on every call, and
   `ReflectCell` mirrors `Cell` for sparse rows.
