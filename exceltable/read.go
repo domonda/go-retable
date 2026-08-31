@@ -7,7 +7,10 @@
 // Key features:
 //   - Read single or multiple sheets from Excel files
 //   - Support for both file paths and io.Reader sources
-//   - Automatic cleaning of empty rows and columns
+//   - Automatic removal of every completely empty row and column, including
+//     empty rows and columns between non-empty ones. The remaining data is
+//     compacted, so row indices do not correspond to the original Excel row
+//     numbers.
 //   - Configurable raw cell value extraction
 //   - Sheet name preservation as table titles
 //
@@ -34,7 +37,6 @@ package exceltable
 import (
 	"errors"
 	"io"
-	"reflect"
 
 	"github.com/xuri/excelize/v2"
 
@@ -45,8 +47,8 @@ import (
 // and returns it as a retable.View.
 //
 // The first row of the sheet is used as column headers, and subsequent rows
-// contain the data. Empty rows and columns are automatically removed from the
-// edges of the data range.
+// contain the data. Empty rows and columns are removed as described in the
+// package documentation.
 //
 // Parameters:
 //   - reader: An io.Reader containing Excel file data (.xlsx, .xlsm, .xltm, .xltx)
@@ -79,26 +81,19 @@ import (
 //	fmt.Printf("Columns: %v\n", view.Columns())
 //	fmt.Printf("Rows: %d\n", view.NumRows())
 func ReadFirstSheet(reader io.Reader, rawCellStrings bool) (sheetView retable.View, err error) {
-	f, e := excelize.OpenReader(reader)
-	if e != nil {
-		return nil, e
+	f, err := excelize.OpenReader(reader)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		err = errors.Join(err, f.Close())
-	}()
-	sheet := f.GetSheetName(0)
-	if sheet == "" {
-		return nil, ErrSheetNotExist{SheetName: "<FirstSheet>"} // Should never happen (?)
-	}
-	return readSheet(f, sheet, rawCellStrings)
+	return readFirstSheet(f, rawCellStrings)
 }
 
 // Read reads all sheets from an Excel file provided via io.Reader and returns
 // them as a slice of retable.View, one for each non-empty sheet.
 //
 // Each sheet's first row is used as column headers, with subsequent rows
-// containing the data. Empty rows and columns are automatically removed from
-// the edges of each sheet's data range.
+// containing the data. Empty rows and columns are removed as described in the
+// package documentation.
 //
 // Parameters:
 //   - reader: An io.Reader containing Excel file data (.xlsx, .xlsm, .xltm, .xltx)
@@ -136,23 +131,11 @@ func ReadFirstSheet(reader io.Reader, rawCellStrings bool) (sheetView retable.Vi
 //	    fmt.Printf("  Rows: %d\n", view.NumRows())
 //	}
 func Read(reader io.Reader, rawCellStrings bool) (sheetViews []retable.View, err error) {
-	f, e := excelize.OpenReader(reader)
-	if e != nil {
-		return nil, e
+	f, err := excelize.OpenReader(reader)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		err = errors.Join(err, f.Close())
-	}()
-	for _, sheet := range f.GetSheetList() {
-		view, err := readSheet(f, sheet, rawCellStrings)
-		if err != nil {
-			return nil, err
-		}
-		if view != nil {
-			sheetViews = append(sheetViews, view)
-		}
-	}
-	return sheetViews, nil
+	return readAllSheets(f, rawCellStrings)
 }
 
 // ReadLocalFile reads all sheets from an Excel file at the specified file path
@@ -162,8 +145,8 @@ func Read(reader io.Reader, rawCellStrings bool) (sheetViews []retable.View, err
 // all sheets. Empty sheets are automatically skipped without generating errors.
 //
 // Each sheet's first row is used as column headers, with subsequent rows
-// containing the data. Empty rows and columns are automatically removed from
-// the edges of each sheet's data range.
+// containing the data. Empty rows and columns are removed as described in the
+// package documentation.
 //
 // Parameters:
 //   - filename: Path to the Excel file (.xlsx, .xlsm, .xltm, .xltx)
@@ -198,24 +181,11 @@ func Read(reader io.Reader, rawCellStrings bool) (sheetViews []retable.View, err
 //	    }
 //	}
 func ReadLocalFile(filename string, rawCellStrings bool) (sheetViews []retable.View, err error) {
-	f, e := excelize.OpenFile(filename)
-	if e != nil {
-		return nil, e
+	f, err := excelize.OpenFile(filename)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		err = errors.Join(err, f.Close())
-	}()
-	for _, sheet := range f.GetSheetList() {
-		view, err := readSheet(f, sheet, rawCellStrings)
-		if err != nil {
-			if errors.Is(err, ErrEmptySheet) {
-				continue
-			}
-			return nil, err
-		}
-		sheetViews = append(sheetViews, view)
-	}
-	return sheetViews, nil
+	return readAllSheets(f, rawCellStrings)
 }
 
 // ReadLocalFileFirstSheet reads only the first sheet from an Excel file at the
@@ -225,8 +195,8 @@ func ReadLocalFile(filename string, rawCellStrings bool) (sheetViews []retable.V
 // a local file without processing all sheets.
 //
 // The first row of the sheet is used as column headers, and subsequent rows
-// contain the data. Empty rows and columns are automatically removed from the
-// edges of the data range.
+// contain the data. Empty rows and columns are removed as described in the
+// package documentation.
 //
 // Parameters:
 //   - filename: Path to the Excel file (.xlsx, .xlsm, .xltm, .xltx)
@@ -264,10 +234,15 @@ func ReadLocalFile(filename string, rawCellStrings bool) (sheetViews []retable.V
 //	    fmt.Println()
 //	}
 func ReadLocalFileFirstSheet(filename string, rawCellStrings bool) (sheetView retable.View, err error) {
-	f, e := excelize.OpenFile(filename)
-	if e != nil {
-		return nil, e
+	f, err := excelize.OpenFile(filename)
+	if err != nil {
+		return nil, err
 	}
+	return readFirstSheet(f, rawCellStrings)
+}
+
+// readFirstSheet returns the View of the first sheet of f and closes f.
+func readFirstSheet(f *excelize.File, rawCellStrings bool) (sheetView retable.View, err error) {
 	defer func() {
 		err = errors.Join(err, f.Close())
 	}()
@@ -278,15 +253,36 @@ func ReadLocalFileFirstSheet(filename string, rawCellStrings bool) (sheetView re
 	return readSheet(f, sheet, rawCellStrings)
 }
 
-// readSheet is an internal helper function that extracts data from a specific
-// sheet in an opened Excel file and converts it to a retable.View.
+// readAllSheets returns a View for every non-empty sheet of f and closes f.
+// Sheets without data are skipped instead of returning ErrEmptySheet.
+func readAllSheets(f *excelize.File, rawCellStrings bool) (sheetViews []retable.View, err error) {
+	defer func() {
+		err = errors.Join(err, f.Close())
+	}()
+	for _, sheet := range f.GetSheetList() {
+		view, err := readSheet(f, sheet, rawCellStrings)
+		if err != nil {
+			if errors.Is(err, ErrEmptySheet) {
+				continue
+			}
+			return nil, err
+		}
+		sheetViews = append(sheetViews, view)
+	}
+	return sheetViews, nil
+}
+
+// readSheet extracts the data of a sheet from an opened Excel file as a
+// retable.StringsView that uses the first row as column names.
 //
-// The function performs the following operations:
-//  1. Extracts all rows from the specified sheet using excelize
-//  2. Removes empty rows from the top and bottom edges
-//  3. Removes empty columns from the left and right edges
-//  4. Uses the first row as column headers
-//  5. Ensures column names array matches the actual number of columns
+// Empty rows and columns are removed with retable.RemoveEmptyStringRows and
+// retable.RemoveEmptyStringColumns before retable.NewStringsView splits off
+// the first row as column names and trims their surrounding whitespace.
+//
+// excelize.File.GetRows omits trailing empty cells, so rows can be shorter
+// than the column count. retable.NewStringsView widens a header row that is
+// shorter than the widest data row, and retable.StringsView handles the sparse
+// data rows natively by reporting "" for the missing trailing cells.
 //
 // Parameters:
 //   - f: An opened excelize.File instance
@@ -294,7 +290,7 @@ func ReadLocalFileFirstSheet(filename string, rawCellStrings bool) (sheetView re
 //   - rawCellStrings: If true, returns raw cell values; if false, uses formatted values
 //
 // Returns:
-//   - retable.View: A view of the sheet's data, or nil if the sheet is empty
+//   - retable.View: A retable.StringsView of the sheet's data
 //   - error: ErrEmptySheet if no data remains after cleaning, or excelize errors
 func readSheet(f *excelize.File, sheet string, rawCellStrings bool) (retable.View, error) {
 	rows, err := f.GetRows(sheet, excelize.Options{RawCellValue: rawCellStrings})
@@ -306,85 +302,7 @@ func readSheet(f *excelize.File, sheet string, rawCellStrings bool) (retable.Vie
 	if len(rows) == 0 || numCols == 0 {
 		return nil, ErrEmptySheet
 	}
-	columns := rows[0]
-	rows = rows[1:]
-	if len(columns) < numCols {
-		// Append empty strings to columns to match numCols
-		columns = append(columns, make([]string, numCols-len(columns))...)
-	}
-	return &sheetStringsView{
-		sheet:   sheet,
-		columns: columns,
-		rows:    rows,
-	}, nil
-}
-
-// sheetStringsView is an internal implementation of retable.View that holds
-// Excel sheet data as a string-based table in memory.
-//
-// All cell values are stored as strings, regardless of their original Excel
-// data type. This provides a simple, uniform interface for accessing tabular
-// data from Excel files.
-//
-// The view is immutable once created and safe for concurrent read access.
-type sheetStringsView struct {
-	sheet   string     // Name of the Excel sheet
-	columns []string   // Column headers from the first row
-	rows    [][]string // Data rows (excluding the header row)
-}
-
-// Title returns the name of the Excel sheet this view represents.
-// This implements the retable.View interface.
-func (view *sheetStringsView) Title() string { return view.sheet }
-
-// Columns returns the column headers extracted from the first row of the sheet.
-// The returned slice should not be modified by callers.
-// This implements the retable.View interface.
-func (view *sheetStringsView) Columns() []string { return view.columns }
-
-// NumRows returns the number of data rows in this view, excluding the header row.
-// This implements the retable.View interface.
-func (view *sheetStringsView) NumRows() int { return len(view.rows) }
-
-// Cell returns the value at the specified row and column as a string.
-// Returns nil if the row or column index is out of bounds, or if the
-// specific cell is empty (beyond the row's column count).
-//
-// Parameters:
-//   - row: Zero-based row index (0 is the first data row, after headers)
-//   - col: Zero-based column index
-//
-// Returns:
-//   - any: The cell value as a string, or nil if out of bounds
-//
-// This implements the retable.View interface.
-func (view *sheetStringsView) Cell(row, col int) any {
-	if row < 0 || col < 0 || row >= len(view.rows) || col >= len(view.rows[row]) {
-		return nil
-	}
-	return view.rows[row][col]
-}
-
-// ReflectCell returns the reflect.Value of the cell at the specified row and column.
-// Returns an invalid reflect.Value if the row or column index is out of bounds,
-// or if the specific cell is empty (beyond the row's column count).
-//
-// This method is useful for generic reflection-based processing of table data.
-//
-// Parameters:
-//   - row: Zero-based row index (0 is the first data row, after headers)
-//   - col: Zero-based column index
-//
-// Returns:
-//   - reflect.Value: A reflection value wrapping the cell's string value,
-//     or an invalid reflect.Value if out of bounds
-//
-// This implements the retable.View interface.
-func (view *sheetStringsView) ReflectCell(row, col int) reflect.Value {
-	if row < 0 || col < 0 || row >= len(view.rows) || col >= len(view.rows[row]) {
-		return reflect.Value{}
-	}
-	return reflect.ValueOf(view.rows[row][col])
+	return retable.NewStringsView(sheet, rows), nil
 }
 
 // type sheetView struct {
