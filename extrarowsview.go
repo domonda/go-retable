@@ -95,7 +95,7 @@ var _ View = ExtraRowsView(nil)
 //	summaryData := [][]any{
 //	    {"TOTAL", sumValues(), avgValues()},
 //	}
-//	summary := NewAnyValuesView("", summaryData, dataRows.ColNames())
+//	summary := NewAnyValuesView("", summaryData, dataRows.ColumnNames())
 //
 //	// Append summary at the bottom
 //	withSummary := ExtraRowsView{dataRows, summary}
@@ -157,7 +157,7 @@ var _ View = ExtraRowsView(nil)
 //
 // If views have different column counts, no error occurs:
 //
-//   - ColNames() returns the first view's columns only
+//   - ColumnNames() returns the first view's columns only
 //
 //   - Accessing a column index >= a view's column count returns nil for that view's rows
 //
@@ -165,7 +165,7 @@ var _ View = ExtraRowsView(nil)
 //     view2 := NewStringsView("", [][]string{{"X"}}, "Col1")
 //
 //     combined := ExtraRowsView{view1, view2}
-//     combined.ColNames() -> ["Col1", "Col2"]
+//     combined.ColumnNames() -> ["Col1", "Col2"]
 //     combined.Cell(0, 0) -> "A"
 //     combined.Cell(0, 1) -> "B"
 //     combined.Cell(1, 0) -> "X"
@@ -206,7 +206,7 @@ func (e ExtraRowsView) Title() string {
 	return e[0].Title()
 }
 
-// Columns returns the column names from the first View in the slice.
+// ColumnNames returns the column names from the first View in the slice.
 // Returns nil if the slice is empty.
 //
 // All views in ExtraRowsView should have the same column structure,
@@ -215,23 +215,23 @@ func (e ExtraRowsView) Title() string {
 //
 // Example:
 //
-//	view1.ColNames() -> ["A", "B", "C"]
-//	view2.ColNames() -> ["A", "B", "C"]
-//	ExtraRowsView{view1, view2}.ColNames() -> ["A", "B", "C"]
-func (e ExtraRowsView) ColNames() []string {
+//	view1.ColumnNames() -> ["A", "B", "C"]
+//	view2.ColumnNames() -> ["A", "B", "C"]
+//	ExtraRowsView{view1, view2}.ColumnNames() -> ["A", "B", "C"]
+func (e ExtraRowsView) ColumnNames() []string {
 	if len(e) == 0 {
 		return nil
 	}
-	return e[0].ColNames()
+	return e[0].ColumnNames()
 }
 
-// NumCols returns the number of columns of the first View,
-// mirroring Columns. Returns 0 if the ExtraRowsView is empty.
-func (e ExtraRowsView) NumCols() int {
+// NumColumns returns the number of columns of the first View,
+// mirroring ColumnNames. Returns 0 if the ExtraRowsView is empty.
+func (e ExtraRowsView) NumColumns() int {
 	if len(e) == 0 {
 		return 0
 	}
-	return e[0].NumCols()
+	return e[0].NumColumns()
 }
 
 // NumRows returns the total row count across all Views.
@@ -286,7 +286,7 @@ func (e ExtraRowsView) NumRows() int {
 // to find the correct view. For performance-critical code with many views,
 // consider pre-computing row offsets.
 func (e ExtraRowsView) Cell(row, col int) any {
-	if row < 0 || col < 0 || col >= e.NumCols() {
+	if row < 0 || col < 0 || col >= e.NumColumns() {
 		return nil
 	}
 	rowTop := 0

@@ -116,7 +116,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		return nil, fmt.Errorf("slice element type %s is not a struct or pointer to struct", rowType)
 	}
 
-	viewCols := view.ColNames()
+	viewCols := view.ColumnNames()
 	reflectView := AsReflectCellView(view)
 
 	// Allocate a parser for dstScanner once per view instead of

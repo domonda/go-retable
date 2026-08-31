@@ -23,7 +23,7 @@ func TestStructRowsViewer_NewView_MapIndices(t *testing.T) {
 		view, err := DefaultStructRowsViewer().WithMapIndex(0, 2).NewView("T", rows)
 		require.NoError(t, err)
 
-		require.Equal(t, []string{"B", "C", "A"}, view.ColNames())
+		require.Equal(t, []string{"B", "C", "A"}, view.ColumnNames())
 		require.Equal(t, "b", view.Cell(0, 0))
 		require.Equal(t, "c", view.Cell(0, 1))
 		require.Equal(t, "a", view.Cell(0, 2))
@@ -35,7 +35,7 @@ func TestStructRowsViewer_NewView_MapIndices(t *testing.T) {
 			NewView("T", rows)
 		require.NoError(t, err)
 
-		require.Equal(t, []string{"C", "B", "A"}, view.ColNames())
+		require.Equal(t, []string{"C", "B", "A"}, view.ColumnNames())
 		require.Equal(t, "c", view.Cell(0, 0))
 		require.Equal(t, "b", view.Cell(0, 1))
 		require.Equal(t, "a", view.Cell(0, 2))
@@ -49,8 +49,8 @@ func TestStructRowsViewer_NewView_MapIndices(t *testing.T) {
 		plain, err := DefaultStructRowsViewer().NewView("T", rows)
 		require.NoError(t, err)
 
-		require.Equal(t, plain.ColNames(), mapped.ColNames())
-		for col := range plain.ColNames() {
+		require.Equal(t, plain.ColumnNames(), mapped.ColumnNames())
+		for col := range plain.ColumnNames() {
 			require.Equal(t, plain.Cell(0, col), mapped.Cell(0, col))
 		}
 	})
@@ -62,7 +62,7 @@ func TestStructRowsViewer_NewView_MapIndices(t *testing.T) {
 		require.NoError(t, err)
 
 		byName := map[string]any{}
-		for col, name := range view.ColNames() {
+		for col, name := range view.ColumnNames() {
 			byName[name] = view.Cell(0, col)
 		}
 		require.Equal(t, map[string]any{"A": "a", "B": "b", "C": "c"}, byName)
@@ -86,7 +86,7 @@ func TestStructRowsViewer_NewView_CellsMatchColumns(t *testing.T) {
 	view, err := DefaultStructRowsViewer().NewView("Products", rows)
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"Product Code", "Name"}, view.ColNames())
+	require.Equal(t, []string{"Product Code", "Name"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 
 	require.Equal(t, "A1", view.Cell(0, 0))

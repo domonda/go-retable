@@ -92,7 +92,7 @@ type ReflectValuesView struct {
 //	}
 //	// All cells are now stored as reflect.Value for introspection
 //	for row := 0; row < reflected.NumRows(); row++ {
-//	    for col := range reflected.ColNames() {
+//	    for col := range reflected.ColumnNames() {
 //	        val := reflected.ReflectCell(row, col)
 //	        fmt.Printf("Type: %s\n", val.Type())
 //	    }
@@ -106,12 +106,12 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 	}
 	view := &ReflectValuesView{
 		TableTitle: source.Title(),
-		Cols:       source.ColNames(),
+		Cols:       source.ColumnNames(),
 		Rows:       make([][]reflect.Value, source.NumRows()),
 	}
 	reflectSource := AsReflectCellView(source)
 	for row := 0; row < source.NumRows(); row++ {
-		view.Rows[row] = make([]reflect.Value, source.NumCols())
+		view.Rows[row] = make([]reflect.Value, source.NumColumns())
 		for col := range view.Rows[row] {
 			view.Rows[row][col] = reflectSource.ReflectCell(row, col)
 		}
@@ -122,11 +122,11 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 // Title returns the title of this view.
 func (view *ReflectValuesView) Title() string { return view.TableTitle }
 
-// ColNames returns the column names of this view.
-func (view *ReflectValuesView) ColNames() []string { return view.Cols }
+// ColumnNames returns the column names of this view.
+func (view *ReflectValuesView) ColumnNames() []string { return view.Cols }
 
-// NumCols returns the number of columns of this view.
-func (view *ReflectValuesView) NumCols() int { return len(view.Cols) }
+// NumColumns returns the number of columns of this view.
+func (view *ReflectValuesView) NumColumns() int { return len(view.Cols) }
 
 // NumRows returns the number of data rows in this view.
 func (view *ReflectValuesView) NumRows() int { return len(view.Rows) }
@@ -139,7 +139,7 @@ func (view *ReflectValuesView) NumRows() int { return len(view.Rows) }
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to NumCols()-1)
+//   - col: Zero-based column index (0 to NumColumns()-1)
 //
 // Returns:
 //   - The cell's underlying value (via reflect.Value.Interface()) if indices are valid
@@ -170,7 +170,7 @@ func (view *ReflectValuesView) Cell(row, col int) any {
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to NumCols()-1)
+//   - col: Zero-based column index (0 to NumColumns()-1)
 //
 // Returns:
 //   - The reflect.Value stored at the cell if indices are valid
@@ -269,12 +269,12 @@ func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueVie
 		// this branch exists to guard against.
 		return &SingleReflectValueView{}
 	}
-	if row < 0 || col < 0 || row >= source.NumRows() || col >= source.NumCols() {
+	if row < 0 || col < 0 || row >= source.NumRows() || col >= source.NumColumns() {
 		return &SingleReflectValueView{TableTitle: source.Title()}
 	}
 	return &SingleReflectValueView{
 		TableTitle: source.Title(),
-		Col:        source.ColNames()[col],
+		Col:        source.ColumnNames()[col],
 		Val:        reflect.ValueOf(source.Cell(row, col)),
 	}
 }
@@ -282,11 +282,11 @@ func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueVie
 // Title returns the title of this view.
 func (view *SingleReflectValueView) Title() string { return view.TableTitle }
 
-// ColNames returns a slice containing the single column name.
-func (view *SingleReflectValueView) ColNames() []string { return []string{view.Col} }
+// ColumnNames returns a slice containing the single column name.
+func (view *SingleReflectValueView) ColumnNames() []string { return []string{view.Col} }
 
-// NumCols always returns 1 because this view has a single column.
-func (view *SingleReflectValueView) NumCols() int { return 1 }
+// NumColumns always returns 1 because this view has a single column.
+func (view *SingleReflectValueView) NumColumns() int { return 1 }
 
 // NumRows always returns 1 for SingleReflectValueView.
 func (view *SingleReflectValueView) NumRows() int { return 1 }

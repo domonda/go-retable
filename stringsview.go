@@ -136,11 +136,11 @@ func NewStringsView(title string, rows [][]string, cols ...string) *StringsView 
 // Title returns the title of this view.
 func (view *StringsView) Title() string { return view.TableTitle }
 
-// ColNames returns the column names of this view.
-func (view *StringsView) ColNames() []string { return view.Cols }
+// ColumnNames returns the column names of this view.
+func (view *StringsView) ColumnNames() []string { return view.Cols }
 
-// NumCols returns the number of columns of this view.
-func (view *StringsView) NumCols() int { return len(view.Cols) }
+// NumColumns returns the number of columns of this view.
+func (view *StringsView) NumColumns() int { return len(view.Cols) }
 
 // NumRows returns the number of data rows in this view.
 func (view *StringsView) NumRows() int { return len(view.Rows) }
@@ -154,7 +154,7 @@ func (view *StringsView) NumRows() int { return len(view.Rows) }
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to NumCols()-1)
+//   - col: Zero-based column index (0 to NumColumns()-1)
 //
 // Returns the cell value as any, which will be either string, "", or nil.
 //
@@ -239,7 +239,7 @@ func NewHeaderView(cols ...string) *HeaderView {
 //	headerOnly := retable.NewHeaderViewFrom(original)
 //	// headerOnly contains just one row with "ID", "Name", "Price" as values
 func NewHeaderViewFrom(source View) *HeaderView {
-	return &HeaderView{TableTitle: source.Title(), Cols: source.ColNames()}
+	return &HeaderView{TableTitle: source.Title(), Cols: source.ColumnNames()}
 }
 
 // HeaderView is a specialized View that contains only a header row.
@@ -275,11 +275,11 @@ type HeaderView struct {
 // Title returns the title of this view.
 func (view *HeaderView) Title() string { return view.TableTitle }
 
-// ColNames returns the column names of this view.
-func (view *HeaderView) ColNames() []string { return view.Cols }
+// ColumnNames returns the column names of this view.
+func (view *HeaderView) ColumnNames() []string { return view.Cols }
 
-// NumCols returns the number of columns of this view.
-func (view *HeaderView) NumCols() int { return len(view.Cols) }
+// NumColumns returns the number of columns of this view.
+func (view *HeaderView) NumColumns() int { return len(view.Cols) }
 
 // NumRows always returns 1 for HeaderView since it contains only the header row.
 func (view *HeaderView) NumRows() int { return 1 }
@@ -291,7 +291,7 @@ func (view *HeaderView) NumRows() int { return 1 }
 //
 // Parameters:
 //   - row: Must be 0, otherwise nil is returned
-//   - col: Zero-based column index (0 to NumCols()-1)
+//   - col: Zero-based column index (0 to NumColumns()-1)
 //
 // Returns:
 //   - The column name as any if row is 0 and col is valid

@@ -144,7 +144,7 @@ func (e ExtraColsView) Title() string {
 	return e[0].Title()
 }
 
-// Columns returns all column names from all Views concatenated in order.
+// ColumnNames returns all column names from all Views concatenated in order.
 //
 // The resulting slice contains columns from each view sequentially:
 //
@@ -154,23 +154,23 @@ func (e ExtraColsView) Title() string {
 //
 // Example:
 //
-//	view1.ColNames() -> ["A", "B"]
-//	view2.ColNames() -> ["C", "D", "E"]
-//	ExtraColsView{view1, view2}.ColNames() -> ["A", "B", "C", "D", "E"]
-func (e ExtraColsView) ColNames() []string {
+//	view1.ColumnNames() -> ["A", "B"]
+//	view2.ColumnNames() -> ["C", "D", "E"]
+//	ExtraColsView{view1, view2}.ColumnNames() -> ["A", "B", "C", "D", "E"]
+func (e ExtraColsView) ColumnNames() []string {
 	var columns []string
 	for _, view := range e {
-		columns = append(columns, view.ColNames()...)
+		columns = append(columns, view.ColumnNames()...)
 	}
 	return columns
 }
 
-// NumCols returns the sum of the column counts of all Views,
-// mirroring Columns. Returns 0 if the ExtraColsView is empty.
-func (e ExtraColsView) NumCols() int {
+// NumColumns returns the sum of the column counts of all Views,
+// mirroring ColumnNames. Returns 0 if the ExtraColsView is empty.
+func (e ExtraColsView) NumColumns() int {
 	var numCols int
 	for _, view := range e {
-		numCols += view.NumCols()
+		numCols += view.NumColumns()
 	}
 	return numCols
 }
@@ -232,7 +232,7 @@ func (e ExtraColsView) Cell(row, col int) any {
 	}
 	colLeft := 0
 	for _, view := range e {
-		numCols := view.NumCols()
+		numCols := view.NumColumns()
 		colRight := colLeft + numCols
 		if col < colRight {
 			return view.Cell(row, col-colLeft)

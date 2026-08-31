@@ -12,7 +12,7 @@ import (
 func TestSingleColView(t *testing.T) {
 	view := SingleColView("Name", []string{"Erik", "Ann", "Bo"})
 
-	require.Equal(t, []string{"Name"}, view.ColNames())
+	require.Equal(t, []string{"Name"}, view.ColumnNames())
 	require.Equal(t, 3, view.NumRows())
 	require.Equal(t, "Erik", view.Cell(0, 0))
 	require.Equal(t, "Bo", view.Cell(2, 0))
@@ -80,7 +80,7 @@ func TestSingleColViewOfReflectValues(t *testing.T) {
 func TestSingleCellView(t *testing.T) {
 	view := SingleCellView("Count", "Total", 42)
 
-	require.Equal(t, []string{"Total"}, view.ColNames())
+	require.Equal(t, []string{"Total"}, view.ColumnNames())
 	require.Equal(t, 1, view.NumRows())
 	require.Equal(t, 42, view.Cell(0, 0))
 
@@ -95,7 +95,7 @@ func TestSingleCellView(t *testing.T) {
 	t.Run("an empty title stays empty", func(t *testing.T) {
 		untitled := SingleCellView("", "Total", 42)
 		require.Equal(t, "", untitled.Title(), "no title means no title, not the column name")
-		require.Equal(t, []string{"Total"}, untitled.ColNames())
+		require.Equal(t, []string{"Total"}, untitled.ColumnNames())
 	})
 }
 

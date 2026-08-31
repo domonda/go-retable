@@ -72,7 +72,7 @@ func writeTestWorkbookFile(t *testing.T, sheets ...testSheet) string {
 
 // Excel leaves trailing cells of a row blank and excelize.File.GetRows omits
 // them, so data rows are routinely shorter than the header row. Such a cell is
-// still within the range of ColNames() and must therefore behave like an empty
+// still within the range of ColumnNames() and must therefore behave like an empty
 // cell instead of like an out-of-range coordinate: retable.View documents nil
 // only for out-of-range access, and reflection based formatters call
 // reflect.Value.Type on the result of ReflectCell, which panics for an
@@ -89,7 +89,7 @@ func TestReadFirstSheetSparseRows(t *testing.T) {
 
 	view, err := ReadFirstSheet(bytes.NewReader(data), false)
 	require.NoError(t, err)
-	require.Equal(t, []string{"Name", "Age"}, view.ColNames())
+	require.Equal(t, []string{"Name", "Age"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 
 	require.Equal(t, "", view.Cell(0, 1), "blank trailing cell must be an empty string, not nil")
@@ -136,7 +136,7 @@ func TestReadFirstSheetTrimsColumnNames(t *testing.T) {
 
 	view, err := ReadFirstSheet(bytes.NewReader(data), false)
 	require.NoError(t, err)
-	require.Equal(t, []string{"Name", "Age"}, view.ColNames())
+	require.Equal(t, []string{"Name", "Age"}, view.ColumnNames())
 }
 
 // Completely empty rows and columns are removed wherever they occur, not only
@@ -155,7 +155,7 @@ func TestReadFirstSheetRemovesEmptyRowsAndColumns(t *testing.T) {
 
 	view, err := ReadFirstSheet(bytes.NewReader(data), false)
 	require.NoError(t, err)
-	require.Equal(t, []string{"Name", "Age"}, view.ColNames())
+	require.Equal(t, []string{"Name", "Age"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 	require.Equal(t, "Alice", view.Cell(0, 0))
 	require.Equal(t, "30", view.Cell(0, 1))
@@ -236,7 +236,7 @@ func TestReadLocalFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, views, 2)
 	require.Equal(t, "First", views[0].Title())
-	require.Equal(t, []string{"Name", "Age"}, views[0].ColNames())
+	require.Equal(t, []string{"Name", "Age"}, views[0].ColumnNames())
 	require.Equal(t, "Alice", views[0].Cell(0, 0))
 	require.Equal(t, "Second", views[1].Title())
 	require.Equal(t, "Bob", views[1].Cell(0, 0))

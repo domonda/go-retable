@@ -136,12 +136,12 @@ func is1on1Mapping(columns []string, indices []int) bool {
 // This implements the View interface.
 func (view *StructRowsView) Title() string { return view.title }
 
-// ColNames returns the column names of the view in display order.
+// ColumnNames returns the column names of the view in display order.
 // This implements the View interface.
-func (view *StructRowsView) ColNames() []string { return view.columns }
+func (view *StructRowsView) ColumnNames() []string { return view.columns }
 
-// NumCols returns the number of columns of this view.
-func (view *StructRowsView) NumCols() int { return len(view.columns) }
+// NumColumns returns the number of columns of this view.
+func (view *StructRowsView) NumColumns() int { return len(view.columns) }
 
 // NumRows returns the number of rows in the view, which equals
 // the length of the underlying struct slice or array.

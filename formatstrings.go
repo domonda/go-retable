@@ -56,7 +56,7 @@ func FormatTableAsStrings(ctx context.Context, table any, formatter CellFormatte
 //   - formatter: Optional CellFormatter to customize cell rendering (can be nil for default formatting)
 //   - options: Optional formatting options (e.g., OptionAddHeaderRow to include column titles)
 //
-// When OptionAddHeaderRow is set, the column titles from view.ColNames() are added
+// When OptionAddHeaderRow is set, the column titles from view.ColumnNames() are added
 // as the first row, also passed through the formatter for consistent formatting.
 //
 // Returns a 2D string slice where each inner slice represents a row,
@@ -75,10 +75,10 @@ func FormatTableAsStrings(ctx context.Context, table any, formatter CellFormatte
 func FormatViewAsStrings(ctx context.Context, view View, formatter CellFormatter, options ...Option) (rows [][]string, err error) {
 	formatter = TryFormattersOrSprint(formatter)
 	numRows := view.NumRows()
-	numCols := view.NumCols()
+	numCols := view.NumColumns()
 
 	if HasOption(options, OptionAddHeaderRow) {
-		// view.ColNames() would already returns a string slice,
+		// view.ColumnNames() would already returns a string slice,
 		// but use formatter for any additional formatting of strings
 		headerView := NewHeaderViewFrom(view)
 		rowStrings := make([]string, numCols)

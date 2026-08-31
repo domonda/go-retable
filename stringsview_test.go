@@ -9,7 +9,7 @@ import (
 
 // Sources of rows like CSV files or Excel sheets omit trailing empty cells,
 // so a data row is routinely shorter than the column count. Such a cell is
-// still within the range of ColNames() and must therefore behave like an empty
+// still within the range of ColumnNames() and must therefore behave like an empty
 // cell instead of like an out-of-range coordinate: reflection based formatters
 // call reflect.Value.Type on the result of ReflectCell, which panics for an
 // invalid reflect.Value, and ViewToStructSlice skips cells with an invalid
@@ -49,7 +49,7 @@ func TestNewStringsViewWidensShortHeaderRow(t *testing.T) {
 		{"1", "2"},
 	})
 
-	require.Equal(t, []string{"A", ""}, view.ColNames())
+	require.Equal(t, []string{"A", ""}, view.ColumnNames())
 	require.Equal(t, "1", view.Cell(0, 0))
 	require.Equal(t, "2", view.Cell(0, 1), "cell past the end of the header row must be reachable")
 	require.Equal(t, "2", view.ReflectCell(0, 1).String())
@@ -60,7 +60,7 @@ func TestNewStringsViewWidensShortHeaderRow(t *testing.T) {
 func TestNewStringsViewDoesNotWidenExplicitCols(t *testing.T) {
 	view := NewStringsView("T", [][]string{{"1", "2"}}, "A")
 
-	require.Equal(t, []string{"A"}, view.ColNames())
+	require.Equal(t, []string{"A"}, view.ColumnNames())
 	require.Nil(t, view.Cell(0, 1))
 }
 
@@ -70,7 +70,7 @@ func TestNewStringsViewDoesNotModifyPassedCols(t *testing.T) {
 	cols := []string{" A ", " B "}
 	view := NewStringsView("T", [][]string{{"1", "2"}}, cols...)
 
-	require.Equal(t, []string{"A", "B"}, view.ColNames())
+	require.Equal(t, []string{"A", "B"}, view.ColumnNames())
 	require.Equal(t, []string{" A ", " B "}, cols, "passed cols must not be modified")
 }
 
@@ -80,6 +80,6 @@ func TestNewStringsViewDoesNotModifyHeaderRow(t *testing.T) {
 	rows := [][]string{{" A ", " B "}, {"1", "2"}}
 	view := NewStringsView("T", rows)
 
-	require.Equal(t, []string{"A", "B"}, view.ColNames())
+	require.Equal(t, []string{"A", "B"}, view.ColumnNames())
 	require.Equal(t, []string{" A ", " B "}, rows[0], "header row must not be modified")
 }

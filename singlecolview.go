@@ -137,13 +137,13 @@ func (s *singleColsView[T]) Title() string {
 	return s.title
 }
 
-// ColNames returns the column names (always a single-element slice).
-func (s *singleColsView[T]) ColNames() []string {
+// ColumnNames returns the column names (always a single-element slice).
+func (s *singleColsView[T]) ColumnNames() []string {
 	return s.columns
 }
 
-// NumCols returns the number of columns, which is always 1 for this view.
-func (s *singleColsView[T]) NumCols() int {
+// NumColumns returns the number of columns, which is always 1 for this view.
+func (s *singleColsView[T]) NumColumns() int {
 	return len(s.columns)
 }
 
