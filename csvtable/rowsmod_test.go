@@ -167,3 +167,11 @@ func TestReplaceNewlineWithSpace(t *testing.T) {
 		{"multiple  newlines", ""},
 	}, rows)
 }
+
+// The misspelled name is part of the published API and has to keep working,
+// so it is tested like the function it delegates to.
+func TestReplaceNewlineWithSpacefunc(t *testing.T) {
+	rows := [][]string{{"unix\nnewline", "windows\r\nnewline"}}
+	ReplaceNewlineWithSpacefunc(rows)
+	assert.Equal(t, [][]string{{"unix newline", "windows newline"}}, rows)
+}

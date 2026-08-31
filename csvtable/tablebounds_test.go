@@ -116,6 +116,16 @@ func TestDetectTableBounds(t *testing.T) {
 	}
 }
 
+func TestTableBounds_ZeroValueIsNotValid(t *testing.T) {
+	// A caller that declares the zero value and only conditionally assigns a
+	// detected table must not get a valid-looking empty table.
+	var bounds TableBounds
+	assert.False(t, bounds.Valid(), "zero value must not be valid")
+	assert.Nil(t, bounds.Rows([][]string{{"a"}, {"b"}}), "zero value has no rows")
+
+	assert.False(t, DetectTableBounds(nil).Valid(), "no rows means no table")
+}
+
 // TestReadStringsToStructSlice_HeaderAndTrailerLines is why DetectTableBounds
 // exists: without it the first row of the file is used as column titles, so
 // the header line of a bank statement becomes the column titles and every
