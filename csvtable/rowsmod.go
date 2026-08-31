@@ -20,6 +20,17 @@ func SetRowsWithNonUniformColumnsNil(rows [][]string) [][]string {
 			rowColumnsCount[rowColumns]++
 		}
 	}
+	if len(rowColumnsCount) == 0 {
+		// No row has more than one column, so this really is a single column table.
+		// Single column rows are excluded from the majority vote above because
+		// header and trailer lines of a table are usually single column rows
+		// that must not outvote the actual table rows.
+		for _, row := range rows {
+			if rowColumns := len(row); rowColumns > 0 {
+				rowColumnsCount[rowColumns]++
+			}
+		}
+	}
 	majorityRowColumns := 0
 	highestRowCount := 0
 	for rowColumns, rowCount := range rowColumnsCount {

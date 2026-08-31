@@ -40,6 +40,33 @@ func Test_EmptyRowsWithNonUniformColumns(t *testing.T) {
 			source:   [][]string{{"1"}, {"2", "2"}, {"3", "3", "3"}},
 			expected: [][]string{nil, nil, {"3", "3", "3"}}, // take longer row if count of columns is identical
 		},
+		{
+			// Header and trailer lines of a table are single column rows
+			// that must not outvote the actual table rows even if there are more of them.
+			source: [][]string{
+				{"Kontoauszug Nr. 4"},
+				{"Erstellt von: Musterbank AG"},
+				{"Konto: AT12 3456"},
+				{"Datum", "Text", "Betrag", "Waehrung"},
+				{"01.01.2025", "Miete", "-500,00", "EUR"},
+				{"Ende des Auszugs"},
+				{"Seite 1 von 1"},
+			},
+			expected: [][]string{
+				nil,
+				nil,
+				nil,
+				{"Datum", "Text", "Betrag", "Waehrung"},
+				{"01.01.2025", "Miete", "-500,00", "EUR"},
+				nil,
+				nil,
+			},
+		},
+		{
+			// But a table that only has single column rows must be kept.
+			source:   [][]string{{"Title"}, {"1"}, {"2"}},
+			expected: [][]string{{"Title"}, {"1"}, {"2"}},
+		},
 	}
 
 	for i, test := range testCases {
