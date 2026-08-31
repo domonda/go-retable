@@ -38,8 +38,7 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
 	}
-	for i := 0; i < structType.NumField(); i++ {
-		field := structType.Field(i)
+	for field := range structType.Fields() {
 		switch {
 		case field.Anonymous:
 			fields = append(fields, StructFieldTypes(field.Type)...)
@@ -77,7 +76,7 @@ func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 	}
 	structType := structValue.Type()
 	values := make([]reflect.Value, 0, structType.NumField())
-	for i := 0; i < structType.NumField(); i++ {
+	for i := range structType.NumField() {
 		field := structType.Field(i)
 		switch {
 		case field.Anonymous:
@@ -110,19 +109,42 @@ func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 //	values := IndexedStructFieldReflectValues(reflect.ValueOf(p), 2, []int{1, -1, 0})
 //	// Returns reflect.Values at positions: [0]=City, [1]=Name
 func IndexedStructFieldReflectValues(structValue reflect.Value, numVals int, indices []int) []reflect.Value {
-	// TODO optimized algorithm that does not allocate a slice for all values but only numVals
-	allVals := StructFieldReflectValues(structValue)
-	if len(allVals) != len(indices) {
-		panic(fmt.Errorf("got %d indices for struct with %d fields", len(indices), len(allVals)))
-	}
 	vals := make([]reflect.Value, numVals)
-	for i, index := range indices {
-		if index < 0 {
-			continue
-		}
-		vals[index] = allVals[i]
+	numFields := assignIndexedStructFieldReflectValues(vals, structValue, indices, 0)
+	if numFields != len(indices) {
+		panic(fmt.Errorf("got %d indices for struct with %d fields", len(indices), numFields))
 	}
 	return vals
+}
+
+// assignIndexedStructFieldReflectValues assigns the values of the exported fields
+// of structValue, including the inlined fields of any anonymously embedded structs,
+// to vals using the output position from indices for every flattened field.
+//
+// fieldIndex is the flattened position of the first field of structValue,
+// the returned index is the position after its last field.
+// Fields without a position in indices are only counted, so that the caller
+// can report the total number of fields.
+func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue reflect.Value, indices []int, fieldIndex int) int {
+	if structValue.Kind() == reflect.Pointer {
+		structValue = structValue.Elem()
+	}
+	structType := structValue.Type()
+	for i := range structType.NumField() {
+		field := structType.Field(i)
+		switch {
+		case field.Anonymous:
+			fieldIndex = assignIndexedStructFieldReflectValues(vals, structValue.Field(i), indices, fieldIndex)
+		case token.IsExported(field.Name):
+			if fieldIndex < len(indices) {
+				if index := indices[fieldIndex]; index >= 0 {
+					vals[index] = structValue.Field(i)
+				}
+			}
+			fieldIndex++
+		}
+	}
+	return fieldIndex
 }
 
 // StructFieldAnyValues returns the values of exported struct fields as []any,

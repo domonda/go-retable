@@ -101,6 +101,57 @@ func TestStructFieldIndex(t *testing.T) {
 	}
 }
 
+func TestIndexedStructFieldReflectValues(t *testing.T) {
+	type innerStruct struct {
+		B int
+		C bool
+	}
+	type testStruct struct {
+		A int
+		innerStruct
+		private string
+		D       bool
+	}
+	s := testStruct{A: 1, innerStruct: innerStruct{B: 2, C: true}, private: "ignored", D: false}
+
+	tests := []struct {
+		name        string
+		structValue reflect.Value
+		numVals     int
+		indices     []int
+		// want holds the values of the returned reflect.Values,
+		// nil for positions that must stay the zero reflect.Value
+		want []any
+	}{
+		{name: "reorder and skip", structValue: reflect.ValueOf(s), numVals: 3, indices: []int{1, -1, 2, 0}, want: []any{false, 1, true}},
+		{name: "struct pointer", structValue: reflect.ValueOf(&s), numVals: 3, indices: []int{1, -1, 2, 0}, want: []any{false, 1, true}},
+		{name: "all fields skipped", structValue: reflect.ValueOf(s), numVals: 2, indices: []int{-1, -1, -1, -1}, want: []any{nil, nil}},
+		{name: "more values than indexed fields", structValue: reflect.ValueOf(s), numVals: 3, indices: []int{0, -1, -1, -1}, want: []any{1, nil, nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vals := IndexedStructFieldReflectValues(tt.structValue, tt.numVals, tt.indices)
+			require.Len(t, vals, tt.numVals)
+			for i, val := range vals {
+				var got any
+				if val.IsValid() {
+					got = val.Interface()
+				}
+				require.Equalf(t, tt.want[i], got, "value at index %d", i)
+			}
+		})
+	}
+
+	// The number of indices must match the number of flattened fields
+	// of the struct, else the mapping from fields to values is undefined.
+	require.PanicsWithError(t, "got 3 indices for struct with 4 fields", func() {
+		IndexedStructFieldReflectValues(reflect.ValueOf(s), 3, []int{0, 1, 2})
+	})
+	require.PanicsWithError(t, "got 5 indices for struct with 4 fields", func() {
+		IndexedStructFieldReflectValues(reflect.ValueOf(s), 5, []int{0, 1, 2, 3, 4})
+	})
+}
+
 func TestValueLikeNil(t *testing.T) {
 	var nilInterface any
 	var nilInt *int
