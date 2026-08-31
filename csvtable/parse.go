@@ -196,14 +196,14 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 	csv = sanitizeUTF8(csv)
 
 	///////////////////////////////////////////////////////////////////////////
-	// Count bytes outside of quoted fields for the detections below
+	// Scan the structure outside of quoted fields for the detections below
 
-	counts, numCRLF, endedQuoted := countBytes(csv, true)
-	if endedQuoted {
-		// The data ends within a quoted field, so its quoting is broken
-		// and the counts of everything after the unbalanced quote are
-		// missing. Count every byte instead of guessing which quote is wrong.
-		counts, numCRLF, _ = countBytes(csv, false)
+	structure := scanStructure(csv, true)
+	if structure.endedQuoted {
+		// The data ends within a quoted field, so its quoting is unbalanced
+		// and everything after the offending quote was skipped. Scan again
+		// without quoting instead of guessing which quote is the wrong one.
+		structure = scanStructure(csv, false)
 	}
 
 	///////////////////////////////////////////////////////////////////////////
@@ -213,7 +213,7 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 	// counted, so a single quoted \r\n can't switch a whole \n separated
 	// file to \r\n line endings. \r\n wins a tie because it is the
 	// standard, and a \r\n file has no \n of its own to count.
-	if numLF := counts['\n'] - numCRLF; numCRLF > 0 && numCRLF >= numLF {
+	if numLF := structure.numLF - structure.numCRLF; structure.numCRLF > 0 && structure.numCRLF >= numLF {
 		format.Newline = "\r\n"
 	} else {
 		format.Newline = "\n"
@@ -246,16 +246,8 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 		return format, nil, nil
 	}
 
-	// Separators within a quoted field are part of its value and were not
-	// counted, so the quoted commas of a semicolon separated file can't
-	// outvote its semicolons. The candidates are ordered by preference,
-	// so the first one with the highest count wins a tie.
-	highestCount := 0
-	for _, candidate := range separatorCandidates {
-		if counts[candidate] > highestCount {
-			highestCount = counts[candidate]
-			format.Separator = string(candidate)
-		}
+	if separator, ok := structure.bestSeparator(); ok {
+		format.Separator = separator
 	}
 
 	///////////////////////////////////////////////////////////////////////////
@@ -326,20 +318,54 @@ func splitLines(csv []byte, newline string) [][]byte {
 // ordered by preference so that the first one with the highest count wins.
 var separatorCandidates = []byte{',', ';', '\t', '|'}
 
-// countBytes counts how often every byte value occurs in the CSV data,
-// together with the number of \r\n line endings among the counted newlines.
+// csvStructure is what scanStructure counted outside of quoted fields.
+type csvStructure struct {
+	numLF      int // Newlines, of which numCRLF are the \n of a \r\n
+	numCRLF    int
+	numRecords int // Records with any content, a record can span several lines
+
+	// columnsPerRecord maps for every separatorCandidates index
+	// the number of columns to the number of records with that many columns
+	columnsPerRecord []map[int]int
+
+	// endedQuoted reports that the data ends within a quoted field, meaning
+	// that its quoting is unbalanced and everything after the offending quote
+	// was skipped
+	endedQuoted bool
+}
+
+// scanStructure counts the structural bytes of the CSV data that are not part
+// of a quoted field value: the line endings, and for every separator candidate
+// how many records have how many columns.
 //
-// With skipQuoted the bytes within a quoted field are not counted, because
-// they are part of a field value and not structure. A quote toggles the quoted
-// state, except for a doubled quote within a quoted field which is an escaped
-// quote that does not end it. Toggling on quotes alone keeps the counting
-// independent of the separator, which is not known yet while it is detected.
+// A quote toggles the quoted state, except for a doubled quote within a quoted
+// field which is an escaped quote that does not end it. Toggling on quotes
+// alone keeps the scan independent of the separator, which is not known yet
+// while it is detected. Any newline outside of a quoted field ends a record,
+// so the record boundaries don't depend on the detected line ending either,
+// and a newline within a quoted field does not split a record in two.
 //
-// endedQuoted reports that the data ends within a quoted field, meaning that
-// its quoting is unbalanced and the counts are missing everything after the
-// offending quote.
-func countBytes(csv []byte, skipQuoted bool) (counts *[256]int, numCRLF int, endedQuoted bool) {
-	counts = new([256]int)
+// With skipQuoted false the quoting is ignored, which is the fallback for data
+// whose quoting is unbalanced.
+func scanStructure(csv []byte, skipQuoted bool) *csvStructure {
+	s := &csvStructure{columnsPerRecord: make([]map[int]int, len(separatorCandidates))}
+	for i := range s.columnsPerRecord {
+		s.columnsPerRecord[i] = make(map[int]int)
+	}
+
+	separators := make([]int, len(separatorCandidates))
+	recordHasContent := false
+	endRecord := func() {
+		if recordHasContent {
+			s.numRecords++
+			for i, numSeparators := range separators {
+				s.columnsPerRecord[i][numSeparators+1]++
+			}
+		}
+		clear(separators)
+		recordHasContent = false
+	}
+
 	quoted := false
 	for i := 0; i < len(csv); i++ {
 		c := csv[i]
@@ -349,17 +375,74 @@ func countBytes(csv []byte, skipQuoted bool) (counts *[256]int, numCRLF int, end
 				continue
 			}
 			quoted = !quoted
+			recordHasContent = true
 			continue
 		}
 		if quoted {
 			continue
 		}
-		counts[c]++
-		if c == '\n' && i > 0 && csv[i-1] == '\r' {
-			numCRLF++
+		switch c {
+		case '\r':
+			if i+1 < len(csv) && csv[i+1] == '\n' {
+				i++
+				s.numLF++
+				s.numCRLF++
+			}
+			endRecord()
+		case '\n':
+			s.numLF++
+			endRecord()
+		default:
+			recordHasContent = true
+			for candidate, separator := range separatorCandidates {
+				if c == separator {
+					separators[candidate]++
+				}
+			}
 		}
 	}
-	return counts, numCRLF, quoted
+	endRecord()
+
+	s.endedQuoted = quoted
+	return s
+}
+
+// bestSeparator returns the candidate that splits the records into the most
+// uniform number of columns, because the right separator is the one that makes
+// the data rectangular. Counting occurrences alone is not enough: unquoted text
+// containing commas can hold more of them than a semicolon separated file has
+// semicolons. More columns win a tie, then the candidate order.
+//
+// ok is false when no candidate separates the records into more than one
+// column, so the caller keeps its default separator.
+func (s *csvStructure) bestSeparator() (separator string, ok bool) {
+	if s.numRecords == 0 {
+		return "", false
+	}
+	var (
+		bestUniformity float64
+		bestColumns    int
+	)
+	for candidate, sep := range separatorCandidates {
+		// The most common number of columns of this candidate,
+		// more columns win a tie
+		var columns, records int
+		for c, r := range s.columnsPerRecord[candidate] {
+			if r > records || (r == records && c > columns) {
+				columns, records = c, r
+			}
+		}
+		if columns < 2 {
+			// The candidate doesn't separate anything in the typical record
+			continue
+		}
+		uniformity := float64(records) / float64(s.numRecords)
+		if uniformity > bestUniformity || (uniformity == bestUniformity && columns > bestColumns) {
+			bestUniformity, bestColumns = uniformity, columns
+			separator, ok = string(sep), true
+		}
+	}
+	return separator, ok
 }
 
 // parseSepHeaderLine parses separator declaration header lines.

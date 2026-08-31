@@ -519,6 +519,39 @@ func TestParseDetectFormat_Detection(t *testing.T) {
 			wantFirstRow: []string{"a", "b", "c"},
 		},
 		{
+			// Counting occurrences is not enough here: the unquoted city
+			// lists hold more commas than the file has semicolons, only the
+			// uniform column count identifies the semicolon.
+			name:         "unquoted commas don't outvote semicolons",
+			csv:          "Name;Beschreibung\nMeier;Wien, Graz, Linz, Salzburg\nHuber;Wels, Steyr, Amstetten, Melk\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"Name", "Beschreibung"},
+		},
+		{
+			name:         "unquoted commas don't outvote tabs",
+			csv:          "Name\tOrt\nMeier\tWien, Graz, Linz\nHuber\tWels, Steyr, Melk\n",
+			wantSep:      "\t",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"Name", "Ort"},
+		},
+		{
+			name:         "decimal commas don't outvote semicolons",
+			csv:          "Artikel;Preis\nSchraube;1,50\nMutter;2,75\nNagel;0,99\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"Artikel", "Preis"},
+		},
+		{
+			// A newline within a quoted field must not split the record,
+			// otherwise the separator's column count looks non-uniform.
+			name:         "multi line field keeps the column count uniform",
+			csv:          "a;b;c\nx;\"L1\nL2\";z\np;q;r\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b", "c"},
+		},
+		{
 			name:         "pipe separated",
 			csv:          "a|b|c\n1|2|3\n",
 			wantSep:      "|",
