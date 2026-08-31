@@ -20,8 +20,11 @@ type TableBounds struct {
 }
 
 // Valid reports whether the bounds describe a table.
+//
+// The zero value is not valid: a detected table always has an EndRow after
+// its TitleRow, because the column titles row is part of it.
 func (b TableBounds) Valid() bool {
-	return b.TitleRow >= 0
+	return b.TitleRow >= 0 && b.EndRow > b.TitleRow
 }
 
 // Rows returns the column titles row followed by the data rows,
