@@ -116,7 +116,7 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 
 	csv = sanitizeUTF8(csv)
 
-	lines := bytes.Split(csv, []byte(format.Newline))
+	lines := splitLines(csv, format.Newline)
 	if len(lines) > 0 {
 		if headerSep := parseSepHeaderLine(lines[0]); headerSep != "" {
 			if headerSep != format.Separator {
@@ -224,7 +224,7 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 	///////////////////////////////////////////////////////////////////////////
 	// Detect separator
 
-	lines = bytes.Split(csv, []byte(format.Newline))
+	lines = splitLines(csv, format.Newline)
 
 	if len(lines) > 0 {
 		format.Separator = parseSepHeaderLine(lines[0])
@@ -247,11 +247,7 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 		// unusedSeparators string
 	)
 
-	for i := range lines {
-		// Remove double newlines
-		lines[i] = bytes.Trim(lines[i], "\r\n")
-		line := lines[i]
-
+	for _, line := range lines {
 		if len(line) == 0 {
 			continue
 		}
@@ -272,6 +268,11 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 		// })
 	}
 
+	// Default separator, also used when there is no line to detect one from,
+	// because the returned Format is used by callers for parsing and writing
+	// further data and has to be valid in any case.
+	format.Separator = ","
+
 	if numNonEmptyLines == 0 {
 		return format, nil, nil
 	}
@@ -291,11 +292,6 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 		// numSeperators = sep.tabs
 		// unusedSeparators = ",;"
 		format.Separator = "\t"
-
-	default:
-		// numSeperators = sep.commas
-		// unusedSeparators = ";\t"
-		format.Separator = ","
 	}
 
 	///////////////////////////////////////////////////////////////////////////
@@ -348,6 +344,20 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 	return format, lines, nil
 }
 
+// splitLines splits csv into lines separated by newline and removes
+// stray newline characters from both ends of every line.
+//
+// Trimming is part of splitting because a file can use a line ending
+// wider than the newline it is split by, which would otherwise leak
+// into the last field of every line.
+func splitLines(csv []byte, newline string) [][]byte {
+	lines := bytes.Split(csv, []byte(newline))
+	for i := range lines {
+		lines[i] = bytes.Trim(lines[i], "\r\n")
+	}
+	return lines
+}
+
 // parseSepHeaderLine parses separator declaration header lines.
 // It recognizes lines in the format "sep=X" or "SEP=X" where X is the separator character.
 //
@@ -379,6 +389,9 @@ func parseSepHeaderLine(line []byte) (sep string) {
 		return ""
 	}
 	if !bytes.HasPrefix(line, []byte("sep=")) && !bytes.HasPrefix(line, []byte("SEP=")) {
+		return ""
+	}
+	if !validSeparator(line[4]) {
 		return ""
 	}
 	return string(line[4:5])
@@ -452,116 +465,116 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 				continue
 			}
 
-			leftQuotes := countQuotesLeft(field)
-			totalQuotes := bytes.Count(field, []byte{'"'})
-			switch {
-			case len(field) > 1 && totalQuotes == len(field):
-				// Field consists only of quotes, which is an escaped empty
-				// field `""`, an escaped quote `""""`, and so on.
-				// Remove outermost quotes
-				field = field[1 : len(field)-1]
-
-			case leftQuotes%2 == 1 && totalQuotes%2 == 1:
-				// An odd number of leading quotes opens a quoted field
-				// and an odd total number of quotes means that the field
-				// is not closed again within itself, so it was wrongly split
-				// by a separator or newline inside the quoted field
-				// and has to be joined together again.
-				joinLineIndex := -1
-				if i == len(fields)-1 {
-					// When last field of the line begins with a quote but does not end with one
-					// then search following lines for a first field that ends with a quote
-					// which will be the right side of this field wrongly splitted into more
-					// lines because it contained newline characters.
-					// Newlines are allowed in quoted CSV fields.
-					for joinLineIndex = lineIndex + 1; joinLineIndex < len(lines); joinLineIndex++ {
-						joinLine := lines[joinLineIndex]
-						joinLineFields := bytes.Split(joinLine, separator)
-						if len(joinLineFields) > 0 && countQuotesRight(joinLineFields[0])%2 == 1 {
-							// Found the line where the first field holds the closing quote for the multi-line field
-							break
-						}
-					}
-				}
-
-				if joinLineIndex > lineIndex && joinLineIndex < len(lines) {
-					// Join lines until including joinLineIndex as multi line field
-					// then empty those lines so line indices are still correct
-
-					joinLine := lines[joinLineIndex]
-					joinLineFields := bytes.Split(joinLine, separator)
-
-					// Join lines between lineIndex and joinLineIndex
-					for index := lineIndex + 1; index < joinLineIndex; index++ {
-						field = append(field, []byte(newlineReplacement)...)
-						field = append(field, lines[index]...)
-					}
-
-					// Join first field of line joinLineIndex
-					field = append(field, []byte(newlineReplacement)...)
-					field = append(field, joinLineFields[0]...)
-
-					// Remove quotes of joined field
-					if field[0] != '"' || field[len(field)-1] != '"' {
-						return nil, errors.New("should never happen: csv.Read is broken")
-					}
+			// Only a field beginning with a quote needs quote handling.
+			// Every other field's quotes are literal and are just
+			// unescaped below, so counting them would be wasted work.
+			if leftQuotes := countQuotesLeft(field); leftQuotes > 0 {
+				totalQuotes := bytes.Count(field, []byte{'"'})
+				switch {
+				case totalQuotes == len(field) && len(field)%2 == 0:
+					// Field consists only of an even number of quotes, which is an escaped
+					// empty field `""`, an escaped quote `""""`, and so on.
+					// An odd number of quotes leaves one quote unescaped that opens a field
+					// continued after a separator or newline, which is handled by the case below.
+					// Remove outermost quotes
 					field = field[1 : len(field)-1]
 
-					// Append following fields after first joined field of line joinLineIndex
-					fields = append(fields, joinLineFields[1:]...)
-
-					// Empty lines that have been joined
-					for i := lineIndex + 1; i <= joinLineIndex; i++ {
-						lines[i] = nil
-					}
-
-				} else {
-
-					// Begins with quote but does not end with one
-					// means that a separator was in a quoted field
-					// that has been wrongly splitted into multiple fields.
-					// Needs merging of fields:
-					for r := i + 1; r < len(fields); r++ {
-						// Find following field that does not begin
-						// with a quote, but ends with exactly one
-						rField := fields[r]
-						if len(rField) == 0 {
-							continue
+				case leftQuotes%2 == 1 && totalQuotes%2 == 1:
+					// An odd number of leading quotes opens a quoted field
+					// and an odd total number of quotes means that the field
+					// is not closed again within itself, so it was wrongly split
+					// by a separator or a newline inside the quoted field
+					// and has to be joined together again.
+					//
+					// Search for the field that closes the quoted field, first in
+					// the remaining fields of this line which were split off by a
+					// separator within the quotes, then in the fields of the
+					// following lines which were split off by a newline within the
+					// quotes. Newlines are allowed in quoted CSV fields.
+					// A field can be split by both, so the search must neither stop
+					// at the end of this line nor at the first field of a line.
+					var (
+						closeLine   = -1
+						closeField  = -1
+						closeFields [][]byte
+					)
+				findClosingField:
+					for l := lineIndex; l < len(lines); l++ {
+						lineFields, r := fields, i+1
+						if l > lineIndex {
+							lineFields, r = bytes.Split(lines[l], separator), 0
 						}
-						var closesField bool
-						if rLeftQuotes := countQuotesLeft(rField); rLeftQuotes == len(rField) {
-							// Field consists only of quotes, so it closes the
-							// quoted field if one quote is left unescaped
-							closesField = rLeftQuotes%2 == 1
-						} else {
-							// The right field may only begin with escaped quotes
-							// and must end with an unescaped closing quote
-							closesField = rLeftQuotes%2 == 0 && countQuotesRight(rField)%2 == 1
-						}
-						if closesField {
-							// Join fields [i..j]
-							field = bytes.Join(fields[i:r+1], separator)
-							// Remove quotes
-							field = field[1 : len(field)-1]
-							// Shift remaining slice fields over the ones joined into fields[i]
-							copy(fields[i+1:], fields[r+1:])
-							fields = fields[:len(fields)-(r-i)]
-							break
+						for ; r < len(lineFields); r++ {
+							if closesQuotedField(lineFields[r]) {
+								closeLine, closeField, closeFields = l, r, lineFields
+								break findClosingField
+							}
 						}
 					}
+
+					switch {
+					case closeLine == lineIndex:
+						// Only fields of this line were split off by a separator,
+						// so join the fields [i..closeField] back together
+						field = bytes.Join(fields[i:closeField+1], separator)
+						// Remove quotes
+						field = field[1 : len(field)-1]
+						// Shift remaining slice fields over the ones joined into fields[i]
+						copy(fields[i+1:], fields[closeField+1:])
+						fields = fields[:len(fields)-(closeField-i)]
+
+					case closeLine > lineIndex:
+						// The field was also split off by a newline, so join the
+						// remaining fields of this line, the lines in between and
+						// the fields of the closing line up to closeField
+						joined := bytes.Join(fields[i:], separator)
+						for l := lineIndex + 1; l < closeLine; l++ {
+							joined = append(joined, newlineReplacement...)
+							joined = append(joined, lines[l]...)
+						}
+						joined = append(joined, newlineReplacement...)
+						joined = append(joined, bytes.Join(closeFields[:closeField+1], separator)...)
+
+						// Remove quotes of joined field
+						if joined[0] != '"' || joined[len(joined)-1] != '"' {
+							return nil, errors.New("should never happen: csv.Read is broken")
+						}
+						field = joined[1 : len(joined)-1]
+
+						// Continue this line with the fields
+						// following the closing field
+						fields = append(fields[:i+1], closeFields[closeField+1:]...)
+
+						// Empty lines that have been joined
+						// so line indices are still correct
+						for l := lineIndex + 1; l <= closeLine; l++ {
+							lines[l] = nil
+						}
+
+					case totalQuotes == len(field):
+						// Nothing to join the unterminated field with,
+						// so only its opening quote is removed and the
+						// remaining quotes are unescaped further down.
+						field = field[1:]
+					}
+
+				case leftQuotes%2 == 1:
+					// Quoted field that is closed again within itself.
+					// Remove outermost quotes
+					field = field[1 : len(field)-1]
+
+				default:
+					// Field is not quoted, so all its quotes are literal
+					// and only have to be unescaped further down
 				}
-
-			case leftQuotes%2 == 1:
-				// Quoted field that is closed again within itself.
-				// Remove outermost quotes
-				field = field[1 : len(field)-1]
-
-			default:
-				// Field is not quoted, so all its quotes are literal
-				// and only have to be unescaped further down
 			}
 
-			fields[i] = bytes.ReplaceAll(field, []byte(`""`), []byte{'"'})
+			// bytes.ReplaceAll allocates a copy of the field even when
+			// there is nothing to replace, so only call it when there is.
+			if bytes.Contains(field, []byte(`""`)) {
+				field = bytes.ReplaceAll(field, []byte(`""`), []byte{'"'})
+			}
+			fields[i] = field
 		}
 
 		row := make([]string, len(fields))
@@ -612,38 +625,30 @@ func countQuotesRight(str []byte) int {
 	return len(str)
 }
 
-// countQuotesLeftRight counts consecutive quotes from both ends of a byte slice.
-// It returns separate counts for leading and trailing quotes.
+// closesQuotedField reports whether field is the closing part of a quoted
+// field that was split by a separator or newline inside the quotes.
 //
-// Special case: If the entire slice consists of quotes, they are split between
-// left and right counts (with left getting one more if odd number).
-//
-// This is used in the CSV parser to identify quoting patterns and determine
-// whether a field is properly quoted, has escaped quotes, or needs special handling.
-//
-// Parameters:
-//   - str: The byte slice to analyze
-//
-// Returns:
-//   - left: Number of consecutive leading quotes
-//   - right: Number of consecutive trailing quotes
+// The closing part may only begin with escaped quotes and must end with an
+// unescaped closing quote. Requiring both is what distinguishes it from an
+// ordinary quoted field like `"value"`, which must not be mistaken for the
+// closing part of an unterminated field further up.
 //
 // Example:
 //
-//	countQuotesLeftRight([]byte(`"value"`))    // Returns: 1, 1 (quoted field)
-//	countQuotesLeftRight([]byte(`""value""`))  // Returns: 2, 2 (escaped quotes)
-//	countQuotesLeftRight([]byte(`value`))      // Returns: 0, 0 (unquoted)
-//	countQuotesLeftRight([]byte(`""""`))       // Returns: 2, 2 (all quotes, split evenly)
-func countQuotesLeftRight(str []byte) (left, right int) {
-	left = countQuotesLeft(str)
-	right = countQuotesRight(str)
-
-	if left == len(str) {
-		left = (len(str) + 1) / 2
-		right = len(str) - left
+//	closesQuotedField([]byte(`value"`))    // Returns: true
+//	closesQuotedField([]byte(`""value"`))  // Returns: true
+//	closesQuotedField([]byte(`"`))         // Returns: true
+//	closesQuotedField([]byte(`"value"`))   // Returns: false (a complete field)
+//	closesQuotedField([]byte(`value`))     // Returns: false (no closing quote)
+func closesQuotedField(field []byte) bool {
+	leftQuotes := countQuotesLeft(field)
+	if leftQuotes == len(field) {
+		// Field consists only of quotes, so it closes the
+		// quoted field if one quote is left unescaped
+		return leftQuotes%2 == 1
 	}
-
-	return left, right
+	// A single leading quote can never occur inside a quoted field
+	return leftQuotes%2 == 0 && countQuotesRight(field)%2 == 1
 }
 
 func sanitizeUTF8(str []byte) []byte {

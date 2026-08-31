@@ -76,7 +76,8 @@ func NewFormat(separator string) *Format {
 // Validation rules:
 //   - Format must not be nil
 //   - Encoding must be specified (non-empty)
-//   - Separator must be specified and exactly one character long
+//   - Separator must be specified and exactly one character long,
+//     and must not be a quote or a control character other than tab
 //   - Newline must be one of: "\n", "\r\n", or "\n\r"
 //
 // Returns an error describing the validation failure, or nil if valid.
@@ -97,12 +98,22 @@ func (f *Format) Validate() error {
 		return errors.New("missing csv.Format.Separator")
 	case len(f.Separator) > 1:
 		return fmt.Errorf("invalid csv.Format.Separator: %q", f.Separator)
+	case !validSeparator(f.Separator[0]):
+		return fmt.Errorf("invalid csv.Format.Separator: %q", f.Separator)
 	case f.Newline == "":
 		return errors.New("missing csv.Format.Newline")
 	case f.Newline != "\n" && f.Newline != "\n\r" && f.Newline != "\r\n":
 		return fmt.Errorf("invalid csv.Format.Newline: %q", f.Newline)
 	}
 	return nil
+}
+
+// validSeparator reports whether c can be used as a CSV field separator.
+// A quote can never be one because it would make all quote handling
+// in readLines nonsensical, and control characters other than tab
+// can never be one either.
+func validSeparator(c byte) bool {
+	return c != '"' && c != 0x7f && (c >= ' ' || c == '\t')
 }
 
 // FormatDetectionConfig configures the automatic CSV format detection algorithm.

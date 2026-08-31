@@ -6,6 +6,11 @@ import (
 
 // SetRowsWithNonUniformColumnsNil set rows to nil that don't have the same field count as the majority of rows,
 // so every rows is either nil or has the same number of fields.
+//
+// Single column rows don't take part in the majority vote unless no row has
+// more than one column, because header and trailer lines of a table are usually
+// single column rows that must not outvote the actual table rows even if there
+// are more of them.
 func SetRowsWithNonUniformColumnsNil(rows [][]string) [][]string {
 	if len(rows) == 0 {
 		return nil
@@ -16,20 +21,15 @@ func SetRowsWithNonUniformColumnsNil(rows [][]string) [][]string {
 	// map from number of columns to number of rows with that column
 	rowColumnsCount := make(map[int]int)
 	for _, row := range rows {
-		if rowColumns := len(row); rowColumns > 1 {
+		if rowColumns := len(row); rowColumns > 0 {
 			rowColumnsCount[rowColumns]++
 		}
 	}
-	if len(rowColumnsCount) == 0 {
-		// No row has more than one column, so this really is a single column table.
-		// Single column rows are excluded from the majority vote above because
-		// header and trailer lines of a table are usually single column rows
-		// that must not outvote the actual table rows.
-		for _, row := range rows {
-			if rowColumns := len(row); rowColumns > 0 {
-				rowColumnsCount[rowColumns]++
-			}
-		}
+	if len(rowColumnsCount) > 1 {
+		// Header and trailer lines of a table are usually single column rows
+		// that must not outvote the actual table rows, so they only count
+		// when no row has more than one column.
+		delete(rowColumnsCount, 1)
 	}
 	majorityRowColumns := 0
 	highestRowCount := 0
@@ -128,11 +128,12 @@ func CompactSpacedStrings(rows [][]string) (numModified int) {
 // compactSpacedString removes spaces if they are between every other character,
 // meaning that every odd character index is a space.
 func compactSpacedString(str string) (cleaned string, modified bool) {
-	if len(str) < 3 {
-		return str, false
-	}
-
 	// First check if every odd indexed rune is a space.
+	// Count runes and not bytes because the loops here index runes,
+	// else a multi-byte string would be compacted where the same
+	// string with single-byte characters would not be. Counting in
+	// this loop instead of up front keeps the early return for the
+	// common string that is not spaced out.
 	numSpaces := 0
 	i := 0 // Don't use index from range over string because it counts bytes not UTF-8 runes
 	for _, r := range str {
@@ -143,6 +144,9 @@ func compactSpacedString(str string) (cleaned string, modified bool) {
 			numSpaces++
 		}
 		i++
+	}
+	if i < 3 {
+		return str, false
 	}
 
 	b := strings.Builder{}
@@ -157,12 +161,26 @@ func compactSpacedString(str string) (cleaned string, modified bool) {
 	return b.String(), true
 }
 
-func ReplaceNewlineWithSpacefunc(rows [][]string) {
+// newlineReplacer replaces all newline variants with a single space.
+// \r\n is listed first because Replacer matches the pairs in argument
+// order, which keeps a Windows newline from becoming two spaces.
+var newlineReplacer = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
+
+// ReplaceNewlineWithSpace replaces all newlines in all fields with a space.
+func ReplaceNewlineWithSpace(rows [][]string) {
 	for _, row := range rows {
 		for col, field := range row {
-			row[col] = strings.ReplaceAll(field, "\n", " ")
+			row[col] = newlineReplacer.Replace(field)
 		}
 	}
+}
+
+// ReplaceNewlineWithSpacefunc replaces all newlines in all fields with a space.
+//
+// Deprecated: use [ReplaceNewlineWithSpace], this alias only exists
+// because the misspelled name is part of the published API.
+func ReplaceNewlineWithSpacefunc(rows [][]string) {
+	ReplaceNewlineWithSpace(rows)
 }
 
 // TrimSpace removes leading and trailing spaces from all fields.

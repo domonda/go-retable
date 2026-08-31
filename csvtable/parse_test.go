@@ -1,6 +1,9 @@
 package csvtable
 
 import (
+	"bytes"
+	"encoding/csv"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -254,7 +257,7 @@ func TestParseStrings(t *testing.T) {
 			assert.NoError(t, err, "csv.Read")
 			assert.NotNil(t, format, "returned Format")
 			assert.Equal(t, "UTF-8", format.Encoding, "UTF-8 encoding expected")
-			assert.Equalf(t, refSeparator, format.Separator, "'s' separator expected", refSeparator)
+			assert.Equalf(t, refSeparator, format.Separator, "%q separator expected", refSeparator)
 			rows = SetRowsWithNonUniformColumnsNil(rows)
 			rows = RemoveEmptyRows(rows)
 			assert.Len(t, rows, 1, "one CSV row expected")
@@ -273,10 +276,10 @@ func TestParseStrings(t *testing.T) {
 func TestCountQuotes(t *testing.T) {
 	testData := map[string][2]int{
 		``:     {0, 0},
-		`"`:    {1, 0},
-		`""`:   {1, 1},
-		`"""`:  {2, 1},
-		`""""`: {2, 2},
+		`"`:    {1, 1},
+		`""`:   {2, 2},
+		`"""`:  {3, 3},
+		`""""`: {4, 4},
 
 		`1`:      {0, 0},
 		`12`:     {0, 0},
@@ -308,9 +311,35 @@ func TestCountQuotes(t *testing.T) {
 
 	for str, counts := range testData {
 		t.Run(str, func(t *testing.T) {
-			left, right := countQuotesLeftRight([]byte(str))
-			assert.Equal(t, counts[0], left, "left quote count")
-			assert.Equal(t, counts[1], right, "right quote count")
+			assert.Equal(t, counts[0], countQuotesLeft([]byte(str)), "left quote count")
+			assert.Equal(t, counts[1], countQuotesRight([]byte(str)), "right quote count")
+		})
+	}
+}
+
+// Test_closesQuotedField documents which field is accepted as the closing part
+// of a quoted field split by a separator or newline. An ordinary quoted field
+// must not be accepted, else an unterminated quote swallows the rows up to it.
+func Test_closesQuotedField(t *testing.T) {
+	testData := map[string]bool{
+		``:          false,
+		`value`:     false,
+		`"`:         true,
+		`""`:        false,
+		`"""`:       true,
+		`""""`:      false,
+		`value"`:    true,
+		`value""`:   false,
+		`value"""`:  true,
+		`""value"`:  true,
+		`"value"`:   false, // complete quoted field, not a closing part
+		`"value`:    false, // opening part, not a closing part
+		`""value""`: false,
+	}
+
+	for field, want := range testData {
+		t.Run(field, func(t *testing.T) {
+			assert.Equal(t, want, closesQuotedField([]byte(field)), "closesQuotedField(%q)", field)
 		})
 	}
 }
@@ -326,12 +355,211 @@ func Test_parseSepHeaderLine(t *testing.T) {
 		{line: `"SEP=;"`, wantSep: ";"},
 		{line: `sep=,`, wantSep: ","},
 		{line: `"sep=,"`, wantSep: ","},
+		{line: "sep=\t", wantSep: "\t"},
+		{line: `sep=|`, wantSep: "|"},
+
+		// A quote or a control character can never be a separator.
+		// Accepting one made every quote branch of readLines nonsensical
+		// and the invalid Format was passed on to the caller.
+		{line: `sep="`, wantSep: ""},
+		{line: `"sep=""`, wantSep: ""},
+		{line: "sep=\r", wantSep: ""},
+		{line: "sep=\n", wantSep: ""},
+		{line: "sep=\x00", wantSep: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.line, func(t *testing.T) {
 			if gotSep := parseSepHeaderLine([]byte(tt.line)); gotSep != tt.wantSep {
 				t.Errorf("parseSepHeaderLine() = %v, want %v", gotSep, tt.wantSep)
 			}
+		})
+	}
+}
+
+// TestParseDetectFormat_MultiLineFields verifies that a quoted field containing
+// newlines is joined back into one field regardless of how many quotes its first
+// line fragment holds. A fragment consisting only of quotes must not be mistaken
+// for a complete field, that emitted one logical row as two malformed rows.
+func TestParseDetectFormat_MultiLineFields(t *testing.T) {
+	tests := []struct {
+		name string
+		csv  string
+		want [][]string
+	}{
+		{
+			name: "value starting with a newline",
+			csv:  "A;\"\nB\";C",
+			want: [][]string{{"A", "\nB", "C"}},
+		},
+		{
+			name: "value starting with a quote and a newline",
+			csv:  "A;\"\"\"\nfoo\";B",
+			want: [][]string{{"A", "\"\nfoo", "B"}},
+		},
+		{
+			name: "value starting with two quotes and a newline",
+			csv:  "A;\"\"\"\"\"\nfoo\";B",
+			want: [][]string{{"A", "\"\"\nfoo", "B"}},
+		},
+		{
+			name: "value spanning three lines",
+			csv:  "A;\"one\ntwo\nthree\";B",
+			want: [][]string{{"A", "one\ntwo\nthree", "B"}},
+		},
+		{
+			// The field is split by the separator before it is split by the
+			// newline, so the opening part is not the last field of its line
+			// and the closing part is not the first field of its line.
+			name: "value containing separator and newline",
+			csv:  "A;\"one;two\nthree;four\";B",
+			want: [][]string{{"A", "one;two\nthree;four", "B"}},
+		},
+		{
+			name: "value that is only separators and a newline",
+			csv:  "A;\";\n;\";B",
+			want: [][]string{{"A", ";\n;", "B"}},
+		},
+		{
+			name: "value with separator on the closing line only",
+			csv:  "A;\"one\ntwo;three\";B",
+			want: [][]string{{"A", "one\ntwo;three", "B"}},
+		},
+		{
+			name: "value that is only a quote and a newline",
+			csv:  "A;\"\"\"\n\"\"\";B",
+			want: [][]string{{"A", "\"\n\"", "B"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, _, err := ParseDetectFormat([]byte(tt.csv), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, RemoveEmptyRows(rows))
+		})
+	}
+}
+
+// TestParseDetectFormat_UnterminatedQuote verifies that an unterminated quote
+// does not swallow the rows following it. The closing part of a multi-line field
+// may only begin with escaped quotes, so an ordinary quoted field on a later line
+// must not be taken for it, which silently destroyed every row in between.
+func TestParseDetectFormat_UnterminatedQuote(t *testing.T) {
+	rows, _, err := ParseDetectFormat([]byte("a;\"oops\nr2c1;r2c2\n\"r3c1\";r3c2\nr4c1;r4c2\n"), nil)
+	assert.NoError(t, err)
+	assert.Equal(t, [][]string{
+		{"a", `"oops`}, // the unterminated field keeps its opening quote
+		{"r2c1", "r2c2"},
+		{"r3c1", "r3c2"},
+		{"r4c1", "r4c2"},
+	}, RemoveEmptyRows(rows))
+}
+
+// TestParseDetectFormat_EmptyInput verifies that the returned Format is usable
+// even without any data, because callers detect the format once and re-use it
+// for parsing and writing further data.
+func TestParseDetectFormat_EmptyInput(t *testing.T) {
+	for _, data := range []string{"", "\n", "\n\n", "\r\n"} {
+		t.Run(strconv.Quote(data), func(t *testing.T) {
+			rows, format, err := ParseDetectFormat([]byte(data), nil)
+			assert.NoError(t, err)
+			assert.Empty(t, RemoveEmptyRows(rows))
+			assert.NoError(t, format.Validate(), "returned Format must be valid")
+		})
+	}
+}
+
+// TestParseDetectFormat_SepHeaderNewlineTrimming verifies that a sep= header line
+// does not change the parsed field values. Detection used to return early for a
+// sep= header, before the line trimming, leaking a \r into the last field.
+func TestParseDetectFormat_SepHeaderNewlineTrimming(t *testing.T) {
+	withHeader, _, err := ParseDetectFormat([]byte("sep=;\r\nA;B\r\r\n"), nil)
+	assert.NoError(t, err)
+	withoutHeader, _, err := ParseDetectFormat([]byte("A;B\r\r\n"), nil)
+	assert.NoError(t, err)
+
+	assert.Equal(t, [][]string{{"A", "B"}}, RemoveEmptyRows(withHeader))
+	assert.Equal(t, RemoveEmptyRows(withoutHeader), RemoveEmptyRows(withHeader), "sep= header must not change field values")
+}
+
+// TestParseDetectFormat_ReadsEncodingCSVOutput parses files written by the
+// standard library, where a newline inside a quoted field is the same byte
+// sequence as the row terminator. That is what Excel and encoding/csv produce
+// and the only shape that exercises joining a field across lines.
+func TestParseDetectFormat_ReadsEncodingCSVOutput(t *testing.T) {
+	values := []string{
+		"a\nb",
+		"line1\nline2\nline3",
+		`He said "hi"`,
+		"\"\nfoo",
+		"\"\"\nfoo",
+		"\"\n\"",
+		"trailing newline\n",
+		"with;separator\nand newline",
+		"a\nb;c",
+		"x;y\nz;w\nq",
+		";\n;",
+		"\";\nfoo",
+	}
+	for _, value := range values {
+		t.Run(strconv.Quote(value), func(t *testing.T) {
+			var dest bytes.Buffer
+			stdlibWriter := csv.NewWriter(&dest)
+			stdlibWriter.Comma = ';'
+			err := stdlibWriter.WriteAll([][]string{{value, "z"}})
+			assert.NoError(t, err)
+
+			rows, _, err := ParseDetectFormat(dest.Bytes(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, [][]string{{value, "z"}}, RemoveEmptyRows(rows), "parsed from %q", dest.String())
+		})
+	}
+}
+
+// TestParseWithFormat_NewlineTrimming verifies that ParseWithFormat trims stray
+// newline characters like ParseDetectFormat does. A file can use a line ending
+// wider than the format's Newline, which used to leak a \r into the last field
+// of every line of the explicitly formatted parse only.
+func TestParseWithFormat_NewlineTrimming(t *testing.T) {
+	tests := []struct {
+		csv    string
+		format *Format
+		want   [][]string
+	}{
+		{csv: "A;B\r\r\n", format: NewFormat(";"), want: [][]string{{"A", "B"}}},
+		{csv: "A;B\r\nC;D\r\n", format: NewFormat(";"), want: [][]string{{"A", "B"}, {"C", "D"}}},
+		{
+			// Newline "\n" against \r\n line endings is the case that leaked
+			csv:    "A;B\r\nC;D\r\n",
+			format: &Format{Encoding: "UTF-8", Separator: ";", Newline: "\n"},
+			want:   [][]string{{"A", "B"}, {"C", "D"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(strconv.Quote(tt.csv)+"/"+strconv.Quote(tt.format.Newline), func(t *testing.T) {
+			rows, err := ParseWithFormat([]byte(tt.csv), tt.format)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, RemoveEmptyRows(rows))
+		})
+	}
+}
+
+// TestParseWithFormat_InvalidSeparator verifies that a separator that can never
+// work is rejected by Format.Validate instead of being passed to readLines,
+// where a quote separator makes every quote branch nonsensical.
+func TestParseWithFormat_InvalidSeparator(t *testing.T) {
+	for _, sep := range []string{`"`, "\r", "\n", "\x00", "\x7f"} {
+		t.Run(strconv.Quote(sep), func(t *testing.T) {
+			format := &Format{Encoding: "UTF-8", Separator: sep, Newline: "\r\n"}
+			assert.Error(t, format.Validate(), "Validate must reject separator %q", sep)
+
+			_, err := ParseWithFormat([]byte("A;B\r\n"), format)
+			assert.Error(t, err, "ParseWithFormat must reject separator %q", sep)
+		})
+	}
+	// Separators that must stay valid
+	for _, sep := range []string{",", ";", "\t", "|"} {
+		t.Run("valid "+strconv.Quote(sep), func(t *testing.T) {
+			assert.NoError(t, NewFormat(sep).Validate())
 		})
 	}
 }

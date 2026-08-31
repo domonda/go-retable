@@ -101,6 +101,12 @@ func (f *ReflectTypeCellFormatter) FormatCell(ctx context.Context, view View, ro
 		return "", false, err
 	}
 	cellVal := AsReflectCellView(view).ReflectCell(row, col)
+	if !cellVal.IsValid() {
+		// A cell of a nil interface has no type to dispatch on,
+		// so let the caller handle it as a null value instead
+		// of panicking on the invalid reflect.Value.
+		return "", false, errors.ErrUnsupported
+	}
 	cellType := cellVal.Type()
 	if typeFmt, ok := f.Types[cellType]; ok {
 		str, raw, err := typeFmt.FormatCell(ctx, view, row, col)
