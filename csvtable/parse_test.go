@@ -494,6 +494,99 @@ func TestParseDetectFormat_SepHeaderNewlineTrimming(t *testing.T) {
 // standard library, where a newline inside a quoted field is the same byte
 // sequence as the row terminator. That is what Excel and encoding/csv produce
 // and the only shape that exercises joining a field across lines.
+func TestParseDetectFormat_Detection(t *testing.T) {
+	tests := []struct {
+		name         string
+		csv          string
+		wantSep      string
+		wantNewline  string
+		wantFirstRow []string
+	}{
+		{
+			// The commas within the quoted names are part of a value,
+			// not structure, so they must not outvote the semicolons.
+			name:         "quoted commas don't outvote semicolons",
+			csv:          "Datum;Name;Betrag\n01.01.2025;\"Meier, Hans, Wien, AT\";-1.234,56\n02.01.2025;\"Huber, Franz, Graz, AT\";2.000,00\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"Datum", "Name", "Betrag"},
+		},
+		{
+			name:         "quoted semicolons don't outvote commas",
+			csv:          "a,b,c\n\"x;y;z\",2,3\n\"p;q;r\",5,6\n",
+			wantSep:      ",",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b", "c"},
+		},
+		{
+			name:         "pipe separated",
+			csv:          "a|b|c\n1|2|3\n",
+			wantSep:      "|",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b", "c"},
+		},
+		{
+			name:         "quoted pipes don't outvote commas",
+			csv:          "a,b\n\"x|y|z|w\",2\n\"p|q|r|s\",5\n",
+			wantSep:      ",",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b"},
+		},
+		{
+			name:         "tab separated",
+			csv:          "a\tb\tc\n1\t2\t3\n",
+			wantSep:      "\t",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b", "c"},
+		},
+		{
+			// A \r\n within a quoted field is part of a value,
+			// so it must not switch the file to \r\n line endings.
+			name:         "quoted CRLF doesn't switch line endings",
+			csv:          "a;b\nc;\"x\r\ny\"\nd;e\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b"},
+		},
+		{
+			name:         "CRLF file",
+			csv:          "a;b\r\nc;d\r\n",
+			wantSep:      ";",
+			wantNewline:  "\r\n",
+			wantFirstRow: []string{"a", "b"},
+		},
+		{
+			name:         "mixed line endings, mostly LF",
+			csv:          "a;b\r\nc;d\ne;f\ng;h\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", "b"},
+		},
+		{
+			// Unbalanced quotes make the quoted state useless for everything
+			// after them, so every byte is counted instead.
+			name:         "unbalanced quote still detects",
+			csv:          "a;\"oops\nb;c\nd;e\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"a", `"oops`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, format, err := ParseDetectFormat([]byte(tt.csv), nil)
+			assert.NoError(t, err)
+			assert.NoError(t, format.Validate(), "detected format must be valid")
+			assert.Equal(t, tt.wantSep, format.Separator, "detected separator")
+			assert.Equal(t, tt.wantNewline, format.Newline, "detected newline")
+			rows = RemoveEmptyRows(rows)
+			if assert.NotEmpty(t, rows, "parsed rows") {
+				assert.Equal(t, tt.wantFirstRow, rows[0], "first parsed row")
+			}
+		})
+	}
+}
+
 func TestParseDetectFormat_ReadsEncodingCSVOutput(t *testing.T) {
 	values := []string{
 		"a\nb",

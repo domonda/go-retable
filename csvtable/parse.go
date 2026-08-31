@@ -196,26 +196,24 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 	csv = sanitizeUTF8(csv)
 
 	///////////////////////////////////////////////////////////////////////////
+	// Count bytes outside of quoted fields for the detections below
+
+	counts, numCRLF, endedQuoted := countBytes(csv, true)
+	if endedQuoted {
+		// The data ends within a quoted field, so its quoting is broken
+		// and the counts of everything after the unbalanced quote are
+		// missing. Count every byte instead of guessing which quote is wrong.
+		counts, numCRLF, _ = countBytes(csv, false)
+	}
+
+	///////////////////////////////////////////////////////////////////////////
 	// Detect line endings
 
-	// var (
-	// 	numLinesR  = bytes.Count(data, []byte{'\r'})
-	// 	numLinesN  = bytes.Count(data, []byte{'\n'})
-	// 	numLinesRN = bytes.Count(data, []byte{'\r', '\n'})
-	// )
-	// // fmt.Println("n:", numLinesN, "rn:", numLinesRN, "r:", numLinesR)
-	// switch {
-	// case numLinesR > numLinesN:
-	// 	format.Newline = "\r"
-	// case numLinesN > numLinesRN:
-	// 	format.Newline = "\n"
-	// default:
-	// 	format.Newline = "\r\n"
-	// }
-
-	// Simple rule: if there are \r\n line endings
-	// then take those because that's the standard
-	if bytes.Contains(csv, []byte{'\r', '\n'}) {
+	// Newlines within a quoted field are part of its value and were not
+	// counted, so a single quoted \r\n can't switch a whole \n separated
+	// file to \r\n line endings. \r\n wins a tie because it is the
+	// standard, and a \r\n file has no \n of its own to count.
+	if numLF := counts['\n'] - numCRLF; numCRLF > 0 && numCRLF >= numLF {
 		format.Newline = "\r\n"
 	} else {
 		format.Newline = "\n"
@@ -233,65 +231,31 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 		}
 	}
 
-	type sepCounts struct {
-		commas     int
-		semicolons int
-		tabs       int
-	}
-
-	var (
-		sep sepCounts
-		// lineSepCounts  []sepCounts
-		// numSeperators    int
-		numNonEmptyLines int
-		// unusedSeparators string
-	)
-
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
-
-		numNonEmptyLines++
-
-		commas := bytes.Count(line, []byte{','})
-		semicolons := bytes.Count(line, []byte{';'})
-		tabs := bytes.Count(line, []byte{'\t'})
-
-		sep.commas += commas
-		sep.semicolons += semicolons
-		sep.tabs += tabs
-		// lineSepCounts = append(lineSepCounts, sepCounts{
-		// 	commas:     commas,
-		// 	semicolons: semicolons,
-		// 	tabs:       tabs,
-		// })
-	}
-
 	// Default separator, also used when there is no line to detect one from,
 	// because the returned Format is used by callers for parsing and writing
 	// further data and has to be valid in any case.
 	format.Separator = ","
 
+	numNonEmptyLines := 0
+	for _, line := range lines {
+		if len(line) > 0 {
+			numNonEmptyLines++
+		}
+	}
 	if numNonEmptyLines == 0 {
 		return format, nil, nil
 	}
 
-	switch {
-	case sep.commas > sep.semicolons && sep.commas > sep.tabs:
-		// numSeperators = sep.commas
-		// unusedSeparators = ";\t"
-		format.Separator = ","
-
-	case sep.semicolons > sep.commas && sep.semicolons > sep.tabs:
-		// numSeperators = sep.semicolons
-		// unusedSeparators = ",\t"
-		format.Separator = ";"
-
-	case sep.tabs > sep.commas && sep.tabs > sep.semicolons:
-		// numSeperators = sep.tabs
-		// unusedSeparators = ",;"
-		format.Separator = "\t"
+	// Separators within a quoted field are part of its value and were not
+	// counted, so the quoted commas of a semicolon separated file can't
+	// outvote its semicolons. The candidates are ordered by preference,
+	// so the first one with the highest count wins a tie.
+	highestCount := 0
+	for _, candidate := range separatorCandidates {
+		if counts[candidate] > highestCount {
+			highestCount = counts[candidate]
+			format.Separator = string(candidate)
+		}
 	}
 
 	///////////////////////////////////////////////////////////////////////////
@@ -356,6 +320,46 @@ func splitLines(csv []byte, newline string) [][]byte {
 		lines[i] = bytes.Trim(lines[i], "\r\n")
 	}
 	return lines
+}
+
+// separatorCandidates are the separators that can be detected from the data,
+// ordered by preference so that the first one with the highest count wins.
+var separatorCandidates = []byte{',', ';', '\t', '|'}
+
+// countBytes counts how often every byte value occurs in the CSV data,
+// together with the number of \r\n line endings among the counted newlines.
+//
+// With skipQuoted the bytes within a quoted field are not counted, because
+// they are part of a field value and not structure. A quote toggles the quoted
+// state, except for a doubled quote within a quoted field which is an escaped
+// quote that does not end it. Toggling on quotes alone keeps the counting
+// independent of the separator, which is not known yet while it is detected.
+//
+// endedQuoted reports that the data ends within a quoted field, meaning that
+// its quoting is unbalanced and the counts are missing everything after the
+// offending quote.
+func countBytes(csv []byte, skipQuoted bool) (counts *[256]int, numCRLF int, endedQuoted bool) {
+	counts = new([256]int)
+	quoted := false
+	for i := 0; i < len(csv); i++ {
+		c := csv[i]
+		if skipQuoted && c == '"' {
+			if quoted && i+1 < len(csv) && csv[i+1] == '"' {
+				i++ // Escaped quote within a quoted field
+				continue
+			}
+			quoted = !quoted
+			continue
+		}
+		if quoted {
+			continue
+		}
+		counts[c]++
+		if c == '\n' && i > 0 && csv[i-1] == '\r' {
+			numCRLF++
+		}
+	}
+	return counts, numCRLF, quoted
 }
 
 // parseSepHeaderLine parses separator declaration header lines.
