@@ -51,8 +51,8 @@ var _ ReflectCellView = new(ReflectValuesView)
 // Thread safety: Not thread-safe. External synchronization required for
 // concurrent access.
 type ReflectValuesView struct {
-	// Tit is the title of this view, returned by the Title() method.
-	Tit string
+	// TableTitle is the title of this view, returned by the Title() method.
+	TableTitle string
 
 	// Cols contains the column names defining both the column headers
 	// and the number of columns in this view.
@@ -105,9 +105,9 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 		return nil, errors.New("view is nil")
 	}
 	view := &ReflectValuesView{
-		Tit:  source.Title(),
-		Cols: source.Columns(),
-		Rows: make([][]reflect.Value, source.NumRows()),
+		TableTitle: source.Title(),
+		Cols:       source.Columns(),
+		Rows:       make([][]reflect.Value, source.NumRows()),
 	}
 	reflectSource := AsReflectCellView(source)
 	for row := 0; row < source.NumRows(); row++ {
@@ -120,7 +120,7 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 }
 
 // Title returns the title of this view.
-func (view *ReflectValuesView) Title() string { return view.Tit }
+func (view *ReflectValuesView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *ReflectValuesView) Columns() []string { return view.Cols }
@@ -222,8 +222,8 @@ var _ ReflectCellView = new(ReflectValuesView)
 //
 // Thread safety: Immutable after creation, safe for concurrent reads.
 type SingleReflectValueView struct {
-	// Tit is the title of this view, usually inherited from the source.
-	Tit string
+	// TableTitle is the title of this view, usually inherited from the source.
+	TableTitle string
 
 	// Col is the name of the single column in this view.
 	Col string
@@ -267,17 +267,17 @@ func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueVie
 		return &SingleReflectValueView{}
 	}
 	if row < 0 || col < 0 || row >= source.NumRows() || col >= len(source.Columns()) {
-		return &SingleReflectValueView{Tit: source.Title()}
+		return &SingleReflectValueView{TableTitle: source.Title()}
 	}
 	return &SingleReflectValueView{
-		Tit: source.Title(),
-		Col: source.Columns()[col],
-		Val: reflect.ValueOf(source.Cell(row, col)),
+		TableTitle: source.Title(),
+		Col:        source.Columns()[col],
+		Val:        reflect.ValueOf(source.Cell(row, col)),
 	}
 }
 
 // Title returns the title of this view.
-func (view *SingleReflectValueView) Title() string { return view.Tit }
+func (view *SingleReflectValueView) Title() string { return view.TableTitle }
 
 // Columns returns a slice containing the single column name.
 func (view *SingleReflectValueView) Columns() []string { return []string{view.Col} }

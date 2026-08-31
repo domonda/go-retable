@@ -12,9 +12,9 @@ import (
 func TestDerefView(t *testing.T) {
 	a, b := "Erik", "Ann"
 	source := &AnyValuesView{
-		Tit:  "People",
-		Cols: []string{"Name"},
-		Rows: [][]any{{&a}, {&b}},
+		TableTitle: "People",
+		Cols:       []string{"Name"},
+		Rows:       [][]any{{&a}, {&b}},
 	}
 	view := DerefView(source)
 

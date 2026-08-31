@@ -29,8 +29,8 @@ var _ View = new(AnyValuesView)
 // Example usage:
 //
 //	view := &retable.AnyValuesView{
-//	    Tit:  "Mixed Data",
-//	    Cols: []string{"ID", "Name", "Active", "Score"},
+//	    TableTitle: "Mixed Data",
+//	    Cols:       []string{"ID", "Name", "Active", "Score"},
 //	    Rows: [][]any{
 //	        {1, "Alice", true, 95.5},
 //	        {2, "Bob", false, 87.3},
@@ -44,8 +44,8 @@ var _ View = new(AnyValuesView)
 // Thread safety: Not thread-safe. External synchronization required for
 // concurrent access.
 type AnyValuesView struct {
-	// Tit is the title of this view, returned by the Title() method.
-	Tit string
+	// TableTitle is the title of this view, returned by the Title() method.
+	TableTitle string
 
 	// Cols contains the column names defining both the column headers
 	// and the number of columns in this view.
@@ -86,9 +86,9 @@ type AnyValuesView struct {
 // Space complexity: O(rows * cols) for storing all values
 func NewAnyValuesViewFrom(source View) *AnyValuesView {
 	view := &AnyValuesView{
-		Tit:  source.Title(),
-		Cols: source.Columns(),
-		Rows: make([][]any, source.NumRows()),
+		TableTitle: source.Title(),
+		Cols:       source.Columns(),
+		Rows:       make([][]any, source.NumRows()),
 	}
 	for row := 0; row < source.NumRows(); row++ {
 		view.Rows[row] = make([]any, len(source.Columns()))
@@ -100,7 +100,7 @@ func NewAnyValuesViewFrom(source View) *AnyValuesView {
 }
 
 // Title returns the title of this view.
-func (view *AnyValuesView) Title() string { return view.Tit }
+func (view *AnyValuesView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *AnyValuesView) Columns() []string { return view.Cols }

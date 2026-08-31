@@ -49,8 +49,8 @@ import (
 //	}
 //	fmt.Println(view.Cell(1, 2)) // Output: "" (empty string)
 type StringsView struct {
-	// Tit is the title of this view, returned by the Title() method.
-	Tit string
+	// TableTitle is the title of this view, returned by the Title() method.
+	TableTitle string
 
 	// Cols contains the column names defining both the column headers
 	// and the number of columns in this view.
@@ -130,11 +130,11 @@ func NewStringsView(title string, rows [][]string, cols ...string) *StringsView 
 		}
 		cols = trimmedCols
 	}
-	return &StringsView{Tit: title, Cols: cols, Rows: rows}
+	return &StringsView{TableTitle: title, Cols: cols, Rows: rows}
 }
 
 // Title returns the title of this view.
-func (view *StringsView) Title() string { return view.Tit }
+func (view *StringsView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *StringsView) Columns() []string { return view.Cols }
@@ -236,7 +236,7 @@ func NewHeaderView(cols ...string) *HeaderView {
 //	headerOnly := retable.NewHeaderViewFrom(original)
 //	// headerOnly contains just one row with "ID", "Name", "Price" as values
 func NewHeaderViewFrom(source View) *HeaderView {
-	return &HeaderView{Tit: source.Title(), Cols: source.Columns()}
+	return &HeaderView{TableTitle: source.Title(), Cols: source.Columns()}
 }
 
 // HeaderView is a specialized View that contains only a header row.
@@ -257,20 +257,20 @@ func NewHeaderViewFrom(source View) *HeaderView {
 // Example:
 //
 //	view := &retable.HeaderView{
-//	    Tit:  "User Schema",
-//	    Cols: []string{"ID", "Name", "Email", "Active"},
+//	    TableTitle: "User Schema",
+//	    Cols:       []string{"ID", "Name", "Email", "Active"},
 //	}
 //	// Row 0 will contain: "ID", "Name", "Email", "Active"
 type HeaderView struct {
-	// Tit is the title of this view.
-	Tit string
+	// TableTitle is the title of this view.
+	TableTitle string
 
 	// Cols contains the column names, which are also used as the data row.
 	Cols []string
 }
 
 // Title returns the title of this view.
-func (view *HeaderView) Title() string { return view.Tit }
+func (view *HeaderView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *HeaderView) Columns() []string { return view.Cols }

@@ -12,8 +12,8 @@ import (
 // the source. The copy has to preserve the types, not just the values.
 func TestNewReflectValuesViewFrom(t *testing.T) {
 	source := &AnyValuesView{
-		Tit:  "Mixed",
-		Cols: []string{"Name", "Age", "Active"},
+		TableTitle: "Mixed",
+		Cols:       []string{"Name", "Age", "Active"},
 		Rows: [][]any{
 			{"Erik", 42, true},
 			{"Ann", 7, false},

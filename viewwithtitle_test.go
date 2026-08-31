@@ -35,9 +35,9 @@ func TestViewWithTitleReflectCellPassesValuesThrough(t *testing.T) {
 func TestViewWithTitleReflectCellKeepsPointers(t *testing.T) {
 	value := 42
 	source := &AnyValuesView{
-		Tit:  "Original",
-		Cols: []string{"A"},
-		Rows: [][]any{{&value}},
+		TableTitle: "Original",
+		Cols:       []string{"A"},
+		Rows:       [][]any{{&value}},
 	}
 	renamed := ViewWithTitle(source, "Renamed").(ReflectCellView)
 

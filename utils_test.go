@@ -312,8 +312,8 @@ func equalStringRows(a, b [][]string) bool {
 
 func ExamplePrintlnView() {
 	PrintlnView(&StringsView{
-		Tit:  "ExamplePrintlnView",
-		Cols: []string{"A", "B", "C"},
+		TableTitle: "ExamplePrintlnView",
+		Cols:       []string{"A", "B", "C"},
 		Rows: [][]string{
 			{"1", "2222222222", "3"},
 			{"", "", "3333"},
