@@ -68,8 +68,12 @@ import (
     "github.com/domonda/go-retable/csvtable"
 )
 
-// Read CSV file
-data, format, err := csvtable.ParseFile("data.csv")
+// Read a CSV file, detecting encoding, separator and line endings
+csvBytes, err := os.ReadFile("data.csv")
+if err != nil {
+    log.Fatal(err)
+}
+data, format, err := csvtable.ParseDetectFormat(csvBytes, nil)
 if err != nil {
     log.Fatal(err)
 }
@@ -81,10 +85,10 @@ fmt.Printf("Detected: %s encoding, '%s' separator\n",
 // Write CSV with custom formatting
 writer := csvtable.NewWriter[[]Person]().
     WithHeaderRow(true).
-    WithDelimiter(";").
-    WithPadding(csvtable.PadRight)
+    WithDelimiter(';').
+    WithPadding(csvtable.AlignLeft)
 
-err = writer.Write(context.Background(), file, people, "People")
+err = writer.Write(context.Background(), file, people)
 ```
 
 ### Working with Excel Files
@@ -236,17 +240,19 @@ Customize how values are formatted:
 // Type-based formatter
 formatter := retable.NewReflectTypeCellFormatter().
     WithKindFormatter(reflect.Float64,
-        retable.PrintfCellFormatter("%.2f", false)).
+        retable.PrintfCellFormatter("%.2f")).
     WithTypeFormatter(reflect.TypeOf(time.Time{}),
         retable.LayoutFormatter("2006-01-02"))
 
 // Use in CSV writer
 writer := csvtable.NewWriter[[]Product]().
-    WithTypeFormatter(formatter)
+    WithTypeFormatters(formatter)
 
-// Column-specific formatter
-writer.WithColumnFormatter(2, // Column index
-    retable.PrintfCellFormatter("$%.2f", false))
+// Column-specific formatter. Writers are immutable builders,
+// so keep the returned writer. Column formatters are applied to
+// cell values only, never to the column titles of the header row.
+writer = writer.WithColumnFormatter(2, // Column index
+    retable.PrintfCellFormatter("$%.2f"))
 ```
 
 ### Struct Field Naming
@@ -329,17 +335,24 @@ Automatically detect CSV format:
 ```go
 import "github.com/domonda/go-retable/csvtable"
 
-config := csvtable.FormatDetectionConfig{
-    DetectEncoding:  true,
-    DetectSeparator: true,
-    DetectNewline:   true,
-}
-
-data, format, err := csvtable.ParseFile("unknown.csv")
+// A nil config uses NewDefaultFormatDetectionConfig()
+data, format, err := csvtable.ParseDetectFormat(csvBytes, nil)
 // Detects: UTF-8/UTF-16LE/ISO-8859-1/Windows-1252/Macintosh
 // Detects: , or ; or \t separators
 // Detects: \n or \r\n or \n\r line endings
+
+// Or restrict which encodings are tried and how they are validated
+config := &csvtable.FormatDetectionConfig{
+    Encodings:     []string{"UTF-8", "Windows-1252"},
+    EncodingTests: []string{"äöü", "€"},
+}
+data, format, err = csvtable.ParseDetectFormat(csvBytes, config)
 ```
+
+A CSV file may declare its separator in a `sep=;` header line, which is honored
+during detection. A quote or a control character other than tab is never accepted
+as a separator, so the returned `Format` always passes `Format.Validate()` and can
+be reused for `ParseWithFormat` and `NewWriter`.
 
 ## Subpackages
 
@@ -347,10 +360,11 @@ data, format, err := csvtable.ParseFile("unknown.csv")
 
 CSV reading and writing with format detection:
 - Auto-detect encoding, separator, line endings
-- RFC 4180 compliant parsing
-- Multi-line field support
+- RFC 4180 compliant parsing and writing, round-trips with `encoding/csv`
+- Quoted fields split by a separator, a newline, or both are joined back together
 - Configurable padding and quoting
-- Row modification utilities
+- Row modification utilities: `SetRowsWithNonUniformColumnsNil`, `RemoveEmptyRows`,
+  `SetEmptyRowsNil`, `TrimSpace`, `CompactSpacedStrings`, `ReplaceNewlineWithSpace`
 
 ### exceltable
 
@@ -381,7 +395,7 @@ Virtual SQL driver for in-memory Views:
 
 ```go
 // Pretty-print any table data
-retable.PrintlnTable(data)
+retable.PrintlnTable("Title", data)
 
 // Get struct field types including embedded fields
 fields := retable.StructFieldTypes(reflect.TypeOf(MyStruct{}))
@@ -399,7 +413,10 @@ widths := retable.StringColumnWidths([][]string{...})
 
 ```go
 // Read CSV
-csvData, _, err := csvtable.ParseFile("input.csv")
+csvBytes, err := os.ReadFile("input.csv")
+check(err)
+
+csvData, _, err := csvtable.ParseDetectFormat(csvBytes, nil)
 check(err)
 
 csvView := retable.NewStringsView("Data", csvData, nil)
@@ -478,7 +495,7 @@ withMargin := retable.ExtraColsReflectValueFuncView(
 writer := htmltable.NewWriter[retable.View]().
     WithHeaderRow(true).
     WithTableClass("report-table").
-    WithColumnFormatter(4, retable.PrintfCellFormatter("%.1f%%", false))
+    WithColumnFormatter(4, retable.PrintfCellFormatter("%.1f%%"))
 
 writer.Write(ctx, reportFile, withMargin, "Sales Report")
 ```
