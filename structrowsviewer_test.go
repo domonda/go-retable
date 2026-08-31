@@ -6,6 +6,107 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStructRowsViewer_NewView_ColumnNames covers how a StructRowsViewer turns
+// the fields of a struct type into the columns of a View. That mapping is the
+// contract every struct-backed table depends on: it decides which fields are
+// exported to the table at all, and under which header they appear. Getting it
+// wrong silently produces a table with missing or mislabelled columns rather
+// than an error.
+func TestStructRowsViewer_NewView_ColumnNames(t *testing.T) {
+	type Tagged struct {
+		SKU        string `col:"Product Code"`
+		Name       string
+		Ignored    int `col:"-"`
+		unexported int //nolint:unused // present to assert it is not a column
+	}
+	type Embedded struct {
+		Tagged
+		Extra string
+	}
+
+	tests := []struct {
+		name   string
+		viewer *StructRowsViewer
+		table  any
+		want   []string
+	}{
+		{
+			// A struct with no fields is a table with no columns, not an error.
+			name:   "struct without fields has no columns",
+			viewer: DefaultStructRowsViewer(),
+			table:  []struct{}{},
+			want:   []string{},
+		},
+		{
+			// Untagged field names are split into words, so Go identifiers read
+			// as human headers. This is the default because most structs are
+			// untagged.
+			name:   "untagged field name is space separated",
+			viewer: DefaultStructRowsViewer(),
+			table:  []struct{ OneTitle int }{{}},
+			want:   []string{"One Title"},
+		},
+		{
+			// The col tag wins over the derived name, "-" drops the field, and
+			// unexported fields are never columns.
+			name:   "col tag overrides, dash ignores, unexported excluded",
+			viewer: DefaultStructRowsViewer(),
+			table:  []Tagged{{}},
+			want:   []string{"Product Code", "Name"},
+		},
+		{
+			// Without a tag name configured, no tag is read at all. That also
+			// means col:"-" is not seen, so Ignored becomes a column here. This
+			// is the documented difference from DefaultStructRowsViewer.
+			name:   "no tags viewer uses raw field names and reads no tags",
+			viewer: NoTagsStructRowsViewer(),
+			table:  []Tagged{{}},
+			want:   []string{"SKU", "Name", "Ignored"},
+		},
+		{
+			// Embedded struct fields are flattened into the outer table rather
+			// than becoming a single nested column.
+			name:   "embedded struct fields are inlined",
+			viewer: DefaultStructRowsViewer(),
+			table:  []Embedded{{}},
+			want:   []string{"Product Code", "Name", "Extra"},
+		},
+		{
+			// A slice of pointers describes the same table as a slice of values.
+			name:   "pointer element type behaves like value type",
+			viewer: DefaultStructRowsViewer(),
+			table:  []*Tagged{{}},
+			want:   []string{"Product Code", "Name"},
+		},
+		{
+			// Opting into tags-only makes column membership explicit, so adding
+			// a field to the struct cannot silently widen the table.
+			name:   "ignore untagged includes only tagged fields",
+			viewer: &StructRowsViewer{StructFieldNaming: DefaultStructFieldNamingIgnoreUntagged},
+			table:  []Tagged{{}},
+			want:   []string{"Product Code"},
+		},
+		{
+			// An empty slice still describes its columns, because they come from
+			// the element type and not from the data.
+			name:   "columns come from the type not the data",
+			viewer: DefaultStructRowsViewer(),
+			table:  []Tagged{},
+			want:   []string{"Product Code", "Name"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view, err := tt.viewer.NewView("Title", tt.table)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, view.ColumnNames())
+			require.Equal(t, len(tt.want), view.NumColumns(), "NumColumns must agree with ColumnNames")
+			require.Equal(t, "Title", view.Title())
+		})
+	}
+}
+
 // TestStructRowsViewer_NewView_MapIndices covers reordering columns away from
 // struct field order. The column name and the cell under it have to move
 // together: a mapping that permutes the values but not the headers produces a
@@ -96,4 +197,27 @@ func TestStructRowsViewer_NewView_CellsMatchColumns(t *testing.T) {
 
 	// The ignored field must not be reachable as a third column.
 	require.Nil(t, view.Cell(0, 2))
+}
+
+// TestStructRowsViewer_NewView_Errors covers the inputs that cannot describe a
+// table. These return an error rather than panicking, because the table value
+// usually comes from a caller's data rather than from a literal.
+func TestStructRowsViewer_NewView_Errors(t *testing.T) {
+	tests := []struct {
+		name  string
+		table any
+	}{
+		{name: "not a slice or array", table: 42},
+		{name: "slice of non struct", table: []int{1, 2, 3}},
+		{name: "slice of strings", table: []string{"a"}},
+		{name: "nil", table: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view, err := DefaultStructRowsViewer().NewView("Title", tt.table)
+			require.Error(t, err)
+			require.Nil(t, view)
+		})
+	}
 }
