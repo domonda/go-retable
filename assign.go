@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"time"
 )
 
 // SmartAssign performs intelligent type conversion when assigning src to dst.
@@ -17,43 +18,58 @@ import (
 //  1. Null handling: If src implements IsNull() bool and returns true,
 //     dst is set to its zero value.
 //
-//  2. Direct conversion: If src type is convertible to dst type using
+//  2. Empty string handling: If src is an empty string, dst is set to its
+//     zero value, because an empty cell of a CSV file or a spreadsheet
+//     means "no value". Destinations that can hold the string itself are
+//     assigned the empty string instead, which are string types, any,
+//     []byte, []rune, and pointers to those.
+//
+//  3. Direct conversion: If src type is convertible to dst type using
 //     reflect.Value.Convert, the conversion is performed directly.
+//     Integer sources are excluded for string destinations because
+//     reflect.Value.Convert applies Go's string(rune) conversion, which
+//     would yield the character with that code point instead of digits.
 //
-//  3. Nil pointer handling: If src is a nil pointer, dst is set to its zero value.
+//  4. Nil pointer handling: If src is a nil pointer, dst is set to its zero value.
 //
-//  4. Custom formatting: If dst is a string type and srcFormatter is provided,
+//  5. Custom formatting: If dst is a string type and srcFormatter is provided,
 //     srcFormatter.Format is used to convert src to string.
 //
-//  5. TextMarshaler: If src implements encoding.TextMarshaler, its MarshalText
+//  6. Custom scanning: If src is a string type and dstScanner is provided,
+//     dstScanner.ScanString is used to parse src into dst.
+//
+//  7. TextMarshaler: If src implements encoding.TextMarshaler, its MarshalText
 //     method is used to get a text representation for further conversion.
 //
-//  6. Stringer: If src implements fmt.Stringer, its String method is used
+//  8. Stringer: If src implements fmt.Stringer, its String method is used
 //     to get a string representation for further conversion.
 //
-//  7. Time parsing: If src is a string and dst is time.Time or *time.Time,
+//  9. Time parsing: If src is a string and dst is time.Time or *time.Time,
 //     ParseTime is used to convert the string to a time value.
+//     If dst is time.Duration or *time.Duration, time.ParseDuration is used,
+//     falling back to the integer parsing below for a plain number
+//     of nanoseconds without a unit.
 //
-//  8. Pointer dereferencing: If src is a non-nil pointer, SmartAssign is
+//  10. Pointer dereferencing: If src is a non-nil pointer, SmartAssign is
 //     recursively called with the dereferenced value.
 //
-//  9. Empty struct handling: If src is an empty struct (struct{}), dst is
+//  11. Empty struct handling: If src is an empty struct (struct{}), dst is
 //     set to its zero value.
 //
-//  10. Boolean conversions:
+//  12. Boolean conversions:
 //     - bool to numeric types: true becomes 1, false becomes 0
 //     - bool to string: "true" or "false"
 //     - numeric types to bool: non-zero becomes true, zero becomes false
 //     - string to bool: parsed using strconv.ParseBool
 //
-//  11. String to numeric conversions:
+//  13. String to numeric conversions:
 //     - String to int/uint: parsed using strconv.ParseInt/ParseUint
 //     - String to float: parsed using strconv.ParseFloat
 //
-//  12. Fallback string conversion: Any type can be converted to string
+//  14. Fallback string conversion: Any type can be converted to string
 //     using fmt.Sprint as a last resort.
 //
-//  13. Pointer allocation: If dst is a pointer type and previous strategies
+//  15. Pointer allocation: If dst is a pointer type and previous strategies
 //     failed, a new instance is created and SmartAssign is recursively
 //     called to assign to the dereferenced pointer.
 //
@@ -113,11 +129,11 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	// Package reflect might panic in some edge cases
 	// like converting a slice to an array with non matching length.
 	// Recover and return as error instead to make code more robust.
-	// defer func() {
-	// 	if r := recover(); r != nil {
-	// 		err = errors.Join(err, fmt.Errorf("%+v", r))
-	// 	}
-	// }()
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Join(err, fmt.Errorf("%+v", r))
+		}
+	}()
 
 	// Assign zero value in case of IsNull.
 	// Conversions further down might assign something
@@ -129,7 +145,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	}
 
 	// Assign the zero value for an empty source string
-	// unless the destination is a string type itself.
+	// unless the destination can hold the string itself.
 	// An empty cell of a CSV file or a spreadsheet means
 	// "no value" and must not be an error for a numeric,
 	// boolean or time destination, the same way a null
@@ -137,16 +153,40 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	// Without this the conversions further down would
 	// fail to parse the empty string and the value would
 	// fall through to the unsupported operation error.
-	if srcKind == reflect.String && src.Len() == 0 && dstKind != reflect.String {
-		dst.Set(reflect.Zero(dstType))
-		return nil
+	// Destinations that can hold the string itself keep
+	// the empty string, so a string, any, []byte, or a
+	// pointer to one of those is assigned "" instead of
+	// the zero value.
+	if srcKind == reflect.String && src.Len() == 0 {
+		dstStringType := dstType
+		if dstKind == reflect.Pointer {
+			// A pointer destination is allocated further down,
+			// so decide based on what it points to.
+			dstStringType = dstType.Elem()
+		}
+		if !srcType.ConvertibleTo(dstStringType) {
+			dst.Set(reflect.Zero(dstType))
+			return nil
+		}
 	}
 
-	// Convert assigns directly if possible
-	if srcType.ConvertibleTo(dstType) {
-		// Check because conversion can panic
-		if srcKind == reflect.Slice && dstKind == reflect.Pointer && dstType.Elem().Kind() == reflect.Array && dst.Elem().Len() > src.Len() {
-			return fmt.Errorf("cannot convert slice of length %d to array pointer with length %d", src.Len(), dst.Elem().Len())
+	// Convert assigns directly if possible.
+	// Integer sources are excluded for string destinations because
+	// reflect.Value.Convert applies Go's string(rune) conversion,
+	// which yields the character with that code point ("*" for 42)
+	// instead of the decimal digits. Those fall through to
+	// srcFormatter, Stringer, or the fmt.Sprint fallback below.
+	if srcType.ConvertibleTo(dstType) && !(dstKind == reflect.String && integerKind(srcKind)) {
+		// Check because converting a slice to a longer array panics.
+		// The destination can be the array itself or a pointer to it.
+		if srcKind == reflect.Slice {
+			arrayType := dstType
+			if dstKind == reflect.Pointer {
+				arrayType = dstType.Elem()
+			}
+			if arrayType.Kind() == reflect.Array && arrayType.Len() > src.Len() {
+				return fmt.Errorf("cannot convert slice of length %d to array of length %d", src.Len(), arrayType.Len())
+			}
 		}
 		dst.Set(src.Convert(dstType))
 		return nil
@@ -163,6 +203,21 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 		str, err := srcFormatter.Format(src)
 		if err == nil {
 			dst.SetString(str)
+			return nil
+		}
+		if !errors.Is(err, errors.ErrUnsupported) {
+			return err
+		}
+		// Continue after errors.ErrUnsupported
+	}
+
+	// Try dstScanner if src is a string type.
+	// Mirrors the srcFormatter case above: srcFormatter
+	// formats a value into a string destination, dstScanner
+	// parses a string source into any other destination.
+	if srcKind == reflect.String && dstScanner != nil {
+		err := dstScanner.ScanString(dst, src.String(), defaultParser)
+		if err == nil {
 			return nil
 		}
 		if !errors.Is(err, errors.ErrUnsupported) {
@@ -205,6 +260,22 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 		}
 	}
 
+	// Try converting string to time.Duration.
+	// Without this the underlying int64 kind of time.Duration
+	// would only accept a plain number of nanoseconds.
+	if srcKind == reflect.String && (dstType == typeOfDuration || dstKind == reflect.Pointer && dstType.Elem() == typeOfDuration) {
+		if d, err := time.ParseDuration(src.String()); err == nil {
+			if dstType == typeOfDuration {
+				dst.Set(reflect.ValueOf(d))
+			} else {
+				dst.Set(reflect.ValueOf(&d))
+			}
+			return nil
+		}
+		// Continue to the integer parsing further down
+		// for a plain number without a unit
+	}
+
 	// Try assigning the dereferenced value
 	if srcKind == reflect.Pointer && !src.IsNil() {
 		err := SmartAssign(dst, src.Elem(), dstScanner, srcFormatter)
@@ -229,20 +300,24 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 			} else {
 				dst.SetInt(0)
 			}
+			return nil
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 			if src.Bool() {
 				dst.SetUint(1)
 			} else {
 				dst.SetUint(0)
 			}
+			return nil
 		case reflect.Float32, reflect.Float64:
 			if src.Bool() {
 				dst.SetFloat(1)
 			} else {
 				dst.SetFloat(0)
 			}
+			return nil
 		case reflect.String:
 			dst.SetString(strconv.FormatBool(src.Bool()))
+			return nil
 		}
 	}
 
@@ -253,10 +328,13 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 		switch srcKind {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			dst.SetBool(src.Int() != 0)
+			return nil
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 			dst.SetBool(src.Uint() != 0)
+			return nil
 		case reflect.Float32, reflect.Float64:
 			dst.SetBool(src.Float() != 0)
+			return nil
 		case reflect.String:
 			b, err := strconv.ParseBool(src.String())
 			if err == nil {
@@ -314,4 +392,21 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	}
 
 	return fmt.Errorf("%w: assigning %s %#v to %s", errors.ErrUnsupported, srcType, src, dstType)
+}
+
+// defaultParser is passed to the dstScanner of SmartAssign
+// which needs a Parser but does not receive one.
+// Shared by all SmartAssign calls to avoid allocating a
+// parser per assigned cell, so a Scanner must only read it.
+var defaultParser = NewStringParser()
+
+// integerKind reports whether kind is one of the
+// signed or unsigned integer kinds.
+func integerKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return false
 }

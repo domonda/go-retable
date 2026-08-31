@@ -148,6 +148,11 @@ var (
 	// Used internally to identify time.Time values for special formatting.
 	typeOfTime = reflect.TypeFor[time.Time]()
 
+	// typeOfDuration is the reflect.Type of time.Duration.
+	// Used internally to parse duration strings instead of
+	// treating them as the underlying int64 nanoseconds.
+	typeOfDuration = reflect.TypeFor[time.Duration]()
+
 	// typeOfEmptyStruct is the reflect.Type of struct{}.
 	// Used internally to identify empty structs, which are often treated as null-like values.
 	typeOfEmptyStruct = reflect.TypeFor[struct{}]()

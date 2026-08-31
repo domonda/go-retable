@@ -16,11 +16,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and fall through to the unsupported-operation error when the parse fails, so an
   empty cell was only survivable for string destinations. This mirrors the branch
   directly above it, which already assigns the zero value for a null source.
-  String destinations are unaffected and still receive the empty string.
+  Destinations that can hold the string itself keep the empty string rather than
+  the zero value, which are `string` types, `any`, `[]byte`, `[]rune`, and
+  pointers to those, so a `*string` column still gets a non-nil pointer to `""`.
 
   This surfaced through `exceltable`: short rows used to yield `nil` cells that
   `ViewToStructSlice` skipped, and now correctly yield `""`, which reached
   `SmartAssign` and turned every optional numeric spreadsheet column into an error.
+
+- `SmartAssign` converts integers to string destinations as their decimal digits
+  instead of the character with that code point. `reflect.Value.Convert` applies
+  Go's `string(rune)` conversion, so `int(42)` silently became `"*"`, `int64(9)`
+  became `"\t"` and `int(-1)` became `"�"`. Because that direct conversion ran
+  first, the `srcFormatter`, `fmt.Stringer` and `fmt.Sprint` paths below it were
+  unreachable for every integer source, which also made the documented example on
+  `SmartAssign` itself return `"*"` where it claims `"#42"`. Integer sources are now
+  excluded from the direct conversion for string destinations. `time.Month` and
+  `time.Duration` sources reach their `String` method as a result, so they format as
+  `"January"` and `"1h30m0s"` rather than as control characters.
+
+- `SmartAssign` no longer assigns a value and then reports failure for the `bool`
+  conversions. Converting `bool` to a numeric destination and a numeric destination
+  to `bool` both wrote the result and then fell through to
+  `unsupported operation: assigning bool true to int`, so `ViewToStructSlice`
+  aborted the whole file on any boolean column while the destination had already
+  been modified. Only the `string` sub-case returned successfully.
+
+- `SmartAssign` no longer panics when converting a slice to a longer array. The
+  guard meant to prevent this read `dst.Elem().Len()`, and `reflect.Value.Elem()`
+  returns the zero `Value` for the nil destination pointer of a freshly allocated
+  struct field, so `Len()` panicked with
+  `reflect: call of reflect.Value.Len on zero Value` instead of returning the error.
+  The array length is static and is now read from the destination type. The guard
+  also only covered pointer-to-array destinations, so a plain array destination
+  panicked inside `reflect.Value.Convert`; both forms are now checked.
+
+- `SmartAssign` calls the `dstScanner` it accepts. The parameter was documented and
+  threaded through `ViewToStructSlice` and the `csvtable` read functions, but
+  `Scanner.ScanString` was never invoked, so a custom scanner was silently ignored.
+  It is now tried for string sources, mirroring the `srcFormatter` case for string
+  destinations, and falls through to the built-in parsing on
+  `errors.ErrUnsupported`.
+
+- `SmartAssign` parses duration strings into `time.Duration` destinations. The
+  underlying `int64` kind meant only a plain number of nanoseconds was accepted and
+  `"1h30m"` failed, although the `Parser` interface has had `ParseDuration` all
+  along and the README advertised duration parsing. A string without a unit still
+  parses as nanoseconds.
+
+- `SmartAssign` recovers from panics in package `reflect` again. The deferred
+  recover that the comment above it describes was commented out, so the edge cases
+  it names escaped to the caller instead of being returned as errors.
 
 - `csvtable` no longer aborts a whole file with `can't handle CSV field` when a
   field's quoting is not one of a handful of hard-coded shapes. `readLines` split
