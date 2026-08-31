@@ -240,6 +240,15 @@ var testRows = map[string][]string{
 		`c`,
 	},
 
+	// A closing quote followed by unquoted characters does not end the field,
+	// so the field is kept verbatim instead of losing its last character.
+	`"a" ,"b"x,"c"`: {
+		",", // separator
+		`"a" `,
+		`"b"x`,
+		`c`,
+	},
+
 	`300150;GH "Zum Ganster";;`: {
 		";", // separator
 		`300150`,

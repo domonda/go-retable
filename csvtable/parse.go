@@ -558,13 +558,14 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 						field = field[1:]
 					}
 
-				case leftQuotes%2 == 1:
+				case leftQuotes%2 == 1 && field[len(field)-1] == '"':
 					// Quoted field that is closed again within itself.
 					// Remove outermost quotes
 					field = field[1 : len(field)-1]
 
 				default:
-					// Field is not quoted, so all its quotes are literal
+					// Field is not quoted, or its closing quote is followed by
+					// unquoted characters, so all its quotes are literal
 					// and only have to be unescaped further down
 				}
 			}
