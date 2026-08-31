@@ -18,7 +18,25 @@ func SetRowsWithNonUniformColumnsNil(rows [][]string) [][]string {
 
 	result := make([][]string, len(rows))
 
-	// map from number of columns to number of rows with that column
+	majority := majorityRowColumns(rows)
+	for i, row := range rows {
+		if len(row) == majority {
+			result[i] = row
+		}
+	}
+
+	return result
+}
+
+// majorityRowColumns returns the number of columns that the majority of rows
+// has, or 0 when there is no row with a column. More columns win a tie.
+//
+// Single column rows don't take part in the vote unless no row has more than
+// one column, because header and trailer lines of a table are usually single
+// column rows that must not outvote the actual table rows even if there are
+// more of them.
+func majorityRowColumns(rows [][]string) int {
+	// map from number of columns to number of rows with that many columns
 	rowColumnsCount := make(map[int]int)
 	for _, row := range rows {
 		if rowColumns := len(row); rowColumns > 0 {
@@ -26,26 +44,17 @@ func SetRowsWithNonUniformColumnsNil(rows [][]string) [][]string {
 		}
 	}
 	if len(rowColumnsCount) > 1 {
-		// Header and trailer lines of a table are usually single column rows
-		// that must not outvote the actual table rows, so they only count
-		// when no row has more than one column.
 		delete(rowColumnsCount, 1)
 	}
-	majorityRowColumns := 0
+	majority := 0
 	highestRowCount := 0
 	for rowColumns, rowCount := range rowColumnsCount {
-		if rowCount > highestRowCount || (rowCount == highestRowCount && rowColumns > majorityRowColumns) {
-			majorityRowColumns = rowColumns
+		if rowCount > highestRowCount || (rowCount == highestRowCount && rowColumns > majority) {
+			majority = rowColumns
 			highestRowCount = rowCount
 		}
 	}
-	for i, row := range rows {
-		if len(row) == majorityRowColumns {
-			result[i] = row
-		}
-	}
-
-	return result
+	return majority
 }
 
 // SetEmptyRowsNil sets rows to nil,
