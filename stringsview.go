@@ -136,8 +136,8 @@ func NewStringsView(title string, rows [][]string, cols ...string) *StringsView 
 // Title returns the title of this view.
 func (view *StringsView) Title() string { return view.TableTitle }
 
-// Columns returns the column names of this view.
-func (view *StringsView) Columns() []string { return view.Cols }
+// ColNames returns the column names of this view.
+func (view *StringsView) ColNames() []string { return view.Cols }
 
 // NumCols returns the number of columns of this view.
 func (view *StringsView) NumCols() int { return len(view.Cols) }
@@ -154,7 +154,7 @@ func (view *StringsView) NumRows() int { return len(view.Rows) }
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumCols()-1)
 //
 // Returns the cell value as any, which will be either string, "", or nil.
 //
@@ -239,7 +239,7 @@ func NewHeaderView(cols ...string) *HeaderView {
 //	headerOnly := retable.NewHeaderViewFrom(original)
 //	// headerOnly contains just one row with "ID", "Name", "Price" as values
 func NewHeaderViewFrom(source View) *HeaderView {
-	return &HeaderView{TableTitle: source.Title(), Cols: source.Columns()}
+	return &HeaderView{TableTitle: source.Title(), Cols: source.ColNames()}
 }
 
 // HeaderView is a specialized View that contains only a header row.
@@ -275,8 +275,8 @@ type HeaderView struct {
 // Title returns the title of this view.
 func (view *HeaderView) Title() string { return view.TableTitle }
 
-// Columns returns the column names of this view.
-func (view *HeaderView) Columns() []string { return view.Cols }
+// ColNames returns the column names of this view.
+func (view *HeaderView) ColNames() []string { return view.Cols }
 
 // NumCols returns the number of columns of this view.
 func (view *HeaderView) NumCols() int { return len(view.Cols) }
@@ -291,7 +291,7 @@ func (view *HeaderView) NumRows() int { return 1 }
 //
 // Parameters:
 //   - row: Must be 0, otherwise nil is returned
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumCols()-1)
 //
 // Returns:
 //   - The column name as any if row is 0 and col is valid

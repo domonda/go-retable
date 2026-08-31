@@ -154,13 +154,13 @@ func (e ExtraColsView) Title() string {
 //
 // Example:
 //
-//	view1.Columns() -> ["A", "B"]
-//	view2.Columns() -> ["C", "D", "E"]
-//	ExtraColsView{view1, view2}.Columns() -> ["A", "B", "C", "D", "E"]
-func (e ExtraColsView) Columns() []string {
+//	view1.ColNames() -> ["A", "B"]
+//	view2.ColNames() -> ["C", "D", "E"]
+//	ExtraColsView{view1, view2}.ColNames() -> ["A", "B", "C", "D", "E"]
+func (e ExtraColsView) ColNames() []string {
 	var columns []string
 	for _, view := range e {
-		columns = append(columns, view.Columns()...)
+		columns = append(columns, view.ColNames()...)
 	}
 	return columns
 }

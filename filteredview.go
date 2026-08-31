@@ -122,7 +122,7 @@ type FilteredView struct {
 	// If nil:
 	//   - All columns from Source are included
 	//   - Columns appear in their original order
-	//   - NumCols() returns len(Source.Columns())
+	//   - NumCols() returns len(Source.ColNames())
 	//
 	// If not nil:
 	//   - Only mapped columns are included
@@ -156,11 +156,11 @@ func (view *FilteredView) Title() string {
 //
 // Example:
 //
-//	source.Columns() -> ["A", "B", "C", "D"]
+//	source.ColNames() -> ["A", "B", "C", "D"]
 //	view := &FilteredView{Source: source, ColumnMapping: []int{3, 1}}
-//	view.Columns() -> ["D", "B"]
-func (view *FilteredView) Columns() []string {
-	sourceCols := view.Source.Columns()
+//	view.ColNames() -> ["D", "B"]
+func (view *FilteredView) ColNames() []string {
+	sourceCols := view.Source.ColNames()
 	if view.ColumnMapping == nil {
 		return sourceCols
 	}
@@ -176,7 +176,7 @@ func (view *FilteredView) Columns() []string {
 // If ColumnMapping is nil, returns the number of columns in Source.
 // If ColumnMapping is set, returns len(ColumnMapping).
 //
-// This method is more efficient than len(view.Columns()) as it avoids
+// This method is more efficient than len(view.ColNames()) as it avoids
 // allocating the column name slice.
 func (view *FilteredView) NumCols() int {
 	if view.ColumnMapping != nil {

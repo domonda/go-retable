@@ -66,7 +66,7 @@ func newStmt(views map[string]retable.View, query string) (*stmt, error) {
 	if view == nil {
 		return nil, fmt.Errorf("view %q not found", table)
 	}
-	sourceColumns := view.Columns()
+	sourceColumns := view.ColNames()
 	columnsIdentical := slices.Equal(queryColumns, sourceColumns)
 	if columnsIdentical && offset == 0 && limit == 0 {
 		return &stmt{view: view}, nil
@@ -161,7 +161,7 @@ type driverRows struct {
 // Returns:
 //   - A slice of column names
 func (r *driverRows) Columns() []string {
-	return r.view.Columns()
+	return r.view.ColNames()
 }
 
 // Close implements driver.Rows.

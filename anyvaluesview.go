@@ -87,7 +87,7 @@ type AnyValuesView struct {
 func NewAnyValuesViewFrom(source View) *AnyValuesView {
 	view := &AnyValuesView{
 		TableTitle: source.Title(),
-		Cols:       source.Columns(),
+		Cols:       source.ColNames(),
 		Rows:       make([][]any, source.NumRows()),
 	}
 	for row := 0; row < source.NumRows(); row++ {
@@ -102,8 +102,8 @@ func NewAnyValuesViewFrom(source View) *AnyValuesView {
 // Title returns the title of this view.
 func (view *AnyValuesView) Title() string { return view.TableTitle }
 
-// Columns returns the column names of this view.
-func (view *AnyValuesView) Columns() []string { return view.Cols }
+// ColNames returns the column names of this view.
+func (view *AnyValuesView) ColNames() []string { return view.Cols }
 
 // NumCols returns the number of columns of this view.
 func (view *AnyValuesView) NumCols() int { return len(view.Cols) }
@@ -119,7 +119,7 @@ func (view *AnyValuesView) NumRows() int { return len(view.Rows) }
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumCols()-1)
 //
 // Returns:
 //   - The cell value (of any type) if indices are valid

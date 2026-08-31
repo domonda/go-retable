@@ -78,7 +78,7 @@ import (
 //	    log.Fatal(err)
 //	}
 //
-//	fmt.Printf("Columns: %v\n", view.Columns())
+//	fmt.Printf("Columns: %v\n", view.ColNames())
 //	fmt.Printf("Rows: %d\n", view.NumRows())
 func ReadFirstSheet(reader io.Reader, rawCellStrings bool) (sheetView retable.View, err error) {
 	f, err := excelize.OpenReader(reader)
@@ -127,7 +127,7 @@ func ReadFirstSheet(reader io.Reader, rawCellStrings bool) (sheetView retable.Vi
 //
 //	for _, view := range views {
 //	    fmt.Printf("Sheet: %s\n", view.Title())
-//	    fmt.Printf("  Columns: %d\n", len(view.Columns()))
+//	    fmt.Printf("  Columns: %d\n", view.NumCols())
 //	    fmt.Printf("  Rows: %d\n", view.NumRows())
 //	}
 func Read(reader io.Reader, rawCellStrings bool) (sheetViews []retable.View, err error) {
@@ -174,7 +174,7 @@ func Read(reader io.Reader, rawCellStrings bool) (sheetViews []retable.View, err
 //	for _, view := range views {
 //	    fmt.Printf("Sheet: %s has %d rows\n", view.Title(), view.NumRows())
 //	    for row := 0; row < view.NumRows(); row++ {
-//	        for col := 0; col < len(view.Columns()); col++ {
+//	        for col := 0; col < view.NumCols(); col++ {
 //	            fmt.Printf("%v ", view.Cell(row, col))
 //	        }
 //	        fmt.Println()
@@ -222,7 +222,7 @@ func ReadLocalFile(filename string, rawCellStrings bool) (sheetViews []retable.V
 //	}
 //
 //	// Access column names
-//	columns := view.Columns()
+//	columns := view.ColNames()
 //	fmt.Printf("Columns: %v\n", columns)
 //
 //	// Iterate through rows

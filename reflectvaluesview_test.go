@@ -23,7 +23,7 @@ func TestNewReflectValuesViewFrom(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "Mixed", view.Title())
-	require.Equal(t, []string{"Name", "Age", "Active"}, view.Columns())
+	require.Equal(t, []string{"Name", "Age", "Active"}, view.ColNames())
 	require.Equal(t, 2, view.NumRows())
 
 	t.Run("values and their types survive the copy", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestNewSingleReflectValueView(t *testing.T) {
 
 	view := NewSingleReflectValueView(source, 1, 1)
 	require.Equal(t, "People", view.Title())
-	require.Equal(t, []string{"Age"}, view.Columns(), "only the selected column is named")
+	require.Equal(t, []string{"Age"}, view.ColNames(), "only the selected column is named")
 	require.Equal(t, 1, view.NumRows())
 	require.Equal(t, "7", view.Cell(0, 0))
 	require.Equal(t, "7", view.ReflectCell(0, 0).Interface())

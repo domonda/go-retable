@@ -412,6 +412,6 @@ func TestNoTagsStructRowsViewer(t *testing.T) {
 	}
 	view, err := NoTagsStructRowsViewer().NewView("", []Person{{Name: "Erik", Age: 42}})
 	require.NoError(t, err)
-	require.Equal(t, []string{"Name", "Age"}, view.Columns(), "the col tags must be ignored")
+	require.Equal(t, []string{"Name", "Age"}, view.ColNames(), "the col tags must be ignored")
 	require.Equal(t, 1, view.NumRows())
 }

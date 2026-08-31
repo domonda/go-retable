@@ -95,7 +95,7 @@ var _ View = ExtraRowsView(nil)
 //	summaryData := [][]any{
 //	    {"TOTAL", sumValues(), avgValues()},
 //	}
-//	summary := NewAnyValuesView("", summaryData, dataRows.Columns())
+//	summary := NewAnyValuesView("", summaryData, dataRows.ColNames())
 //
 //	// Append summary at the bottom
 //	withSummary := ExtraRowsView{dataRows, summary}
@@ -157,7 +157,7 @@ var _ View = ExtraRowsView(nil)
 //
 // If views have different column counts, no error occurs:
 //
-//   - Columns() returns the first view's columns only
+//   - ColNames() returns the first view's columns only
 //
 //   - Accessing a column index >= a view's column count returns nil for that view's rows
 //
@@ -165,7 +165,7 @@ var _ View = ExtraRowsView(nil)
 //     view2 := NewStringsView("", [][]string{{"X"}}, "Col1")
 //
 //     combined := ExtraRowsView{view1, view2}
-//     combined.Columns() -> ["Col1", "Col2"]
+//     combined.ColNames() -> ["Col1", "Col2"]
 //     combined.Cell(0, 0) -> "A"
 //     combined.Cell(0, 1) -> "B"
 //     combined.Cell(1, 0) -> "X"
@@ -215,14 +215,14 @@ func (e ExtraRowsView) Title() string {
 //
 // Example:
 //
-//	view1.Columns() -> ["A", "B", "C"]
-//	view2.Columns() -> ["A", "B", "C"]
-//	ExtraRowsView{view1, view2}.Columns() -> ["A", "B", "C"]
-func (e ExtraRowsView) Columns() []string {
+//	view1.ColNames() -> ["A", "B", "C"]
+//	view2.ColNames() -> ["A", "B", "C"]
+//	ExtraRowsView{view1, view2}.ColNames() -> ["A", "B", "C"]
+func (e ExtraRowsView) ColNames() []string {
 	if len(e) == 0 {
 		return nil
 	}
-	return e[0].Columns()
+	return e[0].ColNames()
 }
 
 // NumCols returns the number of columns of the first View,

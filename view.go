@@ -23,7 +23,7 @@ import (
 // # Coordinate System
 //
 // Views use zero-based indexing:
-//   - Columns are numbered 0 to len(Columns())-1
+//   - Columns are numbered 0 to NumCols()-1
 //   - Rows are numbered 0 to NumRows()-1
 //
 // # Cell Values
@@ -62,7 +62,7 @@ import (
 //
 //	// Access data
 //	fmt.Println(view.Title())              // "People"
-//	fmt.Println(view.Columns())            // ["Name", "Age"]
+//	fmt.Println(view.ColNames())            // ["Name", "Age"]
 //	fmt.Println(view.NumRows())            // 2
 //	fmt.Println(view.Cell(0, 0))           // "Alice"
 //	fmt.Println(view.Cell(0, 1))           // 30
@@ -79,12 +79,12 @@ type View interface {
 	// Individual column names may be empty strings if unnamed.
 	// The returned slice should not be modified by callers.
 	// Column names are used as headers when writing to CSV, HTML, etc.
-	Columns() []string
+	ColNames() []string
 
 	// NumCols returns the total number of columns in this table.
-	// It always equals len(Columns()), but implementations can answer it
+	// It always equals len(ColNames()), but implementations can answer it
 	// without building or copying the column name slice, so prefer it
-	// over len(Columns()) when only the count is needed.
+	// over len(ColNames()) when only the count is needed.
 	// Returns 0 for a table without columns.
 	NumCols() int
 
@@ -98,7 +98,7 @@ type View interface {
 	//
 	// Returns nil in these cases:
 	//   - row is negative or >= NumRows()
-	//   - col is negative or >= len(Columns())
+	//   - col is negative or >= NumCols()
 	//   - the cell actually contains a nil value
 	//
 	// The returned value type depends on the View implementation and

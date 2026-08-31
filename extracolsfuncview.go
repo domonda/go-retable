@@ -274,11 +274,11 @@ func (e *extraColsFuncView) Title() string {
 //
 // Example:
 //
-//	left.Columns() -> ["A", "B"]
+//	left.ColNames() -> ["A", "B"]
 //	e.columns -> ["C", "D"]
-//	e.Columns() -> ["A", "B", "C", "D"]
-func (e *extraColsFuncView) Columns() []string {
-	return append(e.left.Columns(), e.columns...)
+//	e.ColNames() -> ["A", "B", "C", "D"]
+func (e *extraColsFuncView) ColNames() []string {
+	return append(e.left.ColNames(), e.columns...)
 }
 
 // NumCols returns the number of left columns plus computed columns,

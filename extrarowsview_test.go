@@ -24,7 +24,7 @@ func TestExtraRowView(t *testing.T) {
 
 	t.Run("title and columns come from the first view only", func(t *testing.T) {
 		require.Equal(t, "Sales", stacked.Title())
-		require.Equal(t, []string{"Product", "Amount"}, stacked.Columns(),
+		require.Equal(t, []string{"Product", "Amount"}, stacked.ColNames(),
 			"the later views contribute rows, not columns")
 	})
 
@@ -67,7 +67,7 @@ func TestExtraRowViewIgnoresExtraColumnsOfLaterViews(t *testing.T) {
 	})
 	stacked := ExtraRowsView{first, wider}
 
-	require.Equal(t, []string{"A"}, stacked.Columns())
+	require.Equal(t, []string{"A"}, stacked.ColNames())
 	require.Equal(t, 2, stacked.NumRows())
 	require.Equal(t, "a1", stacked.Cell(0, 0))
 	require.Equal(t, "a2", stacked.Cell(1, 0))
@@ -94,7 +94,7 @@ func TestExtraRowViewEmpty(t *testing.T) {
 	var empty ExtraRowsView
 
 	require.Equal(t, "", empty.Title())
-	require.Empty(t, empty.Columns())
+	require.Empty(t, empty.ColNames())
 	require.Zero(t, empty.NumRows())
 	require.Nil(t, empty.Cell(0, 0))
 }

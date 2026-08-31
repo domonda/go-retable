@@ -19,7 +19,7 @@ func TestDerefView(t *testing.T) {
 	view := DerefView(source)
 
 	require.Equal(t, "People", view.Title(), "the decorator passes the title through")
-	require.Equal(t, []string{"Name"}, view.Columns())
+	require.Equal(t, []string{"Name"}, view.ColNames())
 	require.Equal(t, 2, view.NumRows())
 
 	require.Equal(t, "Erik", view.Cell(0, 0), "the pointed-to value, not the pointer")

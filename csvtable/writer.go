@@ -144,7 +144,7 @@ func (w *Writer[T]) writeView(ctx context.Context, dest io.Writer, view retable.
 }
 
 func (w *Writer[T]) writeRow(ctx context.Context, rowBuf *bytes.Buffer, view retable.View, reflectView retable.ReflectCellView, row int) error {
-	for col := range view.Columns() {
+	for col := range view.ColNames() {
 		if col > 0 {
 			_, err := rowBuf.WriteRune(w.delimiter)
 			if err != nil {
@@ -264,7 +264,7 @@ func (w *Writer[T]) ViewStrings(ctx context.Context, view retable.View) ([][]str
 		reflectView = retable.AsReflectCellView(view)
 	)
 	if w.headerRow {
-		// view.Columns() already returns a string slice,
+		// view.ColNames() already returns a string slice,
 		// but use HeaderView for any potential formatting
 		headerView := retable.NewHeaderViewFrom(view)
 		rowStrs, err := w.headerWriter().rowStrings(ctx, headerView, retable.AsReflectCellView(headerView), 0)
@@ -284,7 +284,7 @@ func (w *Writer[T]) ViewStrings(ctx context.Context, view retable.View) ([][]str
 }
 
 func (w *Writer[T]) rowStrings(ctx context.Context, view retable.View, reflectView retable.ReflectCellView, row int) ([]string, error) {
-	columns := view.Columns()
+	columns := view.ColNames()
 	rowStrs := make([]string, len(columns))
 	for col := range columns {
 		var err error

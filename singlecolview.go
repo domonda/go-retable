@@ -137,8 +137,8 @@ func (s *singleColsView[T]) Title() string {
 	return s.title
 }
 
-// Columns returns the column names (always a single-element slice).
-func (s *singleColsView[T]) Columns() []string {
+// ColNames returns the column names (always a single-element slice).
+func (s *singleColsView[T]) ColNames() []string {
 	return s.columns
 }
 

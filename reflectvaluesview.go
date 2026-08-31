@@ -92,7 +92,7 @@ type ReflectValuesView struct {
 //	}
 //	// All cells are now stored as reflect.Value for introspection
 //	for row := 0; row < reflected.NumRows(); row++ {
-//	    for col := range reflected.Columns() {
+//	    for col := range reflected.ColNames() {
 //	        val := reflected.ReflectCell(row, col)
 //	        fmt.Printf("Type: %s\n", val.Type())
 //	    }
@@ -106,7 +106,7 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 	}
 	view := &ReflectValuesView{
 		TableTitle: source.Title(),
-		Cols:       source.Columns(),
+		Cols:       source.ColNames(),
 		Rows:       make([][]reflect.Value, source.NumRows()),
 	}
 	reflectSource := AsReflectCellView(source)
@@ -122,8 +122,8 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 // Title returns the title of this view.
 func (view *ReflectValuesView) Title() string { return view.TableTitle }
 
-// Columns returns the column names of this view.
-func (view *ReflectValuesView) Columns() []string { return view.Cols }
+// ColNames returns the column names of this view.
+func (view *ReflectValuesView) ColNames() []string { return view.Cols }
 
 // NumCols returns the number of columns of this view.
 func (view *ReflectValuesView) NumCols() int { return len(view.Cols) }
@@ -139,7 +139,7 @@ func (view *ReflectValuesView) NumRows() int { return len(view.Rows) }
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumCols()-1)
 //
 // Returns:
 //   - The cell's underlying value (via reflect.Value.Interface()) if indices are valid
@@ -170,7 +170,7 @@ func (view *ReflectValuesView) Cell(row, col int) any {
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumCols()-1)
 //
 // Returns:
 //   - The reflect.Value stored at the cell if indices are valid
@@ -274,7 +274,7 @@ func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueVie
 	}
 	return &SingleReflectValueView{
 		TableTitle: source.Title(),
-		Col:        source.Columns()[col],
+		Col:        source.ColNames()[col],
 		Val:        reflect.ValueOf(source.Cell(row, col)),
 	}
 }
@@ -282,8 +282,8 @@ func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueVie
 // Title returns the title of this view.
 func (view *SingleReflectValueView) Title() string { return view.TableTitle }
 
-// Columns returns a slice containing the single column name.
-func (view *SingleReflectValueView) Columns() []string { return []string{view.Col} }
+// ColNames returns a slice containing the single column name.
+func (view *SingleReflectValueView) ColNames() []string { return []string{view.Col} }
 
 // NumCols always returns 1 because this view has a single column.
 func (view *SingleReflectValueView) NumCols() int { return 1 }
