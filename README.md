@@ -241,7 +241,7 @@ withTotal := retable.ExtraColsReflectValueFuncView(
 joined := retable.ExtraColsView{view1, view2, view3}
 
 // Concatenate views vertically (like SQL UNION)
-combined := retable.ExtraRowView{viewA, viewB, viewC}
+combined := retable.ExtraRowsView{viewA, viewB, viewC}
 ```
 
 ### Cell Formatters
