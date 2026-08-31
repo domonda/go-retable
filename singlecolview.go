@@ -142,6 +142,11 @@ func (s *singleColsView[T]) Columns() []string {
 	return s.columns
 }
 
+// NumCols returns the number of columns, which is always 1 for this view.
+func (s *singleColsView[T]) NumCols() int {
+	return len(s.columns)
+}
+
 // NumRows returns the number of rows (equal to len(rows)).
 func (s *singleColsView[T]) NumRows() int {
 	return len(s.rows)

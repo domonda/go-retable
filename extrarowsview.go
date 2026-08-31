@@ -225,6 +225,15 @@ func (e ExtraRowsView) Columns() []string {
 	return e[0].Columns()
 }
 
+// NumCols returns the number of columns of the first View,
+// mirroring Columns. Returns 0 if the ExtraRowsView is empty.
+func (e ExtraRowsView) NumCols() int {
+	if len(e) == 0 {
+		return 0
+	}
+	return e[0].NumCols()
+}
+
 // NumRows returns the total row count across all Views.
 //
 // The combined view has the sum of row counts from all component Views.
@@ -277,7 +286,7 @@ func (e ExtraRowsView) NumRows() int {
 // to find the correct view. For performance-critical code with many views,
 // consider pre-computing row offsets.
 func (e ExtraRowsView) Cell(row, col int) any {
-	if row < 0 || col < 0 || col >= len(e.Columns()) {
+	if row < 0 || col < 0 || col >= e.NumCols() {
 		return nil
 	}
 	rowTop := 0

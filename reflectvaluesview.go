@@ -111,7 +111,7 @@ func NewReflectValuesViewFrom(source View) (*ReflectValuesView, error) {
 	}
 	reflectSource := AsReflectCellView(source)
 	for row := 0; row < source.NumRows(); row++ {
-		view.Rows[row] = make([]reflect.Value, len(source.Columns()))
+		view.Rows[row] = make([]reflect.Value, source.NumCols())
 		for col := range view.Rows[row] {
 			view.Rows[row][col] = reflectSource.ReflectCell(row, col)
 		}
@@ -124,6 +124,9 @@ func (view *ReflectValuesView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *ReflectValuesView) Columns() []string { return view.Cols }
+
+// NumCols returns the number of columns of this view.
+func (view *ReflectValuesView) NumCols() int { return len(view.Cols) }
 
 // NumRows returns the number of data rows in this view.
 func (view *ReflectValuesView) NumRows() int { return len(view.Rows) }
@@ -266,7 +269,7 @@ func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueVie
 		// this branch exists to guard against.
 		return &SingleReflectValueView{}
 	}
-	if row < 0 || col < 0 || row >= source.NumRows() || col >= len(source.Columns()) {
+	if row < 0 || col < 0 || row >= source.NumRows() || col >= source.NumCols() {
 		return &SingleReflectValueView{TableTitle: source.Title()}
 	}
 	return &SingleReflectValueView{
@@ -281,6 +284,9 @@ func (view *SingleReflectValueView) Title() string { return view.TableTitle }
 
 // Columns returns a slice containing the single column name.
 func (view *SingleReflectValueView) Columns() []string { return []string{view.Col} }
+
+// NumCols always returns 1 because this view has a single column.
+func (view *SingleReflectValueView) NumCols() int { return 1 }
 
 // NumRows always returns 1 for SingleReflectValueView.
 func (view *SingleReflectValueView) NumRows() int { return 1 }

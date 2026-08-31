@@ -281,6 +281,12 @@ func (e *extraColsFuncView) Columns() []string {
 	return append(e.left.Columns(), e.columns...)
 }
 
+// NumCols returns the number of left columns plus computed columns,
+// mirroring Columns.
+func (e *extraColsFuncView) NumCols() int {
+	return e.left.NumCols() + len(e.columns)
+}
+
 // NumRows returns the row count from the left View.
 // Returns 0 if left is nil.
 //
@@ -307,7 +313,7 @@ func (e *extraColsFuncView) NumRows() int {
 //	e.Cell(0, 3) -> anyValue(0, 0)  // First computed column
 //	e.Cell(0, 4) -> anyValue(0, 1)  // Second computed column
 func (e *extraColsFuncView) Cell(row, col int) any {
-	numLeftCols := len(e.left.Columns())
+	numLeftCols := e.left.NumCols()
 	if col < numLeftCols {
 		return e.left.Cell(row, col)
 	}
@@ -331,7 +337,7 @@ func (e *extraColsFuncView) Cell(row, col int) any {
 //	e.ReflectCell(0, 3) -> reflectValue(0, 0)  // First computed column
 //	e.ReflectCell(0, 4) -> reflectValue(0, 1)  // Second computed column
 func (e *extraColsFuncView) ReflectCell(row, col int) reflect.Value {
-	numLeftCols := len(e.left.Columns())
+	numLeftCols := e.left.NumCols()
 	if col < numLeftCols {
 		return e.left.ReflectCell(row, col)
 	}

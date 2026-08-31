@@ -75,7 +75,7 @@ func FormatTableAsStrings(ctx context.Context, table any, formatter CellFormatte
 func FormatViewAsStrings(ctx context.Context, view View, formatter CellFormatter, options ...Option) (rows [][]string, err error) {
 	formatter = TryFormattersOrSprint(formatter)
 	numRows := view.NumRows()
-	numCols := len(view.Columns())
+	numCols := view.NumCols()
 
 	if HasOption(options, OptionAddHeaderRow) {
 		// view.Columns() would already returns a string slice,

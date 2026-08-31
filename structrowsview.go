@@ -140,6 +140,9 @@ func (view *StructRowsView) Title() string { return view.title }
 // This implements the View interface.
 func (view *StructRowsView) Columns() []string { return view.columns }
 
+// NumCols returns the number of columns of this view.
+func (view *StructRowsView) NumCols() int { return len(view.columns) }
+
 // NumRows returns the number of rows in the view, which equals
 // the length of the underlying struct slice or array.
 // This implements the View interface.

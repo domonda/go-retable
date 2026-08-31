@@ -186,7 +186,7 @@ func (w *Writer[T]) writeViewPadded(ctx context.Context, dest io.Writer, view re
 	}
 
 	// Collect column widths
-	colRuneCount := retable.StringColumnWidths(rows, len(view.Columns()))
+	colRuneCount := retable.StringColumnWidths(rows, view.NumCols())
 
 	rowBuf := bytes.NewBuffer(make([]byte, 0, 1024))
 	for row := range rows {

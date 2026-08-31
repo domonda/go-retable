@@ -165,6 +165,16 @@ func (e ExtraColsView) Columns() []string {
 	return columns
 }
 
+// NumCols returns the sum of the column counts of all Views,
+// mirroring Columns. Returns 0 if the ExtraColsView is empty.
+func (e ExtraColsView) NumCols() int {
+	var numCols int
+	for _, view := range e {
+		numCols += view.NumCols()
+	}
+	return numCols
+}
+
 // NumRows returns the maximum row count across all Views.
 //
 // The combined view has as many rows as its longest component View.
@@ -222,7 +232,7 @@ func (e ExtraColsView) Cell(row, col int) any {
 	}
 	colLeft := 0
 	for _, view := range e {
-		numCols := len(view.Columns())
+		numCols := view.NumCols()
 		colRight := colLeft + numCols
 		if col < colRight {
 			return view.Cell(row, col-colLeft)

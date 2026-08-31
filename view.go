@@ -81,6 +81,13 @@ type View interface {
 	// Column names are used as headers when writing to CSV, HTML, etc.
 	Columns() []string
 
+	// NumCols returns the total number of columns in this table.
+	// It always equals len(Columns()), but implementations can answer it
+	// without building or copying the column name slice, so prefer it
+	// over len(Columns()) when only the count is needed.
+	// Returns 0 for a table without columns.
+	NumCols() int
+
 	// NumRows returns the total number of data rows in this table.
 	// This does not include any header row - it's purely the count of data rows.
 	// Returns 0 for an empty table.

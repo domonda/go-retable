@@ -1,11 +1,13 @@
 package csvtable
 
 import (
+	"bytes"
+	"errors"
 	"testing"
+	"testing/iotest"
 
 	"github.com/domonda/go-retable"
 	"github.com/stretchr/testify/require"
-	"github.com/ungerik/go-fs"
 )
 
 type booking struct {
@@ -69,9 +71,9 @@ func TestReadBytesWithFormatToStructSlice(t *testing.T) {
 }
 
 // TestReadFileWithFormatToStructSlice covers the same entry point reading from
-// an fs.FileReader, which is the form the callers of this package use.
+// an io.Reader, which is the form the callers of this package use.
 func TestReadFileWithFormatToStructSlice(t *testing.T) {
-	file := fs.NewMemFile("bookings.csv", []byte(bookingsCSV))
+	file := bytes.NewReader([]byte(bookingsCSV))
 	format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
 
 	bookings, err := ReadFileWithFormatToStructSlice[booking](
@@ -127,10 +129,10 @@ func TestReadBytesDetectFormatToStructSlice(t *testing.T) {
 }
 
 // TestReadFileDetectFormatToStructSlice covers format detection from an
-// fs.FileReader, including that a UTF-8 BOM written by a spreadsheet export
+// io.Reader, including that a UTF-8 BOM written by a spreadsheet export
 // does not end up in the first column title.
 func TestReadFileDetectFormatToStructSlice(t *testing.T) {
-	file := fs.NewMemFile("bookings.csv", append([]byte("\xEF\xBB\xBF"), bookingsCSV...))
+	file := bytes.NewReader(append([]byte("\xEF\xBB\xBF"), bookingsCSV...))
 
 	bookings, format, err := ReadFileDetectFormatToStructSlice[booking](
 		file, nil, bookingNaming, nil, germanCSVParser(), nil, nil,
@@ -141,28 +143,29 @@ func TestReadFileDetectFormatToStructSlice(t *testing.T) {
 	require.Equal(t, wantBookings, bookings)
 }
 
-// TestReadFileToStructSliceReadError covers that a file that cannot be
-// read is reported as that error. Both file entry points read the whole
-// file before they parse anything, and a missing or unreadable file is
-// the most common failure a caller hits, so it has to surface instead
-// of being parsed as empty CSV data into an empty slice.
+// TestReadFileToStructSliceReadError covers that a reader that fails is
+// reported as that error. Both reader entry points read everything before
+// they parse anything, and a reader that cannot be drained, such as one
+// over a missing file the caller opened, has to surface instead of being
+// parsed as empty CSV data into an empty slice.
 func TestReadFileToStructSliceReadError(t *testing.T) {
-	missing := fs.File("/nonexistent-directory-for-tests/bookings.csv")
+	readErr := errors.New("read failed")
 
 	t.Run("with format", func(t *testing.T) {
 		format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
 		bookings, err := ReadFileWithFormatToStructSlice[booking](
-			missing, format, bookingNaming, nil, nil, nil, nil,
+			iotest.ErrReader(readErr), format, bookingNaming, nil, nil, nil, nil,
 		)
+		require.ErrorIs(t, err, readErr)
 		require.Error(t, err)
 		require.Nil(t, bookings)
 	})
 
 	t.Run("detecting the format", func(t *testing.T) {
 		bookings, format, err := ReadFileDetectFormatToStructSlice[booking](
-			missing, nil, bookingNaming, nil, nil, nil, nil,
+			iotest.ErrReader(readErr), nil, bookingNaming, nil, nil, nil, nil,
 		)
-		require.Error(t, err)
+		require.ErrorIs(t, err, readErr)
 		require.Nil(t, bookings)
 		require.Nil(t, format)
 	})

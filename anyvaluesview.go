@@ -91,7 +91,7 @@ func NewAnyValuesViewFrom(source View) *AnyValuesView {
 		Rows:       make([][]any, source.NumRows()),
 	}
 	for row := 0; row < source.NumRows(); row++ {
-		view.Rows[row] = make([]any, len(source.Columns()))
+		view.Rows[row] = make([]any, source.NumCols())
 		for col := range view.Rows[row] {
 			view.Rows[row][col] = source.Cell(row, col)
 		}
@@ -104,6 +104,9 @@ func (view *AnyValuesView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *AnyValuesView) Columns() []string { return view.Cols }
+
+// NumCols returns the number of columns of this view.
+func (view *AnyValuesView) NumCols() int { return len(view.Cols) }
 
 // NumRows returns the number of data rows in this view.
 func (view *AnyValuesView) NumRows() int { return len(view.Rows) }

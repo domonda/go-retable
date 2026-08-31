@@ -139,6 +139,9 @@ func (view *StringsView) Title() string { return view.TableTitle }
 // Columns returns the column names of this view.
 func (view *StringsView) Columns() []string { return view.Cols }
 
+// NumCols returns the number of columns of this view.
+func (view *StringsView) NumCols() int { return len(view.Cols) }
+
 // NumRows returns the number of data rows in this view.
 func (view *StringsView) NumRows() int { return len(view.Rows) }
 
@@ -274,6 +277,9 @@ func (view *HeaderView) Title() string { return view.TableTitle }
 
 // Columns returns the column names of this view.
 func (view *HeaderView) Columns() []string { return view.Cols }
+
+// NumCols returns the number of columns of this view.
+func (view *HeaderView) NumCols() int { return len(view.Cols) }
 
 // NumRows always returns 1 for HeaderView since it contains only the header row.
 func (view *HeaderView) NumRows() int { return 1 }

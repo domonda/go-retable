@@ -182,7 +182,7 @@ func (view *FilteredView) NumCols() int {
 	if view.ColumnMapping != nil {
 		return len(view.ColumnMapping)
 	}
-	return len(view.Source.Columns())
+	return view.Source.NumCols()
 }
 
 // NumRows returns the number of rows visible in this filtered view after
