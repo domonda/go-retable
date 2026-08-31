@@ -156,18 +156,20 @@ var _ View = ExtraRowView(nil)
 // # Column Mismatch Behavior
 //
 // If views have different column counts, no error occurs:
+//
 //   - Columns() returns the first view's columns only
+//
 //   - Accessing a column index >= a view's column count returns nil for that view's rows
 //
-//	view1 := NewStringsView("", [][]string{{"A", "B"}}, []string{"Col1", "Col2"})
-//	view2 := NewStringsView("", [][]string{{"X"}}, []string{"Col1"})
+//     view1 := NewStringsView("", [][]string{{"A", "B"}}, "Col1", "Col2")
+//     view2 := NewStringsView("", [][]string{{"X"}}, "Col1")
 //
-//	combined := ExtraRowView{view1, view2}
-//	combined.Columns() -> ["Col1", "Col2"]
-//	combined.Cell(0, 0) -> "A"
-//	combined.Cell(0, 1) -> "B"
-//	combined.Cell(1, 0) -> "X"
-//	combined.Cell(1, 1) -> nil  // view2 has no column 1
+//     combined := ExtraRowView{view1, view2}
+//     combined.Columns() -> ["Col1", "Col2"]
+//     combined.Cell(0, 0) -> "A"
+//     combined.Cell(0, 1) -> "B"
+//     combined.Cell(1, 0) -> "X"
+//     combined.Cell(1, 1) -> nil  // view2 has no column 1
 //
 // # Composition
 //

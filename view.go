@@ -133,7 +133,7 @@ type View interface {
 //
 // # Example Usage
 //
-//	view := NewStringsView("Data", [][]string{{"123", "true"}}, []string{"Number", "Flag"})
+//	view := NewStringsView("Data", [][]string{{"123", "true"}}, "Number", "Flag")
 //	reflectView := AsReflectCellView(view)
 //
 //	val := reflectView.ReflectCell(0, 0)  // reflect.Value containing "123"

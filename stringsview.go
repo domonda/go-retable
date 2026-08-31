@@ -1,6 +1,7 @@
 package retable
 
 import (
+	"reflect"
 	"strings"
 )
 
@@ -60,7 +61,7 @@ type StringsView struct {
 	Rows [][]string
 }
 
-var _ View = new(StringsView)
+var _ ReflectCellView = new(StringsView)
 
 // NewStringsView creates a new StringsView with flexible column specification.
 //
@@ -70,6 +71,16 @@ var _ View = new(StringsView)
 //     is used as column names and removed from the data rows
 //
 // All column names have leading and trailing whitespace trimmed automatically.
+// Neither the passed cols nor the header row are modified, the column names
+// are always trimmed into a newly allocated slice.
+//
+// In header row mode the column names are widened with empty names until there
+// is one for every column of the widest data row. Sources like CSV files and
+// Excel sheets omit trailing empty cells, so the header row can be shorter than
+// the widest data row, and the cells of the columns past the end of the header
+// row would be unreachable via Cell and ReflectCell without this widening.
+// Explicitly passed cols are never widened because they state the columns of
+// the view.
 //
 // Parameters:
 //   - title: The title for this view (can be empty string)
@@ -100,12 +111,24 @@ var _ View = new(StringsView)
 //	    },
 //	)
 func NewStringsView(title string, rows [][]string, cols ...string) *StringsView {
-	if len(cols) == 0 && len(rows) > 0 {
+	numCols := len(cols)
+	if numCols == 0 && len(rows) > 0 {
 		cols = rows[0]
 		rows = rows[1:]
+		// Widen the header row to the widest data row
+		// so that no column is unreachable
+		numCols = len(cols)
+		for _, row := range rows {
+			numCols = max(numCols, len(row))
+		}
 	}
-	for i, col := range cols {
-		cols[i] = strings.TrimSpace(col)
+	if numCols > 0 {
+		// Trim into a new slice to not modify the passed cols or rows[0]
+		trimmedCols := make([]string, numCols)
+		for i, col := range cols {
+			trimmedCols[i] = strings.TrimSpace(col)
+		}
+		cols = trimmedCols
 	}
 	return &StringsView{Tit: title, Cols: cols, Rows: rows}
 }
@@ -141,6 +164,34 @@ func (view *StringsView) Cell(row, col int) any {
 		return ""
 	}
 	return view.Rows[row][col]
+}
+
+// ReflectCell returns the reflect.Value of the cell
+// at the specified row and column indices.
+//
+// For StringsView, ReflectCell returns:
+//   - The reflect.Value of the string at [row][col] if the cell exists
+//   - The reflect.Value of an empty string "" if the row exists
+//     but has fewer columns (sparse data)
+//   - An invalid zero reflect.Value if row or col indices are out of bounds
+//
+// Mirroring Cell means that every in-range cell yields a valid reflect.Value,
+// so reflection based consumers like ReflectTypeCellFormatter and
+// ViewToStructSlice treat a missing trailing cell like an empty string
+// instead of skipping it.
+//
+// Implementing ReflectCellView natively also saves the per cell wrapper
+// allocation that AsReflectCellView needs for a plain View.
+//
+// Time complexity: O(1)
+func (view *StringsView) ReflectCell(row, col int) reflect.Value {
+	if row < 0 || col < 0 || row >= len(view.Rows) || col >= len(view.Cols) {
+		return reflect.Value{}
+	}
+	if col >= len(view.Rows[row]) {
+		return reflect.ValueOf("")
+	}
+	return reflect.ValueOf(view.Rows[row][col])
 }
 
 // NewHeaderView creates a View containing only a header row.

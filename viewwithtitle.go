@@ -76,18 +76,16 @@ func (v viewWithTitle) Cell(row, col int) any {
 	return v.source.Cell(row, col)
 }
 
-// ReflectCell delegates to the source view's ReflectCell method and extracts
-// the underlying value.
+// ReflectCell delegates to the source view's ReflectCell method.
 //
-// Note: This method calls Elem() on the result from source.ReflectCell().
-// This assumes the source returns a pointer or interface that needs to be
-// dereferenced.
+// The value is passed through unchanged, consistent with Cell. Use DerefView
+// to dereference pointer or interface cell values.
 //
 // Parameters:
 //   - row: Zero-based row index
 //   - col: Zero-based column index
 //
-// Returns the reflect.Value from the source view after calling Elem().
+// Returns the reflect.Value from the source view.
 func (v viewWithTitle) ReflectCell(row, col int) reflect.Value {
-	return v.source.ReflectCell(row, col).Elem()
+	return v.source.ReflectCell(row, col)
 }

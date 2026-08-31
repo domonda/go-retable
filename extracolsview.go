@@ -147,7 +147,8 @@ func (e ExtraColsView) Title() string {
 // Columns returns all column names from all Views concatenated in order.
 //
 // The resulting slice contains columns from each view sequentially:
-//   [view0.col0, view0.col1, ..., view1.col0, view1.col1, ..., viewN.colM]
+//
+//	[view0.col0, view0.col1, ..., view1.col0, view1.col1, ..., viewN.colM]
 //
 // Returns an empty slice if ExtraColsView is empty.
 //
