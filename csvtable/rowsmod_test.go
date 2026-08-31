@@ -127,9 +127,17 @@ func Test_RemoveEmptyRows(t *testing.T) {
 func Test_CleanSpacedString(t *testing.T) {
 	// Also see http://localhost:5006/payment-import/20e66223-f7ab-4e1b-a59a-d15c104c9562-doc.csv.html
 	testCases := map[string]string{
-		"":                                      "",
-		" ":                                     " ",
-		"  ":                                    "  ",
+		"":   "",
+		" ":  " ",
+		"  ": "  ",
+
+		// Whether a string is too short to be spaced out is counted in
+		// runes, so a multi-byte string must not be compacted where the
+		// same string with single-byte characters is not.
+		"A ":                                    "A ",
+		"Ä ":                                    "Ä ",
+		"A B":                                   "AB",
+		"Ä Ö":                                   "ÄÖ",
 		"1 2":                                   "12",
 		"1 2 3":                                 "123",
 		"1 2 3 ":                                "123", // do we want this?
@@ -144,4 +152,18 @@ func Test_CleanSpacedString(t *testing.T) {
 			assert.True(t, modified == (cleaned != source), "modified")
 		})
 	}
+}
+
+func TestReplaceNewlineWithSpace(t *testing.T) {
+	rows := [][]string{
+		{"unix\nnewline", "windows\r\nnewline"},
+		{"carriage\rreturn", "no newline"},
+		{"multiple\n\nnewlines", ""},
+	}
+	ReplaceNewlineWithSpace(rows)
+	assert.Equal(t, [][]string{
+		{"unix newline", "windows newline"}, // \r\n becomes one space, not two
+		{"carriage return", "no newline"},
+		{"multiple  newlines", ""},
+	}, rows)
 }

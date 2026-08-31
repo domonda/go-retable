@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/domonda/go-retable"
 )
@@ -186,6 +189,10 @@ func TestWriter_FieldsWithQuotesAreParsable(t *testing.T) {
 		`b,`,
 		`,`,
 		";",
+		"a\nb",
+		"\"\nfoo",
+		"\"\"\nfoo",
+		"multi\nline\nvalue",
 	}
 	for _, delimiter := range []rune{';', ','} {
 		for _, value := range values {
@@ -220,5 +227,116 @@ func TestWriter_FieldsWithQuotesAreParsable(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestWriter_NilCellWithFormatter verifies that a cell of a nil interface is
+// written as the nil value instead of panicking. Type formatters dispatch on
+// the reflect.Type of the cell, which a nil interface does not have, so
+// retable.ReflectTypeCellFormatter reports such a cell as unsupported
+// instead of panicking, which lets the null value fallback here handle it.
+func TestWriter_NilCellWithFormatter(t *testing.T) {
+	formatter := retable.CellFormatterFunc(func(ctx context.Context, view retable.View, row, col int) (string, bool, error) {
+		return "FORMATTED", false, nil
+	})
+	writers := map[string]*Writer[any]{
+		"type formatter":           NewWriter[any]().WithTypeFormatter(reflect.TypeOf(""), formatter),
+		"kind formatter":           NewWriter[any]().WithKindFormatter(reflect.String, formatter),
+		"interface type formatter": NewWriter[any]().WithInterfaceTypeFormatter(reflect.TypeFor[error](), formatter),
+		"column formatter":         NewWriter[any]().WithColumnFormatter(0, formatter),
+		"no formatter":             NewWriter[any](),
+	}
+	view := &retable.AnyValuesView{
+		Cols: []string{"A", "B"},
+		Rows: [][]any{{"s", nil}},
+	}
+	for name, writer := range writers {
+		t.Run(name, func(t *testing.T) {
+			var dest bytes.Buffer
+			err := writer.WithNewLine("\n").WriteView(context.Background(), &dest, view)
+			if err != nil {
+				t.Fatalf("WriteView() error = %v", err)
+			}
+			// The nil cell of column B must be written as the empty nil value
+			if got := dest.String(); !strings.HasSuffix(got, ";\n") {
+				t.Errorf("nil cell written as %q, want an empty last field", got)
+			}
+		})
+	}
+}
+
+// TestWriter_ColumnFormatterNotAppliedToHeader verifies that a column formatter
+// only formats cell values. Applying it to the header row overwrote the column
+// title with the formatted value.
+func TestWriter_ColumnFormatterNotAppliedToHeader(t *testing.T) {
+	writer := NewWriter[any]().
+		WithNewLine("\n").
+		WithHeaderRow(true).
+		WithColumnFormatterFunc(0, func(ctx context.Context, view retable.View, row, col int) (string, bool, error) {
+			return "FORMATTED", false, nil
+		})
+	view := &retable.AnyValuesView{
+		Cols: []string{"A", "B"},
+		Rows: [][]any{{"1", "2"}},
+	}
+
+	var dest bytes.Buffer
+	err := writer.WriteView(context.Background(), &dest, view)
+	if err != nil {
+		t.Fatalf("WriteView() error = %v", err)
+	}
+	if got, want := dest.String(), "A;B\nFORMATTED;2\n"; got != want {
+		t.Errorf("WriteView() wrote %q, want %q", got, want)
+	}
+
+	rows, err := writer.ViewStrings(context.Background(), view)
+	if err != nil {
+		t.Fatalf("ViewStrings() error = %v", err)
+	}
+	if want := [][]string{{"A", "B"}, {"FORMATTED", "2"}}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("ViewStrings() = %q, want %q", rows, want)
+	}
+}
+
+// TestWriter_FormatterFuncVariants verifies that the FormatterFunc methods
+// register the same formatter as the CellFormatter methods they delegate to.
+func TestWriter_FormatterFuncVariants(t *testing.T) {
+	formatterFunc := func(ctx context.Context, view retable.View, row, col int) (string, bool, error) {
+		return "FORMATTED", false, nil
+	}
+	tests := map[string]struct {
+		writer *Writer[any]
+		// value has to be formatted by the registered formatter,
+		// so it must match the registered type, kind or interface
+		value any
+	}{
+		"WithTypeFormatterFunc": {
+			writer: NewWriter[any]().WithTypeFormatterFunc(reflect.TypeOf(0), formatterFunc),
+			value:  123,
+		},
+		"WithKindFormatterFunc": {
+			writer: NewWriter[any]().WithKindFormatterFunc(reflect.Int, formatterFunc),
+			value:  123,
+		},
+		"WithInterfaceTypeFormatterFunc": {
+			writer: NewWriter[any]().WithInterfaceTypeFormatterFunc(reflect.TypeFor[fmt.Stringer](), formatterFunc),
+			value:  time.Second, // time.Duration implements fmt.Stringer
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var dest bytes.Buffer
+			view := &retable.AnyValuesView{
+				Cols: []string{"A"},
+				Rows: [][]any{{tt.value}},
+			}
+			err := tt.writer.WithNewLine("\n").WriteView(context.Background(), &dest, view)
+			if err != nil {
+				t.Fatalf("WriteView() error = %v", err)
+			}
+			if got, want := dest.String(), "FORMATTED\n"; got != want {
+				t.Errorf("WriteView() wrote %q, want %q", got, want)
+			}
+		})
 	}
 }
