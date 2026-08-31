@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `SmartAssign` assigns the zero value for an empty source string instead of
+  failing with `unsupported operation: assigning string "" to uint64`. An empty
+  cell means "no value", and Excel and CSV files have empty cells for optional
+  columns of every type, so reading one must not fail the whole file. The
+  conversions for numbers, booleans and `time.Time` all parse the source string
+  and fall through to the unsupported-operation error when the parse fails, so an
+  empty cell was only survivable for string destinations. This mirrors the branch
+  directly above it, which already assigns the zero value for a null source.
+  String destinations are unaffected and still receive the empty string.
+
+  This surfaced through `exceltable`: short rows used to yield `nil` cells that
+  `ViewToStructSlice` skipped, and now correctly yield `""`, which reached
+  `SmartAssign` and turned every optional numeric spreadsheet column into an error.
+
 - `csvtable` no longer aborts a whole file with `can't handle CSV field` when a
   field's quoting is not one of a handful of hard-coded shapes. `readLines` split
   every line on the separator and then classified the fragments by their leading
