@@ -363,6 +363,25 @@ func Test_closesQuotedField(t *testing.T) {
 	}
 }
 
+// Test_splitLines_LosesCarriageReturnBeforeNewline records a known limitation
+// of splitting the lines before the fields are parsed, it is not the wanted
+// behaviour. A \r directly before the newline the lines are split by can't be
+// told apart from the residue of a file with mixed line endings, so it is
+// trimmed away together with it.
+//
+// Change this test to expect "x\r\ny" once the parser tracks the quoted state
+// while splitting instead of joining the split fields back together.
+func Test_splitLines_LosesCarriageReturnBeforeNewline(t *testing.T) {
+	rows, format, err := ParseDetectFormat([]byte("A;\"x\r\ny\";B\nC;D;E\n"), nil)
+	assert.NoError(t, err)
+	assert.Equal(t, "\n", format.Newline)
+	rows = RemoveEmptyRows(rows)
+	if assert.Len(t, rows, 2) {
+		assert.Equal(t, []string{"A", "x\ny", "B"}, rows[0], "the \\r before the splitting \\n is lost")
+		assert.Equal(t, []string{"C", "D", "E"}, rows[1])
+	}
+}
+
 func Test_sanitizeUTF8(t *testing.T) {
 	tests := []struct {
 		name string

@@ -315,6 +315,13 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 // Only the end of a line is trimmed. A \r at the start of a line is not
 // residue of a \n\r line ending, because those are detected and split by,
 // but a carriage return within a quoted field that has to be preserved.
+//
+// Trimming the end still loses a \r that directly precedes the newline the
+// lines are split by, like the one in A;"x\r\ny";B within a file with \n
+// line endings. There the \r can't be told apart from the residue of a file
+// with mixed line endings, which is what is trimmed here. Telling the two
+// apart needs the quoted state while splitting, which this parser only has
+// after the lines are split.
 func splitLines(csv []byte, newline string) [][]byte {
 	lines := bytes.Split(csv, []byte(newline))
 	for i := range lines {
