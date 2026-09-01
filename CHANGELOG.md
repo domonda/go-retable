@@ -186,16 +186,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `StringsView` implements `ReflectCellView` natively. `AsReflectCellView` now
   returns the view itself instead of allocating a wrapper on every call, and
   `ReflectCell` mirrors `Cell` for sparse rows.
-- `StringParser.ParseFloat` falls back to `float.Parse` from
-  `github.com/domonda/go-types/float` when `strconv.ParseFloat` fails, so the
-  number formats of other locales parse instead of erroring: `1,234.56` and
-  `1.234,56` both become 1234.56, `1,234,567` and `1.234.567` become 1234567,
-  spaces and apostrophes are recognized as thousands separators, surrounding
-  whitespace is trimmed, and the trailing minus written by accounting and ERP
-  exports is a negative sign. go-types is already a dependency of this module,
-  and its parser checks that digit groups are 3 digits long, so a wrongly grouped
-  string like `12.34,56` is rejected instead of being parsed into an arbitrary
-  number, which is what a hand written last-separator-wins heuristic would do.
+- `StringParser.ParseFloat` falls back to a separator detecting parser when
+  `strconv.ParseFloat` fails, so the number formats of other locales parse
+  instead of erroring: `1,234.56` and `1.234,56` both become 1234.56,
+  `1,234,567` and `1.234.567` become 1234567, spaces and apostrophes are
+  recognized as thousands separators, surrounding whitespace is trimmed, and
+  the trailing minus written by accounting and ERP exports is a negative sign.
+  Digit groups before the decimal separator have to be 3 digits long, so a
+  wrongly grouped string like `12.34,56` is rejected instead of being parsed
+  into an arbitrary number, which is what a hand written last-separator-wins
+  heuristic would do.
   `strconv.ParseFloat` is still tried first so that everything in Go's float
   literal syntax keeps parsing unchanged, and its error is the one returned when
   both fail, so the message quotes the string the caller passed in. A lone comma
@@ -210,6 +210,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   strings, and all four public read functions.
 - Tests for `NewStringsView` header widening, whitespace trimming, caller-data
   immutability, and for `ViewWithTitle` cell pass-through.
+
+### Removed
+
+- The dependency on `github.com/domonda/go-types`, so the root `retable`
+  package has no external dependencies at all again and `csvtable` only needs
+  `golang.org/x/text`, which moves from an indirect to a direct requirement.
+  A program that imports `retable` and parses a float shrinks from 3,597,090
+  to 2,807,490 bytes and loses all 6 indirect requirements that came with
+  go-types: `invopop/jsonschema`, `wk8/go-ordered-map`, `bahlo/generic-list-go`,
+  `buger/jsonparser`, `mailru/easyjson` and `gopkg.in/yaml.v3`. The Go linker
+  cannot remove them, because `init` functions are never eliminated and
+  `language.Code` is converted to an interface at package scope, which keeps
+  its `JSONSchema` method and the whole schema type graph reachable. Only two
+  packages were used and both are replaced without any change to the public
+  API. The code is ported from go-types, which is MIT licensed with the same
+  copyright holder as this repository.
+
+  - `float.Parse` becomes the unexported `parseFloat` in `parsefloat.go`,
+    ported verbatim together with its upstream test suite and with the
+    `strutil.TrimSpace` that also trims the zero width space U+200B. It was
+    verified against `float.Parse` over 114,337 inputs without a difference.
+    Nothing in the parser needs `go-types/language`, which is what pulled in
+    the JSON schema packages.
+  - `charset.GetEncoding`, `charset.AutoDecode` and `charset.TrimBOM` become
+    unexported functions in `csvtable/charset.go`, using the standard library
+    and `golang.org/x/text` directly instead of the wrapper types of go-types.
+    The accepted encoding names and the detection algorithm are unchanged,
+    because the names are part of the `FormatDetectionConfig.Encodings` and
+    `Format.Encoding` contract. Both implementations were compared over a
+    corpus of byte order marks, encoded fixtures and random data, and over
+    34 million fuzz executions, without a difference.
 
 ### Changed
 
@@ -239,6 +270,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ViewToStructSlice` keeps allocating a `StringParser` per call when it has a
   `Scanner` but no `Parser`, so a `Scanner` that reconfigures the `Parser` it
   receives still cannot affect a concurrent conversion.
+
+- `csvtable` rejects the empty string as an encoding name instead of resolving
+  it to `CodePage037`. The go-types implementation compared the name against
+  the second result of `charmap.Charmap.ID()`, which is always the empty
+  string, so an empty `FormatDetectionConfig.Encodings` entry silently decoded
+  with the first code page of `golang.org/x/text`.
 
 - `NewStringsView` widens a header row that is shorter than the widest data row,
   so cells past the end of the header row are reachable through `Cell` and
