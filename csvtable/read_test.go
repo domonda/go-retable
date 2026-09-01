@@ -1,0 +1,124 @@
+package csvtable
+
+import (
+	"testing"
+
+	"github.com/domonda/go-retable"
+	"github.com/stretchr/testify/require"
+	"github.com/ungerik/go-fs"
+)
+
+type booking struct {
+	Datum  string  `csv:"Datum"`
+	Text   string  `csv:"Text"`
+	Betrag float64 `csv:"Betrag"`
+	Storno bool    `csv:"Storno"`
+}
+
+var bookingNaming = &retable.StructFieldNaming{Tag: "csv"}
+
+// germanCSVParser configures the spellings of a German bank export, which the
+// default parser does not know, so that a result that only the passed Parser
+// can produce proves the Parser reached the conversions.
+func germanCSVParser() retable.Parser {
+	p := retable.NewStringParser()
+	p.TrueStrings = []string{"ja"}
+	p.FalseStrings = []string{"nein"}
+	return p
+}
+
+const bookingsCSV = "Datum;Text;Betrag;Storno\r\n" +
+	"01.01.2025;Miete;-500,00;nein\r\n" +
+	"02.01.2025;Gehalt;2.000,50;ja\r\n"
+
+var wantBookings = []booking{
+	{Datum: "01.01.2025", Text: "Miete", Betrag: -500, Storno: false},
+	{Datum: "02.01.2025", Text: "Gehalt", Betrag: 2000.50, Storno: true},
+}
+
+// TestReadBytesWithFormatToStructSlice covers the entry point for a caller that
+// already knows the format of its file, including that the passed Parser is
+// carried all the way down into the cell conversions.
+func TestReadBytesWithFormatToStructSlice(t *testing.T) {
+	format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
+
+	bookings, err := ReadBytesWithFormatToStructSlice[booking](
+		[]byte(bookingsCSV), format, bookingNaming, nil, germanCSVParser(), nil, nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, wantBookings, bookings)
+
+	t.Run("without the parser the boolean column cannot be read", func(t *testing.T) {
+		// Proves the case above passes because of the Parser and not
+		// because the default one would have parsed "ja" anyway.
+		_, err := ReadBytesWithFormatToStructSlice[booking](
+			[]byte(bookingsCSV), format, bookingNaming, nil, nil, nil, nil,
+		)
+		require.Error(t, err)
+	})
+
+	t.Run("an invalid format is reported instead of parsed", func(t *testing.T) {
+		_, err := ReadBytesWithFormatToStructSlice[booking](
+			[]byte(bookingsCSV), &Format{Encoding: "UTF-8", Separator: ";"}, bookingNaming, nil, nil, nil, nil,
+		)
+		require.ErrorContains(t, err, "missing csv.Format.Newline")
+	})
+}
+
+// TestReadFileWithFormatToStructSlice covers the same entry point reading from
+// an fs.FileReader, which is the form the callers of this package use.
+func TestReadFileWithFormatToStructSlice(t *testing.T) {
+	file := fs.NewMemFile("bookings.csv", []byte(bookingsCSV))
+	format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
+
+	bookings, err := ReadFileWithFormatToStructSlice[booking](
+		file, format, bookingNaming, nil, germanCSVParser(), nil, nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, wantBookings, bookings)
+}
+
+// TestReadBytesDetectFormatToStructSlice covers the entry point that has to
+// work out separator, encoding and line ending itself, and that has to find
+// the table between the header and trailer lines that bank exports wrap it in.
+func TestReadBytesDetectFormatToStructSlice(t *testing.T) {
+	csv := "Kontoauszug Nr. 4\n" +
+		"Zeitraum;01.01.2025;31.01.2025\n" +
+		"\n" +
+		bookingsCSV +
+		"\n" +
+		"Erstellt am 03.01.2025\n"
+
+	bookings, format, err := ReadBytesDetectFormatToStructSlice[booking](
+		[]byte(csv), nil, bookingNaming, nil, germanCSVParser(), nil, nil,
+		"Datum", "Text", "Betrag", "Storno",
+	)
+	require.NoError(t, err)
+	require.Equal(t, ";", format.Separator)
+	require.Equal(t, "UTF-8", format.Encoding)
+	require.Equal(t, wantBookings, bookings)
+
+	t.Run("a missing required column is reported", func(t *testing.T) {
+		// Without the column the table cannot be located either, so the
+		// caller has to learn that instead of getting zero valued rows.
+		_, _, err := ReadBytesDetectFormatToStructSlice[booking](
+			[]byte(csv), nil, bookingNaming, nil, germanCSVParser(), nil, nil, "Waehrung",
+		)
+		require.ErrorContains(t, err, `required column "Waehrung"`)
+	})
+}
+
+// TestReadFileDetectFormatToStructSlice covers format detection from an
+// fs.FileReader, including that a UTF-8 BOM written by a spreadsheet export
+// does not end up in the first column title.
+func TestReadFileDetectFormatToStructSlice(t *testing.T) {
+	file := fs.NewMemFile("bookings.csv", append([]byte("\xEF\xBB\xBF"), bookingsCSV...))
+
+	bookings, format, err := ReadFileDetectFormatToStructSlice[booking](
+		file, nil, bookingNaming, nil, germanCSVParser(), nil, nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "UTF-8", format.Encoding)
+	require.Equal(t, "\r\n", format.Newline)
+	require.Equal(t, wantBookings, bookings)
+}
