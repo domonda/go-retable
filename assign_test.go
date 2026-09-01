@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -419,6 +420,14 @@ func TestSmartAssign(t *testing.T) {
 			src:     reflect.ValueOf("1h30m"),
 			wantDst: 90 * time.Minute,
 		},
+		// An optional date column is declared as *time.Time, so the
+		// pointer arm of the time branch has to parse like the value one.
+		{
+			name:    "date string to *time.Time",
+			dst:     assignableValue[*time.Time](),
+			src:     reflect.ValueOf("2024-03-15"),
+			wantDst: pointerTo(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)),
+		},
 		{
 			name:    "duration string to *time.Duration",
 			dst:     assignableValue[*time.Duration](),
@@ -741,4 +750,111 @@ func TestNewStringParserDoesNotShareSlices(t *testing.T) {
 	require.True(t, ok)
 	require.NotEqual(t, "not a format", def.TimeFormats[0])
 	require.NotEqual(t, "not a format", timeFormats[0], "the package level defaults must stay untouched")
+}
+
+// selfPtr is a self referential pointer type, which is legal Go: its
+// element type is itself. Walking it to a non pointer type never
+// terminates, so it is the shape that made zeroValueForNilString spin
+// forever and the pointer branch of SmartAssign recurse until the stack
+// overflowed, which is fatal and no deferred recover can catch.
+type selfPtr *selfPtr
+
+func TestSmartAssignSelfReferentialPointerType(t *testing.T) {
+	// Run in a goroutine so that a regression fails the test instead of
+	// hanging the whole suite until the go test timeout.
+	for _, src := range []string{"", "42", "NULL"} {
+		t.Run("src "+src, func(t *testing.T) {
+			done := make(chan error, 1)
+			go func() {
+				var dst selfPtr
+				done <- SmartAssign(reflect.ValueOf(&dst).Elem(), reflect.ValueOf(src), nil, nil, nil)
+			}()
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, errors.ErrUnsupported)
+			case <-time.After(5 * time.Second):
+				t.Fatal("SmartAssign did not return for a self referential pointer type")
+			}
+		})
+	}
+
+	require.False(t, zeroValueForNilString(reflect.TypeFor[selfPtr]()))
+
+	// A pointer chain that does end is still followed
+	_, ok := derefPointerType(reflect.TypeFor[***int]())
+	require.True(t, ok)
+	elem, ok := derefPointerType(reflect.TypeFor[**string]())
+	require.True(t, ok)
+	require.Equal(t, reflect.TypeFor[string](), elem)
+}
+
+// textNumber has an integer kind and a MarshalText method, so assigning
+// it to a string destination must use the text and not Go's
+// string(rune) conversion, which would produce "*" for 42.
+type textNumber int
+
+func (t textNumber) MarshalText() ([]byte, error) {
+	if t < 0 {
+		return nil, errors.New("negative textNumber")
+	}
+	return []byte(strconv.Itoa(int(t))), nil
+}
+
+func TestSmartAssignTextMarshaler(t *testing.T) {
+	var s string
+	require.NoError(t, SmartAssign(reflect.ValueOf(&s).Elem(), reflect.ValueOf(textNumber(42)), nil, nil, nil))
+	require.Equal(t, "42", s)
+
+	// The text is parsed further, so a numeric destination works too
+	var i int
+	require.NoError(t, SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf(textNumber(7)), nil, nil, nil))
+	require.Equal(t, 7, i)
+
+	// A failing MarshalText is reported, not swallowed
+	err := SmartAssign(reflect.ValueOf(&s).Elem(), reflect.ValueOf(textNumber(-1)), nil, nil, nil)
+	require.ErrorContains(t, err, "negative textNumber")
+}
+
+// TestSmartAssignRecoversPanic covers the deferred recover, which is
+// load bearing: package reflect panics for a value read from an
+// unexported field, and SmartAssign calls src.Interface() on every
+// source. A table row must not take the whole program down.
+func TestSmartAssignRecoversPanic(t *testing.T) {
+	type hidden struct{ n int }
+	src := reflect.ValueOf(hidden{n: 7}).Field(0)
+	require.False(t, src.CanInterface(), "the test needs a value that panics on Interface()")
+
+	var s string
+	require.NotPanics(t, func() {
+		err := SmartAssign(reflect.ValueOf(&s).Elem(), src, nil, nil, nil)
+		require.Error(t, err)
+	})
+}
+
+// TestParseTime covers the standalone ParseTime, which lost its only
+// in-package caller when SmartAssign moved to parser.ParseTime. It
+// duplicates the loop of StringParser.ParseTime over the same formats,
+// so without a test the two can drift apart unnoticed while ParseTime
+// stays part of the public API.
+func TestParseTime(t *testing.T) {
+	for _, tt := range []struct{ str, format string }{
+		// RFC3339Nano is tried before RFC3339 and also matches a
+		// timestamp without fractional seconds, so it is the layout
+		// that is reported back.
+		{str: "2024-03-15T14:30:00Z", format: time.RFC3339Nano},
+		{str: "2024-03-15", format: time.DateOnly},
+	} {
+		t.Run(tt.str, func(t *testing.T) {
+			got, format, err := ParseTime(tt.str)
+			require.NoError(t, err)
+			require.Equal(t, tt.format, format)
+
+			viaParser, err := NewStringParser().ParseTime(tt.str)
+			require.NoError(t, err)
+			require.Equal(t, viaParser, got, "the two implementations must not diverge")
+		})
+	}
+
+	_, _, err := ParseTime("not a date")
+	require.Error(t, err)
 }
