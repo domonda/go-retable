@@ -135,3 +135,22 @@ func Test_validSeparator(t *testing.T) {
 		})
 	}
 }
+
+// TestEscapeQuotes covers the exported RFC 4180 escaper, which had no
+// test. Every quote in a value has to be doubled or the field ends
+// early when the file is read back.
+func TestEscapeQuotes(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{in: "", want: ""},
+		{in: "plain", want: "plain"},
+		{in: `say "hi"`, want: `say ""hi""`},
+		{in: `"`, want: `""`},
+		{in: `""`, want: `""""`},
+		{in: `a"b"c`, want: `a""b""c`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			require.Equal(t, tt.want, EscapeQuotes(tt.in))
+		})
+	}
+}

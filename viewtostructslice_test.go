@@ -157,3 +157,59 @@ func TestViewToStructSlice_NonStructElementType(t *testing.T) {
 	_, err = ViewToStructSlice[*string](view, &StructFieldNaming{}, nil, nil, nil, nil)
 	require.ErrorContains(t, err, "is not a struct or pointer to struct")
 }
+
+// validatable reports itself invalid for the zero value, which is the
+// shape CallValidateMethod is meant for: a column whose type knows what
+// a usable value looks like.
+type validatableAge int
+
+func (a validatableAge) Valid() bool { return a > 0 }
+
+type validatableName string
+
+func (n validatableName) Validate() error {
+	if n == "" {
+		return errors.New("name must not be empty")
+	}
+	return nil
+}
+
+// TestCallValidateMethod covers the ready-made validate function, which
+// had no test. It dispatches on two different interfaces and has to stay
+// silent for a type that implements neither.
+func TestCallValidateMethod(t *testing.T) {
+	t.Run("Valid() bool", func(t *testing.T) {
+		require.NoError(t, CallValidateMethod(reflect.ValueOf(validatableAge(42))))
+		require.ErrorContains(t, CallValidateMethod(reflect.ValueOf(validatableAge(0))), "is not valid")
+	})
+
+	t.Run("Validate() error", func(t *testing.T) {
+		require.NoError(t, CallValidateMethod(reflect.ValueOf(validatableName("Erik"))))
+		require.ErrorContains(t, CallValidateMethod(reflect.ValueOf(validatableName(""))), "name must not be empty")
+	})
+
+	t.Run("a type implementing neither is not an error", func(t *testing.T) {
+		require.NoError(t, CallValidateMethod(reflect.ValueOf(42)))
+		require.NoError(t, CallValidateMethod(reflect.ValueOf("")))
+	})
+
+	t.Run("an invalid reflect.Value is not an error", func(t *testing.T) {
+		require.NoError(t, CallValidateMethod(reflect.Value{}))
+	})
+
+	// End to end: a row whose cell fails validation fails the conversion
+	t.Run("through ViewToStructSlice", func(t *testing.T) {
+		type Row struct {
+			Name validatableName
+			Age  validatableAge
+		}
+		ok := NewStringsView("", [][]string{{"Name", "Age"}, {"Erik", "42"}})
+		rows, err := ViewToStructSlice[Row](ok, nil, nil, nil, nil, CallValidateMethod)
+		require.NoError(t, err)
+		require.Equal(t, []Row{{Name: "Erik", Age: 42}}, rows)
+
+		bad := NewStringsView("", [][]string{{"Name", "Age"}, {"Erik", "0"}})
+		_, err = ViewToStructSlice[Row](bad, nil, nil, nil, nil, CallValidateMethod)
+		require.ErrorContains(t, err, "is not valid")
+	})
+}

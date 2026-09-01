@@ -351,3 +351,68 @@ func ExamplePrintlnTable() {
 	// | Last row | 0          |                               |
 
 }
+
+// TestSprintlnViewAndTable covers the two Sprintln helpers, which had no
+// test. Note that both take an io.Writer they never write to: the result
+// is built into a local strings.Builder and returned. Passing nil is
+// therefore safe, which is what the doc examples do.
+func TestSprintlnViewAndTable(t *testing.T) {
+	view := NewStringsView("People", [][]string{
+		{"Name", "Age"},
+		{"Erik", "42"},
+	})
+
+	str, err := SprintlnView(nil, view)
+	require.NoError(t, err)
+	require.Contains(t, str, "Name")
+	require.Contains(t, str, "Erik")
+	require.Contains(t, str, "42")
+
+	type Person struct {
+		Name string
+		Age  int
+	}
+	str, err = SprintlnTable(nil, "People", []Person{{Name: "Erik", Age: 42}})
+	require.NoError(t, err)
+	require.Contains(t, str, "People")
+	require.Contains(t, str, "Name")
+	require.Contains(t, str, "Erik")
+
+	// A table type that has no viewer is reported
+	_, err = SprintlnTable(nil, "", 42)
+	require.Error(t, err)
+}
+
+// TestMustStructFieldIndex covers the panicking field-index lookup,
+// which had no test. It resolves a field pointer to its index so that a
+// column can be named by the field itself instead of by a string.
+func TestMustStructFieldIndex(t *testing.T) {
+	type Person struct {
+		Name string
+		Age  int
+		City string
+	}
+	p := new(Person)
+
+	require.Equal(t, 0, MustStructFieldIndex(p, &p.Name))
+	require.Equal(t, 1, MustStructFieldIndex(p, &p.Age))
+	require.Equal(t, 2, MustStructFieldIndex(p, &p.City))
+
+	// A pointer that is not a field of the struct has no index
+	other := new(Person)
+	require.Panics(t, func() { MustStructFieldIndex(p, &other.Name) })
+}
+
+// TestNoTagsStructRowsViewer covers the viewer that ignores struct tags,
+// which had no test. It must use the field names even when a tag would
+// have named the column differently.
+func TestNoTagsStructRowsViewer(t *testing.T) {
+	type Person struct {
+		Name string `col:"Vorname"`
+		Age  int    `col:"Alter"`
+	}
+	view, err := NoTagsStructRowsViewer().NewView("", []Person{{Name: "Erik", Age: 42}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Name", "Age"}, view.Columns(), "the col tags must be ignored")
+	require.Equal(t, 1, view.NumRows())
+}

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/domonda/go-retable"
 )
@@ -339,4 +342,160 @@ func TestWriter_FormatterFuncVariants(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestWriter_WriteAndWriteWithViewer covers the two entry points that
+// take a table value rather than a View. Every existing test drove
+// WriteView directly, so Write, WriteWithViewer and the viewer
+// selection they perform were never executed.
+func TestWriter_WriteAndWriteWithViewer(t *testing.T) {
+	type Row struct {
+		Name string
+		Age  int
+	}
+	rows := []Row{{Name: "Erik", Age: 42}, {Name: "Ann", Age: 7}}
+
+	t.Run("Write selects a viewer when none is configured", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[]Row]().WithHeaderRow(true)
+		require.NoError(t, w.Write(context.Background(), &buf, rows))
+		require.Equal(t, "Name;Age\r\nErik;42\r\nAnn;7\r\n", buf.String())
+	})
+
+	t.Run("WithTableViewer is used instead of selecting one", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[]Row]().
+			WithHeaderRow(true).
+			WithTableViewer(retable.DefaultStructRowsViewer())
+		require.NoError(t, w.Write(context.Background(), &buf, rows))
+		require.Equal(t, "Name;Age\r\nErik;42\r\nAnn;7\r\n", buf.String())
+	})
+
+	t.Run("WriteWithViewer takes the viewer per call", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[]Row]().WithHeaderRow(true)
+		require.NoError(t, w.WriteWithViewer(context.Background(), &buf, retable.DefaultStructRowsViewer(), rows))
+		require.Equal(t, "Name;Age\r\nErik;42\r\nAnn;7\r\n", buf.String())
+	})
+
+	t.Run("a viewer error is reported", func(t *testing.T) {
+		var buf bytes.Buffer
+		// An int is not a table, so viewer selection has to fail
+		w := NewWriter[int]()
+		require.Error(t, w.Write(context.Background(), &buf, 42))
+	})
+}
+
+// TestWriter_OptionsAndGetters covers the builder options and their
+// getters, which had no test at all. Each option returns a clone, so a
+// silent aliasing bug would let one writer reconfigure another.
+func TestWriter_OptionsAndGetters(t *testing.T) {
+	base := NewWriter[[][]string]()
+
+	// The documented defaults
+	require.False(t, base.QuoteAllFields())
+	require.False(t, base.QuoteEmptyFields())
+	require.Equal(t, ';', base.Delimiter())
+	require.Equal(t, `""`, base.EscapeQuotes())
+	require.Equal(t, "", base.NilValue())
+	require.Equal(t, "\r\n", base.NewLine())
+	require.Nil(t, base.Encoder())
+
+	configured := base.
+		WithQuoteAllFields(true).
+		WithQuoteEmptyFields(true).
+		WithDelimiter(',').
+		WithEscapeQuotes(`\"`).
+		WithNilValue("NULL").
+		WithNewLine("\n").
+		WithEncoder(PassthroughEncoder())
+
+	require.True(t, configured.QuoteAllFields())
+	require.True(t, configured.QuoteEmptyFields())
+	require.Equal(t, ',', configured.Delimiter())
+	require.Equal(t, `\"`, configured.EscapeQuotes())
+	require.Equal(t, "NULL", configured.NilValue())
+	require.Equal(t, "\n", configured.NewLine())
+	require.NotNil(t, configured.Encoder())
+
+	// The original must be untouched: every option clones
+	require.False(t, base.QuoteAllFields())
+	require.Equal(t, ';', base.Delimiter())
+	require.Equal(t, "\r\n", base.NewLine())
+	require.Nil(t, base.Encoder())
+}
+
+// TestWriter_EncoderIsApplied covers that a configured Encoder actually
+// sees the output bytes, and that its error is propagated rather than
+// producing a silently truncated file.
+func TestWriter_EncoderIsApplied(t *testing.T) {
+	// The first row of a StringsView is its header, so a data row is
+	// needed for anything to be written at all.
+	view := retable.NewStringsView("", [][]string{{"a", "b"}, {"x", "y"}})
+
+	t.Run("PassthroughEncoder leaves the bytes unchanged", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[][]string]().WithHeaderRow(true).WithEncoder(PassthroughEncoder())
+		require.NoError(t, w.WriteView(context.Background(), &buf, view))
+		require.Equal(t, "a;b\r\nx;y\r\n", buf.String())
+	})
+
+	t.Run("an encoder error is reported", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[][]string]().WithHeaderRow(true).WithEncoder(EncoderFunc(func([]byte) ([]byte, error) {
+			return nil, errors.New("encoder failed")
+		}))
+		err := w.WriteView(context.Background(), &buf, view)
+		require.ErrorContains(t, err, "encoder failed")
+	})
+
+	t.Run("the encoder transforms the output", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[][]string]().WithHeaderRow(true).WithEncoder(EncoderFunc(func(b []byte) ([]byte, error) {
+			return bytes.ToUpper(b), nil
+		}))
+		require.NoError(t, w.WriteView(context.Background(), &buf, view))
+		require.Equal(t, "A;B\r\nX;Y\r\n", buf.String())
+	})
+}
+
+// TestWriter_WithTypeFormattersAndReflectFuncs covers the type
+// formatter entry points that had no test: the whole-set replacement
+// and the two reflection based function registrations.
+func TestWriter_WithTypeFormattersAndReflectFuncs(t *testing.T) {
+	// The first row of a StringsView is its header, so a data row is
+	// needed for a cell formatter to be reached at all.
+	view := retable.NewStringsView("", [][]string{{"col"}, {"x"}})
+
+	t.Run("WithTypeFormatters replaces the whole set", func(t *testing.T) {
+		var buf bytes.Buffer
+		formatters := new(retable.ReflectTypeCellFormatter).
+			WithTypeFormatter(reflect.TypeFor[string](), retable.CellFormatterFunc(
+				func(context.Context, retable.View, int, int) (string, bool, error) {
+					return "replaced", false, nil
+				},
+			))
+		w := NewWriter[[][]string]().WithTypeFormatters(formatters)
+		require.NoError(t, w.WriteView(context.Background(), &buf, view))
+		require.Contains(t, buf.String(), "replaced")
+		require.NotContains(t, buf.String(), "x", "the registered formatter must replace the cell value")
+	})
+
+	t.Run("WithTypeFormatterReflectFunc", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[][]string]().WithTypeFormatterReflectFunc(
+			func(s string) (string, error) { return "fn:" + s, nil },
+		)
+		require.NoError(t, w.WriteView(context.Background(), &buf, view))
+		require.Contains(t, buf.String(), "fn:x")
+	})
+
+	t.Run("WithTypeFormatterReflectRawFunc", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[][]string]().WithTypeFormatterReflectRawFunc(
+			func(s string) (string, error) { return "raw:" + s, nil },
+		)
+		require.NoError(t, w.WriteView(context.Background(), &buf, view))
+		require.Contains(t, buf.String(), "raw:x")
+	})
 }
