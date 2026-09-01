@@ -155,7 +155,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   other concurrent conversions, which the documentation of `StringParser` shows
   how to do. Boolean strings, time formats and number locales are now
   configurable per call. `ViewToStructSlice` allocates a default `StringParser`
-  once per view when the parameter is nil, so no parser is allocated per cell.
+  once per view when it has a `Scanner` but no `Parser`, so no parser is
+  allocated per cell.
 
 - `SmartAssign` passes an empty source string to `dstScanner` before assigning
   the zero value. The scanner is the only extension point of `SmartAssign`, so
@@ -328,7 +329,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 
 - The dependency on `github.com/domonda/go-types`, so the root `retable`
-  package has no external dependencies at all again and `csvtable` only needs
+  package has no external dependencies at all again and `csvtable` needs
   `golang.org/x/text`, which moves from an indirect to a direct requirement.
   A program that imports `retable` and parses a float shrinks from 3,597,090
   to 2,807,490 bytes and loses all 6 indirect requirements that came with
@@ -389,10 +390,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Integer, unsigned and duration parsing are unchanged because `StringParser`
   delegates them to the same functions, float parsing gains the locale handling,
   and time parsing now honors `StringParser.TimeFormats`, which the package-level
-  `ParseTime` ignored. Boolean parsing changes set: it gains `yes` and `no` with
-  their case variants and loses the `t`, `T`, `f` and `F` that
-  `strconv.ParseBool` accepts, because `StringParser.TrueStrings` and
-  `FalseStrings` define the strings now.
+  `ParseTime` ignored. Boolean parsing gains `yes` and `no` with their case
+  variants and keeps the `t`, `T`, `f` and `F` that `strconv.ParseBool` accepts,
+  because `StringParser.TrueStrings` and `FalseStrings` define the strings now.
 
 - A nil `Parser` passed to `SmartAssign` resolves to the new package-level
   `DefaultParser` variable instead of allocating a `StringParser` per call.
