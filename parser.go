@@ -5,8 +5,6 @@ import (
 	"slices"
 	"strconv"
 	"time"
-
-	"github.com/domonda/go-types/float"
 )
 
 // Parser is the interface for parsing string representations into primitive Go types.
@@ -196,8 +194,8 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 //
 //  1. Standard parsing using strconv.ParseFloat, which accepts the Go syntax
 //     for float literals (handles "123.45")
-//  2. If that fails, float.Parse from github.com/domonda/go-types/float,
-//     which detects the thousands and decimal separators of other locales
+//  2. If that fails, parseFloat, which detects the thousands and decimal
+//     separators of other locales
 //     ("123,45" -> 123.45, "1,234.56" and "1.234,56" -> 1234.56)
 //
 // This flexibility is important for parsing numbers from different locales or user input.
@@ -229,7 +227,7 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 func (p *StringParser) ParseFloat(str string) (float64, error) {
 	f, err := strconv.ParseFloat(str, 64)
 	if err != nil {
-		f, e := float.Parse(str)
+		f, e := parseFloat(str)
 		if e != nil {
 			return 0, err // return original error
 		}
