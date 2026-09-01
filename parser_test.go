@@ -54,26 +54,40 @@ func TestStringParser_ParseFloat(t *testing.T) {
 		{str: "1,234,567.89", want: 1234567.89},
 		{str: "1.234.567,89", want: 1234567.89},
 
-		// Repeated separators of one kind without the other are not
-		// supported, even though they could only be thousands separators.
-		{str: "1,234,567", wantErr: true},
-		{str: "1.234.567", wantErr: true},
+		// Repeated separators of one kind without the other can only be
+		// thousands separators, there is nothing left for them to group.
+		{str: "1,234,567", want: 1234567},
+		{str: "1.234.567", want: 1234567},
+
+		// Accounting and ERP exports write the minus sign after the number.
+		{str: "1.234,56-", want: -1234.56},
+		{str: "1,234.56-", want: -1234.56},
+
+		// Surrounding whitespace is trimmed, and spaces and apostrophes
+		// are recognized as thousands separators, because spreadsheets
+		// export French and Swiss number formats that way.
+		{str: " 3.14", want: 3.14},
+		{str: "3.14 ", want: 3.14},
+		{str: "1 234,56", want: 1234.56},
+		{str: "1'234.56", want: 1234.56},
 
 		// Strings that are not numbers in any of the handled conventions.
 		{str: "", wantErr: true},
 		{str: "abc", wantErr: true},
 		{str: "--1", wantErr: true},
 		{str: "1e", wantErr: true},
-		// No whitespace is trimmed and no other separator is recognized.
-		{str: " 3.14", wantErr: true},
-		{str: "3.14 ", wantErr: true},
-		{str: "1 234,56", wantErr: true},
-		{str: "1'234.56", wantErr: true},
+		// Currency symbols and other decoration are not stripped.
 		{str: "€1,5", wantErr: true},
+		{str: "1,5%", wantErr: true},
 		// Both separators present but not resolvable to a single
 		// decimal separator followed by digits.
 		{str: "1,234.5.6", wantErr: true},
 		{str: "1.234,56,7", wantErr: true},
+		// Digit groups before the decimal separator have to be 3 digits
+		// long, so wrongly grouped strings are rejected instead of being
+		// parsed into an arbitrary number.
+		{str: "12.34,56", wantErr: true},
+		{str: "1.23.456,78", wantErr: true},
 	}
 	p := NewStringParser()
 	for _, tt := range tests {

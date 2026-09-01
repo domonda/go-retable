@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/domonda/go-types/float"
 )
 
 // Parser is the interface for parsing string representations into primitive Go types.
@@ -184,28 +185,23 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 }
 
 // ParseFloat parses a string into a 64-bit floating point number with locale awareness.
-// This method tries multiple strategies to handle different number formats:
+// This method tries two strategies to handle different number formats:
 //
-//  1. Standard parsing using strconv.ParseFloat (handles "123.45")
-//  2. If that fails, tries handling comma as decimal separator ("123,45" -> "123.45")
-//  3. If that fails, tries handling dots and commas as decimal and
-//     thousands separators ("1,234.56" and "1.234,56" -> 1234.56)
+//  1. Standard parsing using strconv.ParseFloat, which accepts the Go syntax
+//     for float literals (handles "123.45")
+//  2. If that fails, float.Parse from github.com/domonda/go-types/float,
+//     which detects the thousands and decimal separators of other locales
+//     ("123,45" -> 123.45, "1,234.56" and "1.234,56" -> 1234.56)
 //
 // This flexibility is important for parsing numbers from different locales or user input.
 //
-// The separator handling is a very simplistic heuristic: the last dot or comma
-// is assumed to be the decimal separator and every dot or comma before it is
-// assumed to be a thousands separator that gets removed without any further
-// checking of the grouping size. A string with wrongly sized digit groups is
-// therefore not rejected as invalid, and what it parses into is undefined.
-//
-// Two consequences of the heuristic are worth knowing:
+// Two properties of the separator detection are worth knowing:
 //   - A lone comma or dot is always the decimal separator, so "1,234" is
 //     parsed as 1.234 and not as 1234. Nothing in the string distinguishes
 //     the two readings, and the decimal one loses no digits when it guesses wrong.
-//   - Repeated separators of only one kind are not handled and return an error,
-//     so "1,234,567" and "1.234.567" fail even though those separators could
-//     only be thousands separators.
+//   - Digit groups before the decimal separator have to be 3 digits long,
+//     so wrongly grouped strings like "12.34,56" are rejected instead of
+//     silently parsed into an arbitrary number.
 //
 // Parameters:
 //   - str: The string to parse
@@ -216,40 +212,21 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 //
 // Example:
 //
-//	f, _ := parser.ParseFloat("3.14")     // 3.14 (standard)
-//	f, _ := parser.ParseFloat("3,14")     // 3.14 (comma decimal)
-//	f, _ := parser.ParseFloat("-2.5e10")  // -2.5e10 (scientific notation)
-//	f, _ := parser.ParseFloat("1,234.56") // 1234.56 (comma thousands separator)
-//	f, _ := parser.ParseFloat("1.234,56") // 1234.56 (dot thousands separator)
+//	f, _ := parser.ParseFloat("3.14")      // 3.14 (standard)
+//	f, _ := parser.ParseFloat("3,14")      // 3.14 (comma decimal)
+//	f, _ := parser.ParseFloat("-2.5e10")   // -2.5e10 (scientific notation)
+//	f, _ := parser.ParseFloat("1,234.56")  // 1234.56 (comma thousands separator)
+//	f, _ := parser.ParseFloat("1.234,56")  // 1234.56 (dot thousands separator)
+//	f, _ := parser.ParseFloat("1'234.56")  // 1234.56 (apostrophe thousands separator)
+//	f, _ := parser.ParseFloat("1.234,56-") // -1234.56 (trailing minus)
 func (p *StringParser) ParseFloat(str string) (float64, error) {
 	f, err := strconv.ParseFloat(str, 64)
 	if err != nil {
-		numDot := strings.Count(str, ".")
-		numComma := strings.Count(str, ",")
-		switch {
-		case numComma == 1 && numDot == 0:
-			f, e := strconv.ParseFloat(strings.ReplaceAll(str, ",", "."), 64)
-			if e != nil {
-				return 0, err // return original error
-			}
-			return f, nil
-
-		case numComma > 0 && numDot > 0:
-			if strings.LastIndexByte(str, '.') > strings.LastIndexByte(str, ',') {
-				// Ending with a dot, so commas before are thousands separators to be removed
-				str = strings.ReplaceAll(str, ",", "")
-			} else {
-				// Ending with a comma, so dots before are thousands separators to be removed
-				// and the comma is replaced with a dot as decimal separator
-				str = strings.ReplaceAll(strings.ReplaceAll(str, ".", ""), ",", ".")
-			}
-			f, e := strconv.ParseFloat(str, 64)
-			if e != nil {
-				return 0, err // return original error
-			}
-			return f, nil
+		f, e := float.Parse(str)
+		if e != nil {
+			return 0, err // return original error
 		}
-		return 0, err
+		return f, nil
 	}
 	return f, nil
 }

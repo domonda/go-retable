@@ -186,14 +186,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `StringsView` implements `ReflectCellView` natively. `AsReflectCellView` now
   returns the view itself instead of allocating a wrapper on every call, and
   `ReflectCell` mirrors `Cell` for sparse rows.
-- `StringParser.ParseFloat` parses thousands separators, so `1,234.56` and
-  `1.234,56` both parse as 1234.56 instead of failing. The last dot or comma is
-  taken as the decimal separator and every one before it as a thousands separator
-  that gets removed. That heuristic is deliberately simplistic: it does not check
-  the grouping size, and it does not cover repeated separators of only one kind,
-  so `1,234,567` and `1.234.567` still fail. A lone comma or dot stays the decimal
-  separator, so `1,234` parses as 1.234 and not as 1234, an ambiguity nothing in
-  the string can resolve. The heuristic and its consequences are documented on the
+- `StringParser.ParseFloat` falls back to `float.Parse` from
+  `github.com/domonda/go-types/float` when `strconv.ParseFloat` fails, so the
+  number formats of other locales parse instead of erroring: `1,234.56` and
+  `1.234,56` both become 1234.56, `1,234,567` and `1.234.567` become 1234567,
+  spaces and apostrophes are recognized as thousands separators, surrounding
+  whitespace is trimmed, and the trailing minus written by accounting and ERP
+  exports is a negative sign. go-types is already a dependency of this module,
+  and its parser checks that digit groups are 3 digits long, so a wrongly grouped
+  string like `12.34,56` is rejected instead of being parsed into an arbitrary
+  number, which is what a hand written last-separator-wins heuristic would do.
+  `strconv.ParseFloat` is still tried first so that everything in Go's float
+  literal syntax keeps parsing unchanged, and its error is the one returned when
+  both fail, so the message quotes the string the caller passed in. A lone comma
+  or dot stays the decimal separator, so `1,234` parses as 1.234 and not as 1234,
+  an ambiguity nothing in the string can resolve. All of this is documented on the
   method, along with the first tests for `ParseFloat`, which cover the strategies,
   the ambiguity and the strings it rejects.
 - Tests for the `exceltable` package, which previously had none: its only test was
