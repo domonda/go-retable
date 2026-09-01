@@ -226,10 +226,26 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 				return 0, 0, 0, 0, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
 			}
 			thousandsSep = lastGroupingRune
-		} else {
+		} else if lastGroupingRune == '.' || lastGroupingRune == ',' {
 			floatBuilder.WriteByte('.')
 			pointWritten = true
 			decimalSep = lastGroupingRune
+		} else {
+			// A space or an apostrophe is only ever a thousands
+			// separator, no locale writes a decimal fraction after
+			// one, so the digits following it have to be a complete
+			// group of three.
+			//
+			// Without this a single group parses as a fraction and
+			// "1 234" becomes 1.234 instead of 1234, which is not an
+			// error anywhere downstream: a currency column then mixes
+			// amounts that are a factor of 1000 apart, because the
+			// values that do carry decimals ("1 234,56") take the
+			// branch above and stay correct.
+			if lastDigitIndex-lastGroupingIndex != 3 {
+				return 0, 0, 0, 0, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
+			}
+			thousandsSep = lastGroupingRune
 		}
 	}
 	if lastDigitIndex >= lastNonDigitIndex {

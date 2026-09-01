@@ -2,7 +2,6 @@ package retable
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -24,32 +23,40 @@ func scannerFor(dstType reflect.Type, set any) ScannerFunc {
 }
 
 func TestScanners(t *testing.T) {
-	failing := ScannerFunc(func(reflect.Value, string, Parser) error {
-		return fmt.Errorf("scanner failed")
-	})
+	failing := failingScanner()
 	unsupported := ScannerFunc(func(reflect.Value, string, Parser) error {
 		return errors.ErrUnsupported
 	})
 
-	t.Run("empty chain reports unsupported so SmartAssign continues", func(t *testing.T) {
+	// Every Scanner argument of this package is nil-able, so combining
+	// nothing has to produce the same "no Scanner" that SmartAssign
+	// skips, not a chain that reports every type as unsupported.
+	t.Run("no scanner combines to a nil Scanner", func(t *testing.T) {
+		require.Nil(t, MultiScanner())
+	})
+
+	// The Scanner arguments of this package default to nil, so a chain
+	// composed from them must not have to filter them out first.
+	t.Run("nil scanners are ignored", func(t *testing.T) {
 		var dst int
-		err := Scanners{}.ScanString(reflect.ValueOf(&dst).Elem(), "42", DefaultParser)
-		require.ErrorIs(t, err, errors.ErrUnsupported)
+		chain := MultiScanner(nil, scannerFor(reflect.TypeFor[int](), 7), nil)
+		require.NoError(t, chain.ScanString(reflect.ValueOf(&dst).Elem(), "42", DefaultParser))
+		require.Equal(t, 7, dst)
 	})
 
 	t.Run("unsupported falls through to the next scanner", func(t *testing.T) {
 		var dst int
-		chain := Scanners{unsupported, scannerFor(reflect.TypeFor[int](), 7)}
+		chain := MultiScanner(unsupported, scannerFor(reflect.TypeFor[int](), 7))
 		require.NoError(t, chain.ScanString(reflect.ValueOf(&dst).Elem(), "42", DefaultParser))
 		require.Equal(t, 7, dst)
 	})
 
 	t.Run("the first scanner that handles the type wins", func(t *testing.T) {
 		var dst int
-		chain := Scanners{
+		chain := MultiScanner(
 			scannerFor(reflect.TypeFor[int](), 1),
 			scannerFor(reflect.TypeFor[int](), 2),
-		}
+		)
 		require.NoError(t, chain.ScanString(reflect.ValueOf(&dst).Elem(), "42", DefaultParser))
 		require.Equal(t, 1, dst, "an earlier scanner overrides a later one")
 	})
@@ -58,7 +65,7 @@ func TestScanners(t *testing.T) {
 	// must not be retried by the next scanner with a different result.
 	t.Run("a real error stops the chain", func(t *testing.T) {
 		var dst int
-		chain := Scanners{failing, scannerFor(reflect.TypeFor[int](), 7)}
+		chain := MultiScanner(failing, scannerFor(reflect.TypeFor[int](), 7))
 		err := chain.ScanString(reflect.ValueOf(&dst).Elem(), "42", DefaultParser)
 		require.ErrorContains(t, err, "scanner failed")
 		require.Zero(t, dst)
@@ -71,7 +78,7 @@ func TestScanners(t *testing.T) {
 // empty cell would silently become a 0 that nothing downstream can tell
 // apart from a real 0.
 func TestStrictNilStrings(t *testing.T) {
-	scanner := Scanners{StrictNilStrings}
+	scanner := MultiScanner(StrictNilStrings)
 
 	rejected := []struct {
 		name string
@@ -154,7 +161,7 @@ func TestStrictNilStringsInViewToStructSlice(t *testing.T) {
 		{"a", "1"},
 		{"b", ""},
 	})
-	scanner := Scanners{StrictNilStrings}
+	scanner := MultiScanner(StrictNilStrings)
 
 	type RequiredAmount struct {
 		Name   string
@@ -180,7 +187,7 @@ func TestStrictNilStringsInViewToStructSlice(t *testing.T) {
 // Rejecting "" but silently turning "NULL" into a 0 would defeat the
 // purpose of the Scanner.
 func TestStrictNilStringsUsesParserIsNil(t *testing.T) {
-	scanner := Scanners{StrictNilStrings}
+	scanner := MultiScanner(StrictNilStrings)
 
 	for _, str := range NewStringParser().NilStrings {
 		t.Run("rejects "+str+" for int", func(t *testing.T) {

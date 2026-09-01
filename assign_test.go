@@ -3,6 +3,7 @@ package retable
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -225,13 +226,46 @@ func TestSmartAssign(t *testing.T) {
 			src:     reflect.ValueOf("NULL"),
 			wantDst: pointerTo("NULL"),
 		},
-		// A parser without NilStrings makes every string a value again
+		// An explicitly empty NilStrings makes every string a value
+		// again. It has to be empty and non-nil: a nil field falls back
+		// to the defaults so that a partially built StringParser still
+		// parses, see StringParser.nilStrings.
 		{
 			name:    "NULL string to int without nil strings",
 			dst:     assignableValue[int](),
 			src:     reflect.ValueOf("NULL"),
-			parser:  &StringParser{},
+			parser:  &StringParser{NilStrings: []string{}},
 			wantErr: true,
+		},
+		// The zero value of StringParser uses the defaults for every
+		// field it does not set, so a config that only sets TimeFormats
+		// does not silently stop parsing numbers and booleans.
+		{
+			name:    "NULL string to int with a partially set parser",
+			dst:     assignableValue[int](),
+			src:     reflect.ValueOf("NULL"),
+			parser:  &StringParser{TimeFormats: []string{"2006-01-02"}},
+			wantDst: int(0),
+		},
+		{
+			name:    "true string to bool with a partially set parser",
+			dst:     assignableValue[bool](),
+			src:     reflect.ValueOf("true"),
+			parser:  &StringParser{TimeFormats: []string{"2006-01-02"}},
+			wantDst: true,
+		},
+		// PostgreSQL writes booleans as t and f in CSV exports
+		{
+			name:    "t string to bool",
+			dst:     assignableValue[bool](),
+			src:     reflect.ValueOf("t"),
+			wantDst: true,
+		},
+		{
+			name:    "f string to bool",
+			dst:     assignableValue[bool](),
+			src:     reflect.ValueOf("f"),
+			wantDst: false,
 		},
 
 		// reflect.Value.Convert applies Go's string(rune) conversion
@@ -603,4 +637,108 @@ func TestSmartAssignUsesPassedParser(t *testing.T) {
 	// TimeFormats replaces the default formats instead of extending them
 	err = SmartAssign(reflect.ValueOf(&tm).Elem(), reflect.ValueOf("2024-03-15"), nil, parser, nil)
 	require.ErrorIs(t, err, errors.ErrUnsupported)
+}
+
+// TestSmartAssignNumericOverflow covers that a value which does not fit
+// the destination is reported instead of assigned as a different
+// number. The Parser always parses 64 bits and reflect.Value.SetInt,
+// SetUint and SetFloat truncate silently to the destination width, so
+// without the check a cell reading 300 became 44 in an int8 column with
+// no error anywhere, which is the shape that corrupts data quietly.
+func TestSmartAssignNumericOverflow(t *testing.T) {
+	overflowing := []struct {
+		name string
+		dst  any
+		src  string
+	}{
+		{name: "int8", dst: new(int8), src: "300"},
+		{name: "negative int8", dst: new(int8), src: "-300"},
+		{name: "int16", dst: new(int16), src: "40000"},
+		{name: "int32", dst: new(int32), src: "3000000000"},
+		{name: "uint8", dst: new(uint8), src: "256"},
+		{name: "uint16", dst: new(uint16), src: "70000"},
+		{name: "float32", dst: new(float32), src: "1e39"},
+	}
+	for _, tt := range overflowing {
+		t.Run(tt.name+" overflow is an error", func(t *testing.T) {
+			dst := reflect.ValueOf(tt.dst).Elem()
+			err := SmartAssign(dst, reflect.ValueOf(tt.src), nil, nil, nil)
+			require.ErrorContains(t, err, "overflows "+dst.Type().String())
+			require.True(t, dst.IsZero(), "the destination must not be written when the value does not fit")
+		})
+	}
+
+	fitting := []struct {
+		name string
+		dst  any
+		src  string
+		want any
+	}{
+		{name: "int8 max", dst: new(int8), src: "127", want: int8(127)},
+		{name: "int8 min", dst: new(int8), src: "-128", want: int8(-128)},
+		{name: "uint8 max", dst: new(uint8), src: "255", want: uint8(255)},
+		{name: "int64 max", dst: new(int64), src: "9223372036854775807", want: int64(math.MaxInt64)},
+		{name: "float32", dst: new(float32), src: "3.14", want: float32(3.14)},
+		{name: "float64 large", dst: new(float64), src: "1e300", want: 1e300},
+		// An infinity that the source really said is representable and
+		// must stay assignable, unlike a finite value that becomes one.
+		{name: "float32 infinity", dst: new(float32), src: "Inf", want: float32(math.Inf(1))},
+	}
+	for _, tt := range fitting {
+		t.Run(tt.name+" fits", func(t *testing.T) {
+			dst := reflect.ValueOf(tt.dst).Elem()
+			require.NoError(t, SmartAssign(dst, reflect.ValueOf(tt.src), nil, nil, nil))
+			require.Equal(t, tt.want, dst.Interface())
+		})
+	}
+}
+
+// TestStringParserZeroValueUsesDefaults covers that a StringParser which
+// only sets some of its fields still parses the rest. Every SmartAssign
+// string conversion goes through the Parser, so a parser built from a
+// configuration file that only names TimeFormats used to silently stop
+// parsing numbers and booleans for the whole file.
+func TestStringParserZeroValueUsesDefaults(t *testing.T) {
+	partial := &StringParser{TimeFormats: []string{"2006-01-02"}}
+
+	b, err := partial.ParseBool("true")
+	require.NoError(t, err)
+	require.True(t, b)
+	require.True(t, partial.IsNil(""), "an empty cell must still mean no value")
+	require.True(t, partial.IsNil("NULL"))
+
+	// The field it did set is still the one that is used
+	_, err = partial.ParseTime("2024-03-15T14:30:00Z")
+	require.Error(t, err, "TimeFormats was set explicitly, so RFC3339 is not accepted")
+	_, err = partial.ParseTime("2024-03-15")
+	require.NoError(t, err)
+
+	// An explicitly empty slice means "accept nothing", unlike nil
+	empty := &StringParser{TrueStrings: []string{}, FalseStrings: []string{}}
+	_, err = empty.ParseBool("true")
+	require.Error(t, err)
+}
+
+// TestNewStringParserDoesNotShareSlices covers that two parsers, and the
+// shared DefaultParser, do not alias one backing array. NewStringParser
+// used to assign the package level timeFormats by reference, so writing
+// through a parser a caller believed it owned reconfigured every other
+// parser in the process, defeating the isolation that ViewToStructSlice
+// documents for a Scanner that reconfigures its Parser.
+func TestNewStringParserDoesNotShareSlices(t *testing.T) {
+	a := NewStringParser()
+	b := NewStringParser()
+
+	a.TimeFormats[0] = "not a format"
+	a.TrueStrings[0] = "not true"
+	a.NilStrings[0] = "not nil"
+
+	require.NotEqual(t, "not a format", b.TimeFormats[0])
+	require.NotEqual(t, "not true", b.TrueStrings[0])
+	require.NotEqual(t, "not nil", b.NilStrings[0])
+
+	def, ok := DefaultParser.(*StringParser)
+	require.True(t, ok)
+	require.NotEqual(t, "not a format", def.TimeFormats[0])
+	require.NotEqual(t, "not a format", timeFormats[0], "the package level defaults must stay untouched")
 }

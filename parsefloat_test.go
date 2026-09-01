@@ -144,3 +144,73 @@ func Test_parseFloat_invalid(t *testing.T) {
 		require.Error(t, err, "parseFloat(%#v)", s)
 	}
 }
+
+// Test_parseFloat_singleGroupSeparator is a regression test for a
+// single space or apostrophe group being read as a decimal separator.
+//
+// The rule that a lone separator is the decimal separator resolves a
+// real ambiguity for "." and ",", where "1,234" can be either reading.
+// It must not apply to " " and "'": no locale writes a decimal fraction
+// after them, so "1 234" can only be 1234. Parsing it as 1.234 was
+// silent and never an error, and it hit exactly the values that carry
+// no decimals, so a currency column ended up mixing amounts a factor of
+// 1000 apart while the amounts with decimals stayed correct.
+//
+// csvtable makes this reachable for ordinary files: sanitizeUTF8
+// rewrites the non-breaking space U+00A0 that Excel, SAP and French or
+// Nordic exports use for grouping into a plain ASCII space before the
+// value is parsed.
+func Test_parseFloat_singleGroupSeparator(t *testing.T) {
+	grouped := []struct {
+		str  string
+		want float64
+	}{
+		{str: "1 234", want: 1234},
+		{str: "8 500", want: 8500},
+		{str: "123 456", want: 123456},
+		{str: "1'234", want: 1234},
+		{str: "12'000", want: 12000},
+		// More than one group already parsed correctly and must stay so
+		{str: "1 234 567", want: 1234567},
+		{str: "1'234'567", want: 1234567},
+		// A decimal separator after the group is unaffected
+		{str: "1 234,56", want: 1234.56},
+		{str: "1'234.56", want: 1234.56},
+	}
+	for _, tt := range grouped {
+		t.Run(tt.str, func(t *testing.T) {
+			got, thousandsSep, decimalSep, _, err := parseFloatDetails(tt.str)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+			if decimalSep == 0 {
+				require.NotEqual(t, rune(0), thousandsSep, "the separator must be reported as the thousands separator")
+			}
+		})
+	}
+
+	// A space or apostrophe group that is not 3 digits long is not a
+	// grouping at all, and must not silently become a fraction.
+	for _, str := range []string{"1 23", "1 2345", "1'23", "1'2345", "1 2"} {
+		t.Run("invalid group "+str, func(t *testing.T) {
+			_, err := parseFloat(str)
+			require.Error(t, err, "parseFloat(%q)", str)
+		})
+	}
+
+	// The ambiguity that does exist is still resolved as before: a lone
+	// dot or comma stays the decimal separator, because both readings
+	// are real and the decimal one loses no digits when it guesses wrong.
+	for _, tt := range []struct {
+		str  string
+		want float64
+	}{
+		{str: "1.234", want: 1.234},
+		{str: "1,234", want: 1.234},
+	} {
+		t.Run("unchanged "+tt.str, func(t *testing.T) {
+			got, err := parseFloat(tt.str)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

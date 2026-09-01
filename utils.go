@@ -136,10 +136,8 @@ func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue ref
 		case field.Anonymous:
 			fieldIndex = assignIndexedStructFieldReflectValues(vals, structValue.Field(i), indices, fieldIndex)
 		case token.IsExported(field.Name):
-			if fieldIndex < len(indices) {
-				if index := indices[fieldIndex]; index >= 0 {
-					vals[index] = structValue.Field(i)
-				}
+			if fieldIndex < len(indices) && indices[fieldIndex] >= 0 {
+				vals[indices[fieldIndex]] = structValue.Field(i)
 			}
 			fieldIndex++
 		}

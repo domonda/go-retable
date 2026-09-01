@@ -88,10 +88,10 @@ func (f ScannerFunc) ScanString(dest reflect.Value, str string, parser Parser) e
 	return f(dest, str, parser)
 }
 
-// Scanners calls every Scanner in order until one of them handles the
-// destination type, which is the chain the Scanner documentation refers
-// to when it asks unsupported types to be reported as
-// errors.ErrUnsupported.
+// MultiScanner returns a Scanner that calls every passed Scanner in
+// order until one of them handles the destination type, which is the
+// chain the Scanner documentation refers to when it asks unsupported
+// types to be reported as errors.ErrUnsupported.
 //
 // The first Scanner that does not report errors.ErrUnsupported decides
 // the result, so an earlier Scanner overrides a later one, and a real
@@ -99,15 +99,31 @@ func (f ScannerFunc) ScanString(dest reflect.Value, str string, parser Parser) e
 // Scanner. If no Scanner handles the type, errors.ErrUnsupported is
 // returned so that SmartAssign continues with its own conversions.
 //
+// Nil Scanners are ignored, like TryFormattersOrSprint ignores nil
+// Formatters, because the Scanner arguments of this package are nil by
+// default and are meant to be composed as they are. Passing none at all
+// returns a nil Scanner, which those arguments accept as "no Scanner".
+//
 // Example:
 //
-//	scanner := retable.Scanners{retable.StrictNilStrings, myScanner}
+//	scanner := retable.MultiScanner(retable.StrictNilStrings, myScanner)
 //	rows, err := retable.ViewToStructSlice[Row](view, nil, scanner, nil, nil, nil)
-type Scanners []Scanner
+func MultiScanner(scanners ...Scanner) Scanner {
+	if len(scanners) == 0 {
+		return nil
+	}
+	return multiScanner(scanners)
+}
+
+// multiScanner is the Scanner chain returned by MultiScanner.
+type multiScanner []Scanner
 
 // ScanString implements the Scanner interface.
-func (s Scanners) ScanString(dest reflect.Value, str string, parser Parser) error {
+func (s multiScanner) ScanString(dest reflect.Value, str string, parser Parser) error {
 	for _, scanner := range s {
+		if scanner == nil {
+			continue
+		}
 		err := scanner.ScanString(dest, str, parser)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return err // nil or a real parsing error
@@ -134,9 +150,9 @@ func (s Scanners) ScanString(dest reflect.Value, str string, parser Parser) erro
 // which assigns nil for an empty string, so the absence stays visible
 // in the parsed data and the type states which columns are optional.
 //
-// Combine it with an own Scanner using Scanners:
+// Combine it with an own Scanner using MultiScanner:
 //
-//	scanner := retable.Scanners{retable.StrictNilStrings, myScanner}
+//	scanner := retable.MultiScanner(retable.StrictNilStrings, myScanner)
 var StrictNilStrings ScannerFunc = func(dest reflect.Value, str string, parser Parser) error {
 	if !parser.IsNil(str) || dest.Kind() == reflect.Pointer || !zeroValueForNilString(dest.Type()) {
 		return errors.ErrUnsupported

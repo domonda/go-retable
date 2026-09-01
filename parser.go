@@ -102,11 +102,13 @@ type Parser interface {
 //	t, _ := parser.ParseTime("03/15/2024") // uses custom format
 type StringParser struct {
 	// TrueStrings lists all strings that should be parsed as boolean true.
-	// Default includes: "true", "True", "TRUE", "yes", "Yes", "YES", "1"
+	// Default includes: "true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"
+	// A nil slice uses the default, an empty non-nil slice accepts nothing.
 	TrueStrings []string `json:"trueStrings"`
 
 	// FalseStrings lists all strings that should be parsed as boolean false.
-	// Default includes: "false", "False", "FALSE", "no", "No", "NO", "0"
+	// Default includes: "false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"
+	// A nil slice uses the default, an empty non-nil slice accepts nothing.
 	FalseStrings []string `json:"falseStrings"`
 
 	// NilStrings lists all strings that represent nil/null values.
@@ -133,8 +135,8 @@ var DefaultParser Parser = NewStringParser()
 // NewStringParser creates a new StringParser with sensible default configurations.
 //
 // Default configurations:
-//   - TrueStrings: "true", "True", "TRUE", "yes", "Yes", "YES", "1"
-//   - FalseStrings: "false", "False", "FALSE", "no", "No", "NO", "0"
+//   - TrueStrings: "true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"
+//   - FalseStrings: "false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"
 //   - NilStrings: "", "nil", "<nil>", "null", "NULL"
 //   - TimeFormats: Comprehensive list of common formats (RFC3339, ISO, etc.)
 //
@@ -153,12 +155,60 @@ var DefaultParser Parser = NewStringParser()
 //	parser.TrueStrings = append(parser.TrueStrings, "ja", "oui", "si")
 func NewStringParser() *StringParser {
 	c := &StringParser{
-		TrueStrings:  []string{"true", "True", "TRUE", "yes", "Yes", "YES", "1"},
-		FalseStrings: []string{"false", "False", "FALSE", "no", "No", "NO", "0"},
-		NilStrings:   []string{"", "nil", "<nil>", "null", "NULL"},
-		TimeFormats:  timeFormats,
+		TrueStrings:  slices.Clone(defaultTrueStrings),
+		FalseStrings: slices.Clone(defaultFalseStrings),
+		NilStrings:   slices.Clone(defaultNilStrings),
+		TimeFormats:  slices.Clone(timeFormats),
 	}
 	return c
+}
+
+// Default values for the StringParser fields.
+//
+// They are also used for a field that was left nil, so that a
+// StringParser built by a struct literal or unmarshalled from a
+// configuration file that only sets some of the fields still parses
+// the rest, instead of silently accepting nothing. Set a field to an
+// empty non-nil slice to really accept nothing.
+//
+// The boolean strings include the single letter "t" and "f" that
+// strconv.ParseBool accepts, because that is what PostgreSQL writes
+// for booleans in CSV exports.
+var (
+	defaultTrueStrings  = []string{"true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"}
+	defaultFalseStrings = []string{"false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"}
+	defaultNilStrings   = []string{"", "nil", "<nil>", "null", "NULL"}
+)
+
+// trueStrings, falseStrings, nilStrings and parseTimeFormats return the
+// configured values, or the package defaults for a field left nil, so
+// that the zero value of StringParser is usable.
+func (p *StringParser) trueStrings() []string {
+	if p.TrueStrings == nil {
+		return defaultTrueStrings
+	}
+	return p.TrueStrings
+}
+
+func (p *StringParser) falseStrings() []string {
+	if p.FalseStrings == nil {
+		return defaultFalseStrings
+	}
+	return p.FalseStrings
+}
+
+func (p *StringParser) nilStrings() []string {
+	if p.NilStrings == nil {
+		return defaultNilStrings
+	}
+	return p.NilStrings
+}
+
+func (p *StringParser) parseTimeFormats() []string {
+	if p.TimeFormats == nil {
+		return timeFormats
+	}
+	return p.TimeFormats
 }
 
 // ParseInt parses a string into a 64-bit signed integer using base 10.
@@ -269,10 +319,10 @@ func (p *StringParser) ParseFloat(str string) (float64, error) {
 //	b, _ := parser.ParseBool("no")    // false, nil
 //	b, err := parser.ParseBool("maybe") // false, error
 func (p *StringParser) ParseBool(str string) (bool, error) {
-	if slices.Contains(p.TrueStrings, str) {
+	if slices.Contains(p.trueStrings(), str) {
 		return true, nil
 	}
-	if slices.Contains(p.FalseStrings, str) {
+	if slices.Contains(p.falseStrings(), str) {
 		return false, nil
 	}
 	return false, fmt.Errorf("cannot parse %q as bool", str)
@@ -303,7 +353,7 @@ func (p *StringParser) ParseBool(str string) (bool, error) {
 //	t, _ := parser.ParseTime("2024-03-15 14:30:00")     // DateTime format
 //	_, err := parser.ParseTime("not a date")            // error
 func (p *StringParser) ParseTime(str string) (time.Time, error) {
-	for _, format := range p.TimeFormats {
+	for _, format := range p.parseTimeFormats() {
 		t, err := time.Parse(format, str)
 		if err == nil {
 			return t, nil
@@ -356,7 +406,7 @@ func (p *StringParser) ParseDuration(str string) (time.Duration, error) {
 //	parser.IsNil("NULL") // true
 //	parser.IsNil("0")    // false, that is a value
 func (p *StringParser) IsNil(str string) bool {
-	return slices.Contains(p.NilStrings, str)
+	return slices.Contains(p.nilStrings(), str)
 }
 
 // ParseTime is a standalone function that parses a time string and returns both the

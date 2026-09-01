@@ -2,14 +2,13 @@ package csvtable
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/binary"
 	"fmt"
-	"slices"
 	"strings"
-	"unicode/utf16"
+	"sync"
 
 	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/encoding/unicode/utf32"
 )
 
@@ -141,10 +140,6 @@ func trimUTF8BOM(b []byte) []byte {
 	return bytes.TrimPrefix(b, []byte(bomUTF8))
 }
 
-func decodeUTF8(b []byte) ([]byte, error) {
-	return bomUTF8.decode(b)
-}
-
 func decodeUTF16(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	if len(b) == 0 {
 		return nil, nil
@@ -152,36 +147,22 @@ func decodeUTF16(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	if len(b)&1 != 0 {
 		return nil, fmt.Errorf("odd length of UTF-16 string: %d", len(b))
 	}
-	// A byte order mark must match the expected byte order.
-	//
-	// byteOrder already says which UTF-16 mark is expected, so match that
-	// one first and only fall back to detection when it is absent. Going
-	// through detection first would misread the valid UTF-16LE sequence
-	// FF FE 00 00, a mark followed by U+0000, as the UTF-32LE mark and
-	// reject it, although the caller resolved that ambiguity already by
-	// passing binary.LittleEndian.
-	expected := bomUTF16LE
+	endian := unicode.LittleEndian
 	if byteOrder == binary.BigEndian {
-		expected = bomUTF16BE
+		endian = unicode.BigEndian
 	}
-	if bytes.HasPrefix(b, []byte(expected)) {
-		b = b[len(expected):]
-	} else if bom, _ := splitBOM(b); bom != noBOM {
-		return nil, fmt.Errorf("expected %s BOM but got %s", expected.name(), bom.name())
-	}
-	u16 := make([]uint16, len(b)/2)
-	for i := range u16 {
-		u16[i] = byteOrder.Uint16(b[i*2:])
-	}
-	var buf bytes.Buffer
-	buf.Grow(len(b))
-	for _, r := range utf16.Decode(u16) {
-		buf.WriteRune(r)
-	}
-	return buf.Bytes(), nil
+	return unicode.UTF16(endian, unicode.IgnoreBOM).NewDecoder().Bytes(b)
 }
 
 func decodeUTF32(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
+	// A truncated code unit is a broken file, not a replacement
+	// character. golang.org/x/text decodes a partial trailing unit to
+	// U+FFFD with a nil error, which sanitizeUTF8 then turns into a
+	// plain space, so the last cell silently changes instead of the
+	// file being rejected. decodeUTF16 rejects an odd length the same way.
+	if len(b)%4 != 0 {
+		return nil, fmt.Errorf("length of UTF-32 string is not a multiple of 4: %d", len(b))
+	}
 	endian := utf32.LittleEndian
 	if byteOrder == binary.BigEndian {
 		endian = utf32.BigEndian
@@ -208,6 +189,21 @@ func decodeUTF32AfterBOM(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 // "UTF-32LE" turned the mark into the first character of the first cell.
 // That was unreachable before the byte order mark detection was fixed,
 // because UTF-32LE data was never detected as UTF-32LE.
+// decodeUTF16Encoding decodes UTF-16 for a named encoding, stripping a
+// leading byte order mark of that encoding.
+//
+// The mark of the named encoding is matched before falling back to
+// detection, so a caller that named UTF-16LE reads the valid sequence
+// FF FE 00 00, a mark followed by U+0000, as UTF-16LE instead of having
+// it rejected as the UTF-32LE mark.
+func decodeUTF16Encoding(b []byte, bom charsetBOM) ([]byte, error) {
+	b, err := trimExpectedBOM(b, bom)
+	if err != nil {
+		return nil, err
+	}
+	return decodeUTF16(b, bom.byteOrder())
+}
+
 func decodeUTF32Encoding(b []byte, bom charsetBOM) ([]byte, error) {
 	b, err := trimExpectedBOM(b, bom)
 	if err != nil {
@@ -217,9 +213,9 @@ func decodeUTF32Encoding(b []byte, bom charsetBOM) ([]byte, error) {
 }
 
 var utfEncodings = map[string]*charsetEncoding{
-	"UTF-8":    {name: "UTF-8", decode: decodeUTF8},
-	"UTF-16LE": {name: "UTF-16LE", decode: func(b []byte) ([]byte, error) { return decodeUTF16(b, binary.LittleEndian) }},
-	"UTF-16BE": {name: "UTF-16BE", decode: func(b []byte) ([]byte, error) { return decodeUTF16(b, binary.BigEndian) }},
+	"UTF-8":    {name: "UTF-8", decode: bomUTF8.decode},
+	"UTF-16LE": {name: "UTF-16LE", decode: func(b []byte) ([]byte, error) { return decodeUTF16Encoding(b, bomUTF16LE) }},
+	"UTF-16BE": {name: "UTF-16BE", decode: func(b []byte) ([]byte, error) { return decodeUTF16Encoding(b, bomUTF16BE) }},
 	"UTF-32LE": {name: "UTF-32LE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32LE) }},
 	"UTF-32BE": {name: "UTF-32BE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32BE) }},
 }
@@ -232,6 +228,20 @@ var sharedEncodings = map[string]*charmap.Charmap{
 	"ISO-8859-8E": charmap.ISO8859_8,
 	"ISO-8859-8I": charmap.ISO8859_8,
 }
+
+// charmapsByUpperName indexes the display names of
+// golang.org/x/text/encoding/charmap by their upper case spelling,
+// so that getCharsetEncoding does not have to upper case every one
+// of them again on every lookup.
+var charmapsByUpperName = sync.OnceValue(func() map[string]*charmap.Charmap {
+	m := make(map[string]*charmap.Charmap, len(charmap.All))
+	for _, e := range charmap.All {
+		if cm, ok := e.(*charmap.Charmap); ok {
+			m[strings.ToUpper(cm.String())] = cm
+		}
+	}
+	return m
+})
 
 func charmapEncoding(name string, cm *charmap.Charmap) *charsetEncoding {
 	return &charsetEncoding{
@@ -254,12 +264,8 @@ func getCharsetEncoding(name string) (*charsetEncoding, error) {
 	if enc, ok := utfEncodings[nameUpper]; ok {
 		return enc, nil
 	}
-	for _, e := range charmap.All {
-		if cm, ok := e.(*charmap.Charmap); ok {
-			if strings.ToUpper(cm.String()) == nameUpper {
-				return charmapEncoding(cm.String(), cm), nil
-			}
-		}
+	if cm, ok := charmapsByUpperName()[nameUpper]; ok {
+		return charmapEncoding(cm.String(), cm), nil
 	}
 	if cm, ok := sharedEncodings[nameUpper]; ok {
 		return charmapEncoding(nameUpper, cm), nil
@@ -281,9 +287,13 @@ func autoDecode(data []byte, encodings []*charsetEncoding, keyWords []string) (t
 		return nil, "", nil
 	}
 
-	bom, rest := splitBOM(data)
+	// Pass the whole data, not the remainder: bom.decode removes the
+	// mark itself, so splitting it off here as well would consume two
+	// consecutive marks while a named encoding consumes only one, and
+	// the Format reported here would not reproduce these cells.
+	bom, _ := splitBOM(data)
 	if bom != noBOM {
-		text, err = bom.decode(rest)
+		text, err = bom.decode(data)
 		if err != nil {
 			return nil, "", err
 		}
@@ -295,32 +305,27 @@ func autoDecode(data []byte, encodings []*charsetEncoding, keyWords []string) (t
 		keyWordsBytes[i] = []byte(keyWord)
 	}
 
-	type candidate struct {
-		encoding string
-		decoded  []byte
-		score    int
-	}
-	var candidates []candidate
-
+	// Only the best scoring decoded text is kept, so that the decoded
+	// copies of the whole input made for the other encodings can be
+	// collected right away. The comparison is a strict greater than,
+	// which keeps the first passed encoding of equally scoring ones.
+	var bestScore int
 	for _, enc := range encodings {
-		c := candidate{encoding: enc.name}
-		c.decoded, err = enc.decode(data)
-		if err != nil {
+		decoded, decodeErr := enc.decode(data)
+		if decodeErr != nil {
 			continue
 		}
+		score := 0
 		for _, keyWord := range keyWordsBytes {
-			c.score += bytes.Count(c.decoded, keyWord)
+			score += bytes.Count(decoded, keyWord)
 		}
-		if c.score > 0 {
-			candidates = append(candidates, c)
+		if score > bestScore {
+			text, encName, bestScore = decoded, enc.name, score
 		}
 	}
 
-	if len(candidates) == 0 {
+	if bestScore == 0 {
 		return data, "", nil
 	}
-
-	slices.SortStableFunc(candidates, func(a, b candidate) int { return cmp.Compare(b.score, a.score) })
-
-	return candidates[0].decoded, candidates[0].encoding, nil
+	return text, encName, nil
 }
