@@ -188,6 +188,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `Scanners`, a `Scanner` that calls a slice of `Scanner`s in order until one of
+  them handles the destination type. The `Scanner` documentation already asked
+  unsupported types to be reported as `errors.ErrUnsupported` "allowing scanner
+  chains", but nothing composed them and `SmartAssign` and `ViewToStructSlice`
+  take a single `Scanner`, so a caller had to choose between an own `Scanner`
+  and any provided one. The first `Scanner` that does not report
+  `errors.ErrUnsupported` decides, so an earlier one overrides a later one and
+  a real parsing error stops the chain instead of being retried.
+
+- `StrictEmptyStrings`, a `Scanner` that reports an error when an empty source
+  string is assigned to a type that cannot represent the absence of a value,
+  which are the numeric types, `bool`, `time.Time` and `time.Duration`. By
+  default `SmartAssign` assigns the zero value to those, because an empty cell
+  usually means "no value" and reading one must not fail a whole file. The cost
+  is that the parsed data cannot tell an empty cell from a cell containing `0`,
+  and that a struct field wired to a column of the wrong type keeps parsing
+  every empty cell and only fails on the first non-empty one.
+
+  Pointer destinations are not rejected, they keep the `nil` that `SmartAssign`
+  already assigns for an empty string. So the fix for an error is to declare
+  the field as a pointer, which states in the type which columns are optional
+  and keeps an empty cell distinguishable from a parsed zero:
+
+  ```go
+  scanner := retable.Scanners{retable.StrictEmptyStrings, myScanner}
+  rows, err := retable.ViewToStructSlice[Row](view, nil, scanner, nil, nil, nil)
+  ```
+
 - `csvtable.DetectTableBounds` and `csvtable.TableBounds` locate the actual table
   within rows that also contain header and trailer lines, which exports put around
   it as a title, a reporting period or a total. The table width is the column count
