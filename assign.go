@@ -1,12 +1,12 @@
 package retable
 
 import (
+	"cmp"
 	"encoding"
 	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
-	"time"
 )
 
 // SmartAssign performs intelligent type conversion when assigning src to dst.
@@ -50,8 +50,8 @@ import (
 //     to get a string representation for further conversion.
 //
 //  9. Time parsing: If src is a string and dst is time.Time or *time.Time,
-//     ParseTime is used to convert the string to a time value.
-//     If dst is time.Duration or *time.Duration, time.ParseDuration is used,
+//     parser.ParseTime is used to convert the string to a time value.
+//     If dst is time.Duration or *time.Duration, parser.ParseDuration is used,
 //     falling back to the integer parsing below for a plain number
 //     of nanoseconds without a unit.
 //
@@ -65,11 +65,11 @@ import (
 //     - bool to numeric types: true becomes 1, false becomes 0
 //     - bool to string: "true" or "false"
 //     - numeric types to bool: non-zero becomes true, zero becomes false
-//     - string to bool: parsed using strconv.ParseBool
+//     - string to bool: parsed using parser.ParseBool
 //
 //  13. String to numeric conversions:
-//     - String to int/uint: parsed using strconv.ParseInt/ParseUint
-//     - String to float: parsed using strconv.ParseFloat
+//     - String to int/uint: parsed using parser.ParseInt/ParseUint
+//     - String to float: parsed using parser.ParseFloat
 //
 //  14. Fallback string conversion: Any type can be converted to string
 //     using fmt.Sprint as a last resort.
@@ -82,10 +82,11 @@ import (
 //   - dst: The destination reflect.Value to assign to. Must be valid and settable.
 //   - src: The source reflect.Value to assign from. Must be valid.
 //   - dstScanner: Optional Scanner for custom string-to-type conversions (can be nil).
-//   - parser: Parser passed to dstScanner.ScanString for the primitive
-//     conversions. Only used together with dstScanner and can be nil,
-//     in which case a default StringParser is allocated per call.
-//     Pass one explicitly to configure parsing or to avoid that allocation.
+//   - parser: Parser used for all string conversions and passed to
+//     dstScanner.ScanString. Can be nil, in which case the shared
+//     DefaultParser is used. Pass one explicitly to configure parsing,
+//     or when a Scanner reconfigures the Parser it receives, because
+//     DefaultParser must not be modified.
 //   - srcFormatter: Optional Formatter for custom type-to-string conversions (can be nil).
 //
 // Returns:
@@ -128,6 +129,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	if !src.IsValid() {
 		return fmt.Errorf("src value is invalid")
 	}
+	parser = cmp.Or(parser, DefaultParser)
 	var (
 		srcType = src.Type()
 		srcKind = srcType.Kind()
@@ -199,9 +201,6 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// formats a value into a string destination, dstScanner
 	// parses a string source into any other destination.
 	if srcKind == reflect.String && dstScanner != nil {
-		if parser == nil {
-			parser = NewStringParser()
-		}
 		err := dstScanner.ScanString(dst, src.String(), parser)
 		if err == nil {
 			return nil
@@ -253,7 +252,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 
 	// Try converting string to time.Time
 	if srcKind == reflect.String && (dstType == typeOfTime || dstKind == reflect.Pointer && dstType.Elem() == typeOfTime) {
-		if t, _, err := ParseTime(src.String()); err == nil {
+		if t, err := parser.ParseTime(src.String()); err == nil {
 			if dstType == typeOfTime {
 				dst.Set(reflect.ValueOf(t))
 			} else {
@@ -267,7 +266,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// Without this the underlying int64 kind of time.Duration
 	// would only accept a plain number of nanoseconds.
 	if srcKind == reflect.String && (dstType == typeOfDuration || dstKind == reflect.Pointer && dstType.Elem() == typeOfDuration) {
-		if d, err := time.ParseDuration(src.String()); err == nil {
+		if d, err := parser.ParseDuration(src.String()); err == nil {
 			if dstType == typeOfDuration {
 				dst.Set(reflect.ValueOf(d))
 			} else {
@@ -339,7 +338,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 			dst.SetBool(src.Float() != 0)
 			return nil
 		case reflect.String:
-			b, err := strconv.ParseBool(src.String())
+			b, err := parser.ParseBool(src.String())
 			if err == nil {
 				dst.SetBool(b)
 				return nil
@@ -349,7 +348,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// Convert string to integers
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if srcKind == reflect.String {
-			if i, e := strconv.ParseInt(src.String(), 10, 64); e == nil {
+			if i, e := parser.ParseInt(src.String()); e == nil {
 				dst.SetInt(i)
 				return nil
 			}
@@ -358,7 +357,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// Convert string to unsigned integers
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		if srcKind == reflect.String {
-			if i, e := strconv.ParseUint(src.String(), 10, 64); e == nil {
+			if i, e := parser.ParseUint(src.String()); e == nil {
 				dst.SetUint(i)
 				return nil
 			}
@@ -366,7 +365,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 
 	case reflect.Float32, reflect.Float64:
 		if srcKind == reflect.String {
-			if f, e := strconv.ParseFloat(src.String(), 64); e == nil {
+			if f, e := parser.ParseFloat(src.String()); e == nil {
 				dst.SetFloat(f)
 				return nil
 			}
