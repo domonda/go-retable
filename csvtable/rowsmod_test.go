@@ -1,6 +1,8 @@
 package csvtable
 
 import (
+	"github.com/stretchr/testify/require"
+
 	"fmt"
 	"testing"
 
@@ -174,4 +176,62 @@ func TestReplaceNewlineWithSpacefunc(t *testing.T) {
 	rows := [][]string{{"unix\nnewline", "windows\r\nnewline"}}
 	ReplaceNewlineWithSpacefunc(rows)
 	assert.Equal(t, [][]string{{"unix newline", "windows newline"}}, rows)
+}
+
+// TestSetEmptyRowsNil covers the exported wrapper, which had no test.
+// A row whose every field is empty becomes nil so that callers can tell
+// "no data on this line" from "a line of empty strings".
+func TestSetEmptyRowsNil(t *testing.T) {
+	require.Nil(t, SetEmptyRowsNil(nil))
+	require.Nil(t, SetEmptyRowsNil([][]string{}))
+
+	got := SetEmptyRowsNil([][]string{
+		{"a", "b"},
+		{"", ""},
+		{"", "c"},
+		{},
+	})
+	require.Equal(t, [][]string{
+		{"a", "b"},
+		nil,
+		{"", "c"},
+		nil,
+	}, got, "only rows where every field is empty become nil")
+}
+
+// TestTrimSpaceRows covers the exported in-place trimmer, which had no
+// test. It mutates the rows it is given rather than returning new ones.
+func TestTrimSpaceRows(t *testing.T) {
+	rows := [][]string{
+		{"  a  ", "\tb\n"},
+		{"", "   "},
+	}
+	TrimSpace(rows)
+	require.Equal(t, [][]string{
+		{"a", "b"},
+		{"", ""},
+	}, rows)
+
+	require.NotPanics(t, func() { TrimSpace(nil) })
+}
+
+// TestCompactSpacedStringsRows covers the exported wrapper and its
+// modification count. Some exports letter-space their headings, which
+// makes a column title unmatchable until the spacing is removed.
+func TestCompactSpacedStringsRows(t *testing.T) {
+	rows := [][]string{
+		{"N a m e", "Betrag"},
+		{"Erik", "B e t r a g"},
+	}
+	numModified := CompactSpacedStrings(rows)
+	require.Equal(t, 2, numModified)
+	require.Equal(t, [][]string{
+		{"Name", "Betrag"},
+		{"Erik", "Betrag"},
+	}, rows)
+
+	// Nothing to compact leaves the rows and the count alone
+	unchanged := [][]string{{"Name", "Betrag"}}
+	require.Equal(t, 0, CompactSpacedStrings(unchanged))
+	require.Equal(t, [][]string{{"Name", "Betrag"}}, unchanged)
 }

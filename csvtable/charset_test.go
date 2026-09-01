@@ -347,3 +347,129 @@ func TestRepeatedBOMRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// encodeUTF16BE and encodeUTF32BE are hand written like their little
+// endian counterparts, so they stay an oracle independent of the
+// decoder under test.
+func encodeUTF16BE(s string) []byte {
+	var buf bytes.Buffer
+	for _, r := range s {
+		buf.WriteByte(byte(r >> 8))
+		buf.WriteByte(byte(r))
+	}
+	return buf.Bytes()
+}
+
+func encodeUTF32BE(s string) []byte {
+	var buf bytes.Buffer
+	for _, r := range s {
+		buf.WriteByte(byte(r >> 24))
+		buf.WriteByte(byte(r >> 16))
+		buf.WriteByte(byte(r >> 8))
+		buf.WriteByte(byte(r))
+	}
+	return buf.Bytes()
+}
+
+// TestBigEndianEncodings covers the big endian decode paths, which had
+// no test at all: the UTF-16BE and UTF-32BE entries of utfEncodings,
+// the BigEndian branches of charsetBOM.byteOrder and decodeUTF32, and
+// the UTF-32 names of charsetBOM.name were never executed. Wiring one
+// of them to the wrong endianness would have kept the suite green while
+// every big endian file decoded to mojibake.
+func TestBigEndianEncodings(t *testing.T) {
+	csv := "Name;Ort\nMüller;Köln\n"
+	want := [][]string{{"Name", "Ort"}, {"Müller", "Köln"}}
+
+	tests := []struct {
+		name string
+		bom  charsetBOM
+		data []byte
+	}{
+		{name: "UTF-16BE", bom: bomUTF16BE, data: encodeUTF16BE(csv)},
+		{name: "UTF-32BE", bom: bomUTF32BE, data: encodeUTF32BE(csv)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+" detected by its byte order mark", func(t *testing.T) {
+			rows, format, err := ParseDetectFormat(append([]byte(tt.bom), tt.data...), nil)
+			require.NoError(t, err)
+			require.Equal(t, tt.name, format.Encoding)
+			require.Equal(t, want, rows[:2])
+		})
+
+		t.Run(tt.name+" named without a byte order mark", func(t *testing.T) {
+			rows, err := ParseWithFormat(tt.data, &Format{Encoding: tt.name, Separator: ";", Newline: "\n"})
+			require.NoError(t, err)
+			require.Equal(t, want, rows[:2])
+		})
+
+		// Round trip: what detection reports must reparse identically
+		t.Run(tt.name+" round trip", func(t *testing.T) {
+			data := append([]byte(tt.bom), tt.data...)
+			detected, format, err := ParseDetectFormat(data, nil)
+			require.NoError(t, err)
+			same, err := ParseWithFormat(data, format)
+			require.NoError(t, err)
+			require.Equal(t, detected, same)
+		})
+	}
+
+	// The little and big endian decoders must not be interchangeable
+	t.Run("big endian data read as little endian is not the same text", func(t *testing.T) {
+		asLE, err := ParseWithFormat(encodeUTF16BE(csv), &Format{Encoding: "UTF-16LE", Separator: ";", Newline: "\n"})
+		if err == nil {
+			require.NotEqual(t, want, asLE[:min(2, len(asLE))])
+		}
+	})
+}
+
+// TestTrimExpectedBOMRejectsForeignBOM covers the wrong-BOM error
+// branches, which had no failure-path test. A file that carries one
+// mark but is named as another encoding is mislabelled and must be
+// reported rather than decoded into garbage.
+func TestTrimExpectedBOMRejectsForeignBOM(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		encoding string
+	}{
+		{name: "UTF-8 mark named UTF-32LE", data: append([]byte(bomUTF8), "a;b\n"...), encoding: "UTF-32LE"},
+		{name: "UTF-8 mark named UTF-16LE", data: append([]byte(bomUTF8), "a;b\n"...), encoding: "UTF-16LE"},
+		{name: "UTF-16BE mark named UTF-16LE", data: append([]byte(bomUTF16BE), 0x00, 'a'), encoding: "UTF-16LE"},
+		{name: "UTF-16LE mark named UTF-32BE", data: append([]byte(bomUTF16LE), 'a', 0x00), encoding: "UTF-32BE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseWithFormat(tt.data, &Format{Encoding: tt.encoding, Separator: ";", Newline: "\n"})
+			require.ErrorContains(t, err, "wrong BOM in data")
+		})
+	}
+
+	// The direct helper reports the same for a mark it was not given
+	_, err := trimExpectedBOM(append([]byte(bomUTF16BE), 'h'), bomUTF32BE)
+	require.ErrorContains(t, err, "wrong BOM in data")
+
+	// A matching mark is removed without an error
+	rest, err := trimExpectedBOM(append([]byte(bomUTF16LE), 'h', 0x00), bomUTF16LE)
+	require.NoError(t, err)
+	require.Equal(t, []byte{'h', 0x00}, rest)
+}
+
+// TestDecodeEmptyInput covers the empty-input early returns, which were
+// never executed. An empty file is not an error.
+func TestDecodeEmptyInput(t *testing.T) {
+	for _, name := range []string{"UTF-8", "UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "ISO 8859-1"} {
+		t.Run(name, func(t *testing.T) {
+			enc, err := getCharsetEncoding(name)
+			require.NoError(t, err)
+			dec, err := enc.decode(nil)
+			require.NoError(t, err)
+			require.Empty(t, dec)
+		})
+	}
+
+	text, encName, err := autoDecode(nil, nil, nil)
+	require.NoError(t, err)
+	require.Empty(t, text)
+	require.Equal(t, "", encName)
+}
