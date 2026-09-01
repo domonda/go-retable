@@ -342,13 +342,14 @@ import "github.com/domonda/go-retable/csvtable"
 
 // A nil config uses NewDefaultFormatDetectionConfig()
 data, format, err := csvtable.ParseDetectFormat(csvBytes, nil)
-// Detects: UTF-8/UTF-16LE/ISO-8859-1/Windows-1252/Macintosh
+// Detects: UTF-8/UTF-16LE/ISO 8859-1/Windows 1252/Macintosh
 // Detects: , or ; or \t separators
 // Detects: \n or \r\n or \n\r line endings
 
 // Or restrict which encodings are tried and how they are validated
 config := &csvtable.FormatDetectionConfig{
-    Encodings:     []string{"UTF-8", "Windows-1252"},
+    // Encoding names are written with a space, not with a hyphen
+    Encodings:     []string{"UTF-8", "Windows 1252"},
     EncodingTests: []string{"äöü", "€"},
 }
 data, format, err = csvtable.ParseDetectFormat(csvBytes, config)

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-
-	"github.com/domonda/go-types/charset"
 )
 
 // ParseDetectFormat parses CSV data with automatic format detection.
@@ -102,13 +100,13 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 	}
 
 	if format.Encoding == "UTF-8" {
-		csv = charset.TrimBOM(csv, charset.BOMUTF8)
+		csv = trimUTF8BOM(csv)
 	} else {
-		enc, err := charset.GetEncoding(format.Encoding)
+		enc, err := getCharsetEncoding(format.Encoding)
 		if err != nil {
 			return nil, err
 		}
-		csv, err = enc.Decode(csv)
+		csv, err = enc.decode(csv)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +135,7 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 //
 // 1. Encoding Detection:
 //   - Tests each encoding from config.Encodings in order
-//   - Uses charset.AutoDecode with config.EncodingTests to validate
+//   - Uses autoDecode with config.EncodingTests to validate
 //   - Falls back to UTF-8 if no encoding matches
 //   - Sanitizes UTF-8 by replacing invalid characters
 //
@@ -176,16 +174,16 @@ func detectFormatAndSplitLines(csv []byte, config *FormatDetectionConfig) (forma
 	///////////////////////////////////////////////////////////////////////////
 	// Detect charset encoding
 
-	var encodings []charset.Encoding
+	var encodings []*charsetEncoding
 	for _, name := range config.Encodings {
-		enc, err := charset.GetEncoding(name)
+		enc, err := getCharsetEncoding(name)
 		if err != nil {
 			return nil, nil, err
 		}
 		encodings = append(encodings, enc)
 	}
 
-	csv, format.Encoding, err = charset.AutoDecode(csv, encodings, config.EncodingTests)
+	csv, format.Encoding, err = autoDecode(csv, encodings, config.EncodingTests)
 	if err != nil {
 		return nil, nil, err
 	}
