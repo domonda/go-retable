@@ -114,9 +114,8 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 	viewCols := view.Columns()
 	reflectView := AsReflectCellView(view)
 
-	// Allocate the parser needed by dstScanner once per view
-	// instead of letting SmartAssign allocate one per cell.
-	// It is not shared between calls so that a Scanner which
+	// Allocate a parser for dstScanner once per view instead of
+	// using the shared DefaultParser, so that a Scanner which
 	// reconfigures it cannot affect a concurrent conversion.
 	if parser == nil && dstScanner != nil {
 		parser = NewStringParser()

@@ -278,6 +278,29 @@ func TestSmartAssign(t *testing.T) {
 			src:     reflect.ValueOf("true"),
 			wantDst: true,
 		},
+		// A nil Parser uses DefaultParser, whose configurable boolean
+		// strings cover spellings that strconv.ParseBool rejects.
+		{
+			name:    "yes string to bool",
+			dst:     assignableValue[bool](),
+			src:     reflect.ValueOf("yes"),
+			wantDst: true,
+		},
+		// Numbers are parsed by the Parser, so a cell written by a
+		// spreadsheet in a locale that groups thousands is converted
+		// instead of reported as an unsupported assignment.
+		{
+			name:    "dot thousands separator string to float64",
+			dst:     assignableValue[float64](),
+			src:     reflect.ValueOf("1.234,56"),
+			wantDst: float64(1234.56),
+		},
+		{
+			name:    "comma thousands separator string to float64",
+			dst:     assignableValue[float64](),
+			src:     reflect.ValueOf("1,234.56"),
+			wantDst: float64(1234.56),
+		},
 
 		// Converting a slice to a longer array panics in package
 		// reflect, so it has to be reported as an error for the
@@ -499,4 +522,39 @@ func prefixFormatter(prefix string) Formatter {
 func assignableValue[T any]() reflect.Value {
 	ptr := new(T)
 	return reflect.ValueOf(ptr).Elem()
+}
+
+// TestSmartAssignUsesPassedParser ensures the string conversions go
+// through the passed Parser instead of fixed strconv and time functions,
+// which is what makes parsing configurable per call. The parser below
+// configures spellings that the standard library functions reject, and
+// drops the ones they accept, so each case can only pass through it.
+func TestSmartAssignUsesPassedParser(t *testing.T) {
+	parser := &StringParser{
+		TrueStrings:  []string{"ja"},
+		FalseStrings: []string{"nein"},
+		TimeFormats:  []string{"02/01/2006"},
+	}
+
+	var b bool
+	err := SmartAssign(reflect.ValueOf(&b).Elem(), reflect.ValueOf("ja"), nil, parser, nil)
+	require.NoError(t, err)
+	require.True(t, b)
+
+	err = SmartAssign(reflect.ValueOf(&b).Elem(), reflect.ValueOf("nein"), nil, parser, nil)
+	require.NoError(t, err)
+	require.False(t, b)
+
+	// "true" is not configured on this parser, so it must not be parsed
+	err = SmartAssign(reflect.ValueOf(&b).Elem(), reflect.ValueOf("true"), nil, parser, nil)
+	require.ErrorIs(t, err, errors.ErrUnsupported)
+
+	var tm time.Time
+	err = SmartAssign(reflect.ValueOf(&tm).Elem(), reflect.ValueOf("15/03/2024"), nil, parser, nil)
+	require.NoError(t, err)
+	require.Equal(t, time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC), tm)
+
+	// TimeFormats replaces the default formats instead of extending them
+	err = SmartAssign(reflect.ValueOf(&tm).Elem(), reflect.ValueOf("2024-03-15"), nil, parser, nil)
+	require.ErrorIs(t, err, errors.ErrUnsupported)
 }

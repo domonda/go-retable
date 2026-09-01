@@ -115,6 +115,13 @@ type StringParser struct {
 	TimeFormats []string `json:"timeFormats"`
 }
 
+// DefaultParser is used by SmartAssign when no Parser is passed to it.
+//
+// It is shared by all calls, so it must not be modified after
+// initialization and must not be reconfigured by a Scanner.
+// Pass an own Parser to SmartAssign to configure parsing.
+var DefaultParser Parser = NewStringParser()
+
 // NewStringParser creates a new StringParser with sensible default configurations.
 //
 // Default configurations:

@@ -217,6 +217,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   additional `Parser` parameter after `dstScanner`. Pass `nil` to keep the
   previous behavior of using a default `StringParser`.
 
+- `SmartAssign` performs all of its string conversions through the passed
+  `Parser` instead of calling `strconv.ParseBool`, `strconv.ParseInt`,
+  `strconv.ParseUint`, `strconv.ParseFloat`, `ParseTime` and
+  `time.ParseDuration` directly. The `Parser` used to reach only
+  `Scanner.ScanString`, so a caller could configure how a `Scanner` parses but
+  not how `SmartAssign` itself parses, and the two disagreed: `StringParser`
+  recognized `1.234,56` while `SmartAssign` rejected it for the same cell.
+  Integer, unsigned and duration parsing are unchanged because `StringParser`
+  delegates them to the same functions, float parsing gains the locale handling,
+  and time parsing now honors `StringParser.TimeFormats`, which the package-level
+  `ParseTime` ignored. Boolean parsing changes set: it gains `yes` and `no` with
+  their case variants and loses the `t`, `T`, `f` and `F` that
+  `strconv.ParseBool` accepts, because `StringParser.TrueStrings` and
+  `FalseStrings` define the strings now.
+
+- A nil `Parser` passed to `SmartAssign` resolves to the new package-level
+  `DefaultParser` variable instead of allocating a `StringParser` per call.
+  `DefaultParser` is shared by all calls, so it must not be modified after
+  initialization and must not be reconfigured by a `Scanner`.
+  `ViewToStructSlice` keeps allocating a `StringParser` per call when it has a
+  `Scanner` but no `Parser`, so a `Scanner` that reconfigures the `Parser` it
+  receives still cannot affect a concurrent conversion.
+
 - `NewStringsView` widens a header row that is shorter than the widest data row,
   so cells past the end of the header row are reachable through `Cell` and
   `ReflectCell`. Explicitly passed `cols` are never widened, because they state
