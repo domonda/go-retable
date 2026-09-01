@@ -188,9 +188,24 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 //
 //  1. Standard parsing using strconv.ParseFloat (handles "123.45")
 //  2. If that fails, tries handling comma as decimal separator ("123,45" -> "123.45")
-//  3. More strategies could be added for thousand separators, etc.
+//  3. If that fails, tries handling dots and commas as decimal and
+//     thousands separators ("1,234.56" and "1.234,56" -> 1234.56)
 //
 // This flexibility is important for parsing numbers from different locales or user input.
+//
+// The separator handling is a very simplistic heuristic: the last dot or comma
+// is assumed to be the decimal separator and every dot or comma before it is
+// assumed to be a thousands separator that gets removed without any further
+// checking of the grouping size. A string with wrongly sized digit groups is
+// therefore not rejected as invalid, and what it parses into is undefined.
+//
+// Two consequences of the heuristic are worth knowing:
+//   - A lone comma or dot is always the decimal separator, so "1,234" is
+//     parsed as 1.234 and not as 1234. Nothing in the string distinguishes
+//     the two readings, and the decimal one loses no digits when it guesses wrong.
+//   - Repeated separators of only one kind are not handled and return an error,
+//     so "1,234,567" and "1.234.567" fail even though those separators could
+//     only be thousands separators.
 //
 // Parameters:
 //   - str: The string to parse
@@ -201,9 +216,11 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 //
 // Example:
 //
-//	f, _ := parser.ParseFloat("3.14")    // 3.14 (standard)
-//	f, _ := parser.ParseFloat("3,14")    // 3.14 (comma decimal)
-//	f, _ := parser.ParseFloat("-2.5e10") // -2.5e10 (scientific notation)
+//	f, _ := parser.ParseFloat("3.14")     // 3.14 (standard)
+//	f, _ := parser.ParseFloat("3,14")     // 3.14 (comma decimal)
+//	f, _ := parser.ParseFloat("-2.5e10")  // -2.5e10 (scientific notation)
+//	f, _ := parser.ParseFloat("1,234.56") // 1234.56 (comma thousands separator)
+//	f, _ := parser.ParseFloat("1.234,56") // 1234.56 (dot thousands separator)
 func (p *StringParser) ParseFloat(str string) (float64, error) {
 	f, err := strconv.ParseFloat(str, 64)
 	if err != nil {
@@ -217,7 +234,20 @@ func (p *StringParser) ParseFloat(str string) (float64, error) {
 			}
 			return f, nil
 
-			// TODO: add more cases
+		case numComma > 0 && numDot > 0:
+			if strings.LastIndexByte(str, '.') > strings.LastIndexByte(str, ',') {
+				// Ending with a dot, so commas before are thousands separators to be removed
+				str = strings.ReplaceAll(str, ",", "")
+			} else {
+				// Ending with a comma, so dots before are thousands separators to be removed
+				// and the comma is replaced with a dot as decimal separator
+				str = strings.ReplaceAll(strings.ReplaceAll(str, ".", ""), ",", ".")
+			}
+			f, e := strconv.ParseFloat(str, 64)
+			if e != nil {
+				return 0, err // return original error
+			}
+			return f, nil
 		}
 		return 0, err
 	}

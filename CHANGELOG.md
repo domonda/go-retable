@@ -186,6 +186,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `StringsView` implements `ReflectCellView` natively. `AsReflectCellView` now
   returns the view itself instead of allocating a wrapper on every call, and
   `ReflectCell` mirrors `Cell` for sparse rows.
+- `StringParser.ParseFloat` parses thousands separators, so `1,234.56` and
+  `1.234,56` both parse as 1234.56 instead of failing. The last dot or comma is
+  taken as the decimal separator and every one before it as a thousands separator
+  that gets removed. That heuristic is deliberately simplistic: it does not check
+  the grouping size, and it does not cover repeated separators of only one kind,
+  so `1,234,567` and `1.234.567` still fail. A lone comma or dot stays the decimal
+  separator, so `1,234` parses as 1.234 and not as 1234, an ambiguity nothing in
+  the string can resolve. The heuristic and its consequences are documented on the
+  method, along with the first tests for `ParseFloat`, which cover the strategies,
+  the ambiguity and the strings it rejects.
 - Tests for the `exceltable` package, which previously had none: its only test was
   commented out and referenced a fixture file that did not exist. The new tests
   build xlsx workbooks in memory and cover sparse rows, header trimming, empty
