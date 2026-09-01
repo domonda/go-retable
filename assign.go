@@ -18,25 +18,30 @@ import (
 //  1. Null handling: If src implements IsNull() bool and returns true,
 //     dst is set to its zero value.
 //
-//  2. Empty string handling: If src is an empty string, dst is set to its
-//     zero value, because an empty cell of a CSV file or a spreadsheet
-//     means "no value". Destinations that can hold the string itself are
-//     assigned the empty string instead, which are string types, any,
-//     []byte, []rune, and pointers to those.
-//
-//  3. Direct conversion: If src type is convertible to dst type using
+//  2. Direct conversion: If src type is convertible to dst type using
 //     reflect.Value.Convert, the conversion is performed directly.
 //     Integer sources are excluded for string destinations because
 //     reflect.Value.Convert applies Go's string(rune) conversion, which
 //     would yield the character with that code point instead of digits.
 //
-//  4. Nil pointer handling: If src is a nil pointer, dst is set to its zero value.
+//  3. Nil pointer handling: If src is a nil pointer, dst is set to its zero value.
 //
-//  5. Custom formatting: If dst is a string type and srcFormatter is provided,
+//  4. Custom formatting: If dst is a string type and srcFormatter is provided,
 //     srcFormatter.Format is used to convert src to string.
 //
-//  6. Custom scanning: If src is a string type and dstScanner is provided,
-//     dstScanner.ScanString is used to parse src into dst.
+//  5. Custom scanning: If src is a string type and dstScanner is provided,
+//     dstScanner.ScanString is used to parse src into dst, using the
+//     passed parser for the primitive conversions.
+//
+//  6. Empty string handling: If src is an empty string, dst is set to its
+//     zero value, because an empty cell of a CSV file or a spreadsheet
+//     means "no value". This only applies to the destinations that the
+//     strategies below would parse the string into, which are the numeric
+//     kinds, bool, time.Time, and pointers to those. Destinations that can
+//     hold the string itself have already been assigned by the direct
+//     conversion above. Any other destination cannot hold a string of any
+//     content, so an empty one stays a type mismatch and is reported as an
+//     error instead of being silently turned into a zero value.
 //
 //  7. TextMarshaler: If src implements encoding.TextMarshaler, its MarshalText
 //     method is used to get a text representation for further conversion.
@@ -77,6 +82,10 @@ import (
 //   - dst: The destination reflect.Value to assign to. Must be valid and settable.
 //   - src: The source reflect.Value to assign from. Must be valid.
 //   - dstScanner: Optional Scanner for custom string-to-type conversions (can be nil).
+//   - parser: Parser passed to dstScanner.ScanString for the primitive
+//     conversions. Only used together with dstScanner and can be nil,
+//     in which case a default StringParser is allocated per call.
+//     Pass one explicitly to configure parsing or to avoid that allocation.
 //   - srcFormatter: Optional Formatter for custom type-to-string conversions (can be nil).
 //
 // Returns:
@@ -90,14 +99,14 @@ import (
 //	var result int
 //	dst := reflect.ValueOf(&result).Elem()
 //	src := reflect.ValueOf("42")
-//	err := SmartAssign(dst, src, nil, nil)
+//	err := SmartAssign(dst, src, nil, nil, nil)
 //	// result == 42
 //
 //	// Convert bool to string
 //	var str string
 //	dst = reflect.ValueOf(&str).Elem()
 //	src = reflect.ValueOf(true)
-//	err = SmartAssign(dst, src, nil, nil)
+//	err = SmartAssign(dst, src, nil, nil, nil)
 //	// str == "true"
 //
 //	// Convert with custom formatter
@@ -107,9 +116,9 @@ import (
 //	var output string
 //	dst = reflect.ValueOf(&output).Elem()
 //	src = reflect.ValueOf(42)
-//	err = SmartAssign(dst, src, nil, formatter)
+//	err = SmartAssign(dst, src, nil, nil, formatter)
 //	// output == "#42"
-func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Formatter) (err error) {
+func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcFormatter Formatter) (err error) {
 	if !dst.IsValid() {
 		return fmt.Errorf("dst value is invalid")
 	}
@@ -142,32 +151,6 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	if nullable, ok := src.Interface().(interface{ IsNull() bool }); ok && nullable.IsNull() {
 		dst.Set(reflect.Zero(dstType))
 		return nil
-	}
-
-	// Assign the zero value for an empty source string
-	// unless the destination can hold the string itself.
-	// An empty cell of a CSV file or a spreadsheet means
-	// "no value" and must not be an error for a numeric,
-	// boolean or time destination, the same way a null
-	// source assigns the zero value above.
-	// Without this the conversions further down would
-	// fail to parse the empty string and the value would
-	// fall through to the unsupported operation error.
-	// Destinations that can hold the string itself keep
-	// the empty string, so a string, any, []byte, or a
-	// pointer to one of those is assigned "" instead of
-	// the zero value.
-	if srcKind == reflect.String && src.Len() == 0 {
-		dstStringType := dstType
-		if dstKind == reflect.Pointer {
-			// A pointer destination is allocated further down,
-			// so decide based on what it points to.
-			dstStringType = dstType.Elem()
-		}
-		if !srcType.ConvertibleTo(dstStringType) {
-			dst.Set(reflect.Zero(dstType))
-			return nil
-		}
 	}
 
 	// Convert assigns directly if possible.
@@ -216,7 +199,10 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	// formats a value into a string destination, dstScanner
 	// parses a string source into any other destination.
 	if srcKind == reflect.String && dstScanner != nil {
-		err := dstScanner.ScanString(dst, src.String(), defaultParser)
+		if parser == nil {
+			parser = NewStringParser()
+		}
+		err := dstScanner.ScanString(dst, src.String(), parser)
 		if err == nil {
 			return nil
 		}
@@ -226,13 +212,30 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 		// Continue after errors.ErrUnsupported
 	}
 
+	// Assign the zero value for an empty source string.
+	// An empty cell of a CSV file or a spreadsheet means
+	// "no value" and must not be an error for a numeric,
+	// boolean or time destination, the same way a null
+	// source assigns the zero value above.
+	// Without this the conversions further down would
+	// fail to parse the empty string and the value would
+	// fall through to the unsupported operation error.
+	// Destinations that can hold the string itself have
+	// already been assigned by the direct conversion above,
+	// and dstScanner has been asked first so that a custom
+	// scanner can give "" a different meaning.
+	if srcKind == reflect.String && src.Len() == 0 && zeroValueForEmptyString(dstType) {
+		dst.Set(reflect.Zero(dstType))
+		return nil
+	}
+
 	// Try assigning string from MarshalText method
 	if m, ok := src.Interface().(encoding.TextMarshaler); ok {
 		txt, err := m.MarshalText()
 		if err != nil {
 			return err
 		}
-		err = SmartAssign(dst, reflect.ValueOf(string(txt)), dstScanner, srcFormatter)
+		err = SmartAssign(dst, reflect.ValueOf(string(txt)), dstScanner, parser, srcFormatter)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return err // nil or other than errors.ErrUnsupported
 		}
@@ -241,7 +244,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 
 	// Try assigning string from String method
 	if m, ok := src.Interface().(fmt.Stringer); ok {
-		err = SmartAssign(dst, reflect.ValueOf(m.String()), dstScanner, srcFormatter)
+		err = SmartAssign(dst, reflect.ValueOf(m.String()), dstScanner, parser, srcFormatter)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return err // nil or other than errors.ErrUnsupported
 		}
@@ -278,7 +281,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 
 	// Try assigning the dereferenced value
 	if srcKind == reflect.Pointer && !src.IsNil() {
-		err := SmartAssign(dst, src.Elem(), dstScanner, srcFormatter)
+		err := SmartAssign(dst, src.Elem(), dstScanner, parser, srcFormatter)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return err // nil or other than errors.ErrUnsupported
 		}
@@ -379,7 +382,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	// then assign the pointer to the new instance.
 	case reflect.Pointer:
 		newDest := reflect.New(dstType.Elem())
-		err = SmartAssign(newDest.Elem(), src, dstScanner, srcFormatter)
+		err = SmartAssign(newDest.Elem(), src, dstScanner, parser, srcFormatter)
 		if err != nil && !errors.Is(err, errors.ErrUnsupported) {
 			return err
 		}
@@ -394,11 +397,37 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, srcFormatter Format
 	return fmt.Errorf("%w: assigning %s %#v to %s", errors.ErrUnsupported, srcType, src, dstType)
 }
 
-// defaultParser is passed to the dstScanner of SmartAssign
-// which needs a Parser but does not receive one.
-// Shared by all SmartAssign calls to avoid allocating a
-// parser per assigned cell, so a Scanner must only read it.
-var defaultParser = NewStringParser()
+// zeroValueForEmptyString reports whether an empty source string
+// assigns the zero value to a destination of type dstType.
+//
+// Those are the destinations that the parsing strategies of
+// SmartAssign would parse a non-empty string into, which all fail
+// for "", so an empty cell has to mean "no value" for them.
+//
+// Every other destination cannot hold a string of any content,
+// so an empty one is a type mismatch that stays an error instead
+// of being silently turned into a zero value. Reporting it keeps
+// a struct field wired to the wrong column type failing on the
+// first row instead of only on the first row with a non-empty cell.
+//
+// Pointers are followed all the way to the pointed-to type because
+// the pointer allocation strategy of SmartAssign allocates every
+// level, so *string and **string must be treated alike.
+func zeroValueForEmptyString(dstType reflect.Type) bool {
+	for dstType.Kind() == reflect.Pointer {
+		dstType = dstType.Elem()
+	}
+	// time.Time has a struct kind, time.Duration an int64 kind
+	// that is covered by the integer kinds below.
+	if dstType == typeOfTime {
+		return true
+	}
+	switch dstType.Kind() {
+	case reflect.Bool, reflect.Float32, reflect.Float64:
+		return true
+	}
+	return integerKind(dstType.Kind())
+}
 
 // integerKind reports whether kind is one of the
 // signed or unsigned integer kinds.

@@ -16,6 +16,7 @@ func TestSmartAssign(t *testing.T) {
 		dst       reflect.Value
 		src       reflect.Value
 		scanner   Scanner
+		parser    Parser
 		formatter Formatter
 		wantErr   bool
 		wantDst   any
@@ -125,6 +126,66 @@ func TestSmartAssign(t *testing.T) {
 			dst:     assignableValue[[]byte](),
 			src:     reflect.ValueOf(""),
 			wantDst: []byte{},
+		},
+		{
+			// Every pointer level is allocated, so a **string
+			// column is as distinguishable from a missing value
+			// as a *string one instead of collapsing to nil.
+			name:    "empty string to **string",
+			dst:     assignableValue[**string](),
+			src:     reflect.ValueOf(""),
+			wantDst: pointerTo(pointerTo("")),
+		},
+		{
+			name:    "empty string to **int",
+			dst:     assignableValue[**int](),
+			src:     reflect.ValueOf(""),
+			wantDst: (**int)(nil),
+		},
+
+		// A destination that cannot hold a string of any content is
+		// a type mismatch, not an empty cell. Assigning the zero
+		// value would make the error depend on the data: a struct
+		// field wired to the wrong column type would parse every row
+		// with an empty cell and only fail on the first non-empty
+		// one, so a sparse column could hide the mismatch entirely.
+		{
+			name:    "empty string to chan",
+			dst:     assignableValue[chan int](),
+			src:     reflect.ValueOf(""),
+			wantErr: true,
+		},
+		{
+			name:    "empty string to map",
+			dst:     assignableValue[map[string]int](),
+			src:     reflect.ValueOf(""),
+			wantErr: true,
+		},
+		{
+			name:    "empty string to struct",
+			dst:     assignableValue[struct{ X int }](),
+			src:     reflect.ValueOf(""),
+			wantErr: true,
+		},
+		{
+			name:    "empty string to array",
+			dst:     assignableValue[[4]int](),
+			src:     reflect.ValueOf(""),
+			wantErr: true,
+		},
+		{
+			// An interface that a string does not implement,
+			// unlike any, which is assigned the empty string above.
+			name:    "empty string to non-empty interface",
+			dst:     assignableValue[fmt.Stringer](),
+			src:     reflect.ValueOf(""),
+			wantErr: true,
+		},
+		{
+			name:    "empty string to pointer to chan",
+			dst:     assignableValue[*chan int](),
+			src:     reflect.ValueOf(""),
+			wantErr: true,
 		},
 
 		// reflect.Value.Convert applies Go's string(rune) conversion
@@ -293,6 +354,46 @@ func TestSmartAssign(t *testing.T) {
 			scanner: failingScanner(),
 			wantErr: true,
 		},
+		{
+			// The empty string has to reach dstScanner before the
+			// zero value branch, because a custom scanner is the
+			// only way to give an empty cell a different meaning
+			// than the zero value of the destination.
+			name:    "dstScanner handles empty string",
+			dst:     assignableValue[int](),
+			src:     reflect.ValueOf(""),
+			scanner: intScanner(99),
+			wantDst: int(99),
+		},
+		{
+			// A scanner that does not handle the destination still
+			// falls through to the zero value for an empty string.
+			name:    "dstScanner falls through for empty string",
+			dst:     assignableValue[float64](),
+			src:     reflect.ValueOf(""),
+			scanner: intScanner(99),
+			wantDst: float64(0),
+		},
+		{
+			// The parser passed to SmartAssign is the one dstScanner
+			// receives, so parsing stays configurable per call instead
+			// of going through a shared package level default.
+			name:    "parser is passed to dstScanner",
+			dst:     assignableValue[bool](),
+			src:     reflect.ValueOf("ja"),
+			scanner: boolParsingScanner(),
+			parser:  germanBoolParser(),
+			wantDst: true,
+		},
+		{
+			// Without a parser SmartAssign allocates a default
+			// StringParser, which does not know "ja".
+			name:    "default parser is used without a parser",
+			dst:     assignableValue[bool](),
+			src:     reflect.ValueOf("ja"),
+			scanner: boolParsingScanner(),
+			wantErr: true,
+		},
 
 		// srcFormatter formats any source into a string destination,
 		// including the integer sources excluded from the direct
@@ -328,7 +429,7 @@ func TestSmartAssign(t *testing.T) {
 				gotDst = reflect.New(tt.dst.Type()).Elem()
 				gotDst.Set(tt.dst)
 			}
-			err := SmartAssign(gotDst, tt.src, tt.scanner, tt.formatter)
+			err := SmartAssign(gotDst, tt.src, tt.scanner, tt.parser, tt.formatter)
 			require.Equalf(t, tt.wantErr, err != nil, "SmartAssign(%s, %s) error = %#v, wantErr %t", tt.dst, tt.src, err, tt.wantErr)
 			if err != nil {
 				return
@@ -361,6 +462,32 @@ func failingScanner() Scanner {
 	return ScannerFunc(func(dest reflect.Value, str string, parser Parser) error {
 		return errors.New("scanner failed")
 	})
+}
+
+// boolParsingScanner returns a Scanner that parses bool
+// destinations with the Parser it receives, so that the
+// Parser passed to SmartAssign becomes observable.
+func boolParsingScanner() Scanner {
+	return ScannerFunc(func(dest reflect.Value, str string, parser Parser) error {
+		if dest.Kind() != reflect.Bool {
+			return fmt.Errorf("%w: %s", errors.ErrUnsupported, dest.Type())
+		}
+		b, err := parser.ParseBool(str)
+		if err != nil {
+			return err
+		}
+		dest.SetBool(b)
+		return nil
+	})
+}
+
+// germanBoolParser returns a Parser that recognizes
+// German boolean strings instead of the default English ones.
+func germanBoolParser() Parser {
+	p := NewStringParser()
+	p.TrueStrings = []string{"ja"}
+	p.FalseStrings = []string{"nein"}
+	return p
 }
 
 func prefixFormatter(prefix string) Formatter {

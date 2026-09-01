@@ -18,7 +18,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   directly above it, which already assigns the zero value for a null source.
   Destinations that can hold the string itself keep the empty string rather than
   the zero value, which are `string` types, `any`, `[]byte`, `[]rune`, and
-  pointers to those, so a `*string` column still gets a non-nil pointer to `""`.
+  pointers to those at any level, so a `*string` or `**string` column still gets
+  a non-nil pointer to `""`.
+
+  The zero value is only assigned to the destinations that the conversions below
+  would parse the string into, which are the numeric kinds, `bool`, `time.Time`,
+  and pointers to those. A destination that cannot hold a string of any content,
+  such as a `chan`, `map`, `struct`, array, or an interface other than `any`, is
+  a type mismatch rather than an empty cell and still reports an error. Assigning
+  the zero value there would make the error depend on the data: a struct field
+  wired to a column of the wrong type would parse every row with an empty cell
+  and only fail on the first non-empty one, so a sparse column could hide the
+  mismatch entirely.
 
   This surfaced through `exceltable`: short rows used to yield `nil` cells that
   `ViewToStructSlice` skipped, and now correctly yield `""`, which reached
@@ -63,6 +74,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"1h30m"` failed, although the `Parser` interface has had `ParseDuration` all
   along and the README advertised duration parsing. A string without a unit still
   parses as nanoseconds.
+
+- `SmartAssign` and `ViewToStructSlice` take the `Parser` that is passed on to
+  `Scanner.ScanString` as a parameter. It used to be a single `StringParser`
+  shared by every call, whose exported `TrueStrings`, `FalseStrings`,
+  `NilStrings` and `TimeFormats` fields a `Scanner` could reconfigure for all
+  other concurrent conversions, which the documentation of `StringParser` shows
+  how to do. Boolean strings, time formats and number locales are now
+  configurable per call. `ViewToStructSlice` allocates a default `StringParser`
+  once per view when the parameter is nil, so no parser is allocated per cell.
+
+- `SmartAssign` passes an empty source string to `dstScanner` before assigning
+  the zero value. The scanner is the only extension point of `SmartAssign`, so
+  it has to be asked first for a custom `Scanner` to be able to give an empty
+  cell a different meaning than the zero value of the destination.
 
 - `SmartAssign` recovers from panics in package `reflect` again. The deferred
   recover that the comment above it describes was commented out, so the edge cases
@@ -170,6 +195,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   immutability, and for `ViewWithTitle` cell pass-through.
 
 ### Changed
+
+- `SmartAssign`, `ViewToStructSlice` and the `csvtable` read functions take an
+  additional `Parser` parameter after `dstScanner`. Pass `nil` to keep the
+  previous behavior of using a default `StringParser`.
 
 - `NewStringsView` widens a header row that is shorter than the widest data row,
   so cells past the end of the header row are reachable through `Cell` and

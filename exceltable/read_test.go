@@ -112,7 +112,7 @@ func TestReadFirstSheetSparseRows(t *testing.T) {
 	// which would silently bypass the validate func for blank cells.
 	var validated []string
 	_, err = retable.ViewToStructSlice[struct{ Name, Age string }](
-		view, nil, nil, nil,
+		view, nil, nil, nil, nil,
 		func(v reflect.Value) error {
 			validated = append(validated, v.String())
 			return nil
