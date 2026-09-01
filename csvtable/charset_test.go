@@ -2,6 +2,7 @@ package csvtable
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,18 @@ func encodeUTF16LE(s string) []byte {
 	for _, r := range s {
 		buf.WriteByte(byte(r))
 		buf.WriteByte(byte(r >> 8))
+	}
+	return buf.Bytes()
+}
+
+// encodeUTF32LE encodes s as UTF-32LE without a byte order mark.
+func encodeUTF32LE(s string) []byte {
+	var buf bytes.Buffer
+	for _, r := range s {
+		buf.WriteByte(byte(r))
+		buf.WriteByte(byte(r >> 8))
+		buf.WriteByte(byte(r >> 16))
+		buf.WriteByte(byte(r >> 24))
 	}
 	return buf.Bytes()
 }
@@ -163,6 +176,7 @@ func TestParseWithFormatEncodingRoundTrip(t *testing.T) {
 		encodeCharmap(t, charmap.Windows1252, csv+"1.234,56 €\n"),
 		encodeCharmap(t, charmap.Macintosh, csv),
 		append([]byte(bomUTF16LE), encodeUTF16LE(csv)...),
+		append([]byte(bomUTF32LE), encodeUTF32LE(csv)...),
 	}
 	for _, in := range inputs {
 		detectedRows, format, err := ParseDetectFormat(in, nil)
@@ -186,4 +200,92 @@ func TestParseWithFormatUnknownEncoding(t *testing.T) {
 
 	_, err := ParseWithFormat([]byte("a;b\n"), format)
 	require.ErrorContains(t, err, "encoding not found")
+}
+
+// TestSplitBOM covers the detection order. The UTF-16LE mark FF FE is a
+// prefix of the UTF-32LE mark FF FE 00 00, so the longer one has to be
+// tested first or UTF-32LE data is silently decoded as UTF-16LE.
+func TestSplitBOM(t *testing.T) {
+	tests := []struct {
+		name string
+		b    []byte
+		want charsetBOM
+		rest []byte
+	}{
+		{name: "no BOM", b: []byte("hi"), want: noBOM, rest: []byte("hi")},
+		{name: "UTF-8", b: append([]byte(bomUTF8), 'h'), want: bomUTF8, rest: []byte{'h'}},
+		{name: "UTF-16BE", b: []byte{0xFE, 0xFF, 0x00, 'h'}, want: bomUTF16BE, rest: []byte{0x00, 'h'}},
+		{name: "UTF-16LE", b: []byte{0xFF, 0xFE, 'h', 0x00}, want: bomUTF16LE, rest: []byte{'h', 0x00}},
+		{name: "UTF-32BE", b: []byte{0x00, 0x00, 0xFE, 0xFF, 0, 0, 0, 'h'}, want: bomUTF32BE, rest: []byte{0, 0, 0, 'h'}},
+
+		// All 4 bytes of the UTF-32LE mark have to be split off, splitting
+		// only the first 2 would leave a bogus 00 00 before the payload.
+		{name: "UTF-32LE", b: []byte{0xFF, 0xFE, 0x00, 0x00, 'h', 0, 0, 0}, want: bomUTF32LE, rest: []byte{'h', 0, 0, 0}},
+
+		// Only FF FE 00 00 wins over UTF-16LE, FF FE followed by
+		// anything else is still UTF-16LE.
+		{name: "UTF-16LE with 00 in the second byte pair", b: []byte{0xFF, 0xFE, 'h', 0x00, 0x00, 0x01}, want: bomUTF16LE, rest: []byte{'h', 0x00, 0x00, 0x01}},
+		// Too short to be the UTF-32LE mark, so it can only be UTF-16LE
+		{name: "UTF-16LE BOM only", b: []byte{0xFF, 0xFE}, want: bomUTF16LE, rest: []byte{}},
+		{name: "UTF-16LE BOM plus one byte", b: []byte{0xFF, 0xFE, 0x00}, want: bomUTF16LE, rest: []byte{0x00}},
+
+		// Accepted ambiguity: UTF-16LE text starting with U+0000
+		// serializes to the same bytes and is reported as UTF-32LE,
+		// because a leading NUL is not plain text in practice.
+		{name: "UTF-16LE starting with U+0000 reads as UTF-32LE", b: []byte{0xFF, 0xFE, 0x00, 0x00, 'h', 0x00}, want: bomUTF32LE, rest: []byte{'h', 0x00}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bom, rest := splitBOM(tt.b)
+			require.Equal(t, tt.want, bom)
+			require.Equal(t, tt.rest, rest)
+		})
+	}
+}
+
+// TestDecodeKnownEncodingBeatsBOMAmbiguity covers that the ambiguity
+// resolved by splitBOM only applies while guessing. A caller that names
+// the encoding has resolved it already and must not be second-guessed,
+// otherwise asking for the encoding you know turns valid input into an
+// error.
+func TestDecodeKnownEncodingBeatsBOMAmbiguity(t *testing.T) {
+	// FF FE 00 00 is the UTF-32LE mark, but equally a UTF-16LE mark
+	// followed by U+0000
+	ambiguous := []byte{0xFF, 0xFE, 0x00, 0x00, 'h', 0x00}
+
+	utf16, err := decodeUTF16(ambiguous, binary.LittleEndian)
+	require.NoError(t, err)
+	require.Equal(t, []byte("\x00h"), utf16)
+
+	viaBOM, err := bomUTF16LE.decode(ambiguous)
+	require.NoError(t, err)
+	require.Equal(t, []byte("\x00h"), viaBOM)
+
+	// A UTF-16LE mark not followed by 00 00 still decodes normally
+	normal, err := decodeUTF16([]byte{0xFF, 0xFE, 'h', 0, 'i', 0}, binary.LittleEndian)
+	require.NoError(t, err)
+	require.Equal(t, []byte("hi"), normal)
+
+	// A mark of a different encoding is still an error
+	_, err = decodeUTF16([]byte{0xFE, 0xFF, 0x00, 'h'}, binary.LittleEndian)
+	require.ErrorContains(t, err, "expected UTF-16LE BOM but got UTF-16BE")
+}
+
+// TestParseDetectFormatUTF32LEBOM is the user visible effect of the
+// detection order: a UTF-32LE file used to be decoded as UTF-16LE into
+// NUL padded garbage without any error.
+func TestParseDetectFormatUTF32LEBOM(t *testing.T) {
+	csv := "Name;Ort\nMüller;Köln\n"
+	data := append([]byte(bomUTF32LE), encodeUTF32LE(csv)...)
+
+	rows, format, err := ParseDetectFormat(data, nil)
+	require.NoError(t, err)
+	require.Equal(t, "UTF-32LE", format.Encoding)
+	require.Equal(t, [][]string{{"Name", "Ort"}, {"Müller", "Köln"}}, rows[:2])
+
+	// The byte order mark must not become the first character of the
+	// first cell when the detected encoding is used explicitly
+	same, err := ParseWithFormat(data, format)
+	require.NoError(t, err)
+	require.Equal(t, rows, same)
 }

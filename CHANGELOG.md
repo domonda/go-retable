@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- CSV files in UTF-32LE are detected and decoded as UTF-32LE instead of being
+  silently decoded as UTF-16LE into NUL padded garbage without any error. The
+  UTF-16LE byte order mark `FF FE` is a prefix of the UTF-32LE mark
+  `FF FE 00 00`, and the shorter one used to be tested first, which made the
+  UTF-32LE case unreachable. The marks are now matched longest first, which is
+  what ICU, .NET and `file(1)` do. Ported from go-types PR 21.
+
+  The two are not distinguishable from the bytes alone, because UTF-16LE text
+  whose first character is U+0000 serializes to the same bytes. That ambiguity
+  only exists while guessing: decoding with an encoding the caller named
+  matches that encoding's mark first, so `FF FE` still means UTF-16LE for
+  everyone who already knows the encoding, and a wrong mark is still an error.
+
+- An encoding named `UTF-32LE` or `UTF-32BE` in `Format.Encoding` no longer
+  turns a leading byte order mark into the first character of the first cell.
+  `golang.org/x/text` decodes the mark to U+FEFF rather than removing it, and
+  the UTF-16 encodings stripped it while the UTF-32 encodings did not. This
+  was unreachable until the detection order above was fixed, because UTF-32LE
+  was never detected, and it broke feeding the `Format` from
+  `ParseDetectFormat` back into `ParseWithFormat`. This part is not in
+  go-types PR 21 and is still present upstream.
+
 - `SmartAssign` assigns the zero value for an empty source string instead of
   failing with `unsupported operation: assigning string "" to uint64`. An empty
   cell means "no value", and Excel and CSV files have empty cells for optional
@@ -240,7 +262,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     because the names are part of the `FormatDetectionConfig.Encodings` and
     `Format.Encoding` contract. Both implementations were compared over a
     corpus of byte order marks, encoded fixtures and random data, and over
-    34 million fuzz executions, without a difference.
+    34 million fuzz executions, without a difference beyond the byte order
+    mark fixes listed under Fixed.
 
 ### Changed
 
