@@ -65,12 +65,13 @@ func TestScanners(t *testing.T) {
 	})
 }
 
-// TestStrictEmptyStrings covers which destinations an empty string is
-// rejected for. The point of rejecting them is that their zero value is
-// indistinguishable from a parsed value, so an empty cell would silently
-// become a 0 that nothing downstream can tell apart from a real 0.
-func TestStrictEmptyStrings(t *testing.T) {
-	scanner := Scanners{StrictEmptyStrings}
+// TestStrictNilStrings covers which destinations a source string that
+// means no value is rejected for. The point of rejecting them is that
+// their zero value is indistinguishable from a parsed value, so an
+// empty cell would silently become a 0 that nothing downstream can tell
+// apart from a real 0.
+func TestStrictNilStrings(t *testing.T) {
+	scanner := Scanners{StrictNilStrings}
 
 	rejected := []struct {
 		name string
@@ -88,7 +89,7 @@ func TestStrictEmptyStrings(t *testing.T) {
 		t.Run("rejects empty string for "+tt.name, func(t *testing.T) {
 			dst := reflect.ValueOf(tt.dst).Elem()
 			err := SmartAssign(dst, reflect.ValueOf(""), scanner, nil, nil)
-			require.ErrorContains(t, err, "cannot assign an empty string to")
+			require.ErrorContains(t, err, "cannot assign \"\" to")
 			require.NotErrorIs(t, err, errors.ErrUnsupported, "the error must stop SmartAssign")
 		})
 	}
@@ -135,7 +136,7 @@ func TestStrictEmptyStrings(t *testing.T) {
 	})
 
 	// Without the scanner the empty cell is the zero value, which is the
-	// behavior StrictEmptyStrings exists to opt out of.
+	// behavior StrictNilStrings exists to opt out of.
 	t.Run("without it an empty string is the zero value", func(t *testing.T) {
 		var i int
 		require.NoError(t, SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf(""), nil, nil, nil))
@@ -143,24 +144,24 @@ func TestStrictEmptyStrings(t *testing.T) {
 	})
 }
 
-// TestStrictEmptyStringsInViewToStructSlice is the case the Scanner is
+// TestStrictNilStringsInViewToStructSlice is the case the Scanner is
 // meant for: an optional numeric column declared as a value type is a
 // wiring mistake that should be reported, and declaring it as a pointer
 // is the fix.
-func TestStrictEmptyStringsInViewToStructSlice(t *testing.T) {
+func TestStrictNilStringsInViewToStructSlice(t *testing.T) {
 	view := NewStringsView("", [][]string{
 		{"Name", "Amount"},
 		{"a", "1"},
 		{"b", ""},
 	})
-	scanner := Scanners{StrictEmptyStrings}
+	scanner := Scanners{StrictNilStrings}
 
 	type RequiredAmount struct {
 		Name   string
 		Amount int
 	}
 	_, err := ViewToStructSlice[RequiredAmount](view, nil, scanner, nil, nil, nil)
-	require.ErrorContains(t, err, "cannot assign an empty string to int")
+	require.ErrorContains(t, err, "cannot assign \"\" to int")
 
 	type OptionalAmount struct {
 		Name   string
@@ -172,4 +173,34 @@ func TestStrictEmptyStringsInViewToStructSlice(t *testing.T) {
 	require.NotNil(t, rows[0].Amount)
 	require.Equal(t, 1, *rows[0].Amount)
 	require.Nil(t, rows[1].Amount, "the empty cell stays distinguishable from 0")
+}
+
+// TestStrictNilStringsUsesParserIsNil covers that the Scanner rejects
+// every string the Parser classifies as nil, not only the empty one.
+// Rejecting "" but silently turning "NULL" into a 0 would defeat the
+// purpose of the Scanner.
+func TestStrictNilStringsUsesParserIsNil(t *testing.T) {
+	scanner := Scanners{StrictNilStrings}
+
+	for _, str := range NewStringParser().NilStrings {
+		t.Run("rejects "+str+" for int", func(t *testing.T) {
+			var i int
+			err := SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf(str), scanner, nil, nil)
+			require.ErrorContains(t, err, "use a pointer type for an optional column")
+		})
+		t.Run("keeps nil for *int for "+str, func(t *testing.T) {
+			var p *int
+			require.NoError(t, SmartAssign(reflect.ValueOf(&p).Elem(), reflect.ValueOf(str), scanner, nil, nil))
+			require.Nil(t, p)
+		})
+	}
+
+	// A Parser that only treats the empty string as nil must not make
+	// the Scanner reject "NULL", which is then a value to be parsed.
+	parser := NewStringParser()
+	parser.NilStrings = []string{""}
+	var i int
+	err := SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf("NULL"), scanner, parser, nil)
+	require.ErrorIs(t, err, errors.ErrUnsupported, "NULL is no longer nil, so it fails as an unparsable int")
+	require.NotContains(t, err.Error(), "use a pointer type")
 }

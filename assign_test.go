@@ -188,6 +188,52 @@ func TestSmartAssign(t *testing.T) {
 			wantErr: true,
 		},
 
+		// The empty string is not the only spelling of "no value":
+		// exports of database tables write a literal NULL for it, and
+		// the strings that mean it are configured on the Parser through
+		// StringParser.NilStrings, not hardcoded here.
+		{
+			name:    "NULL string to int",
+			dst:     assignableValue[int](),
+			src:     reflect.ValueOf("NULL"),
+			wantDst: int(0),
+		},
+		{
+			name:    "NULL string to *int is nil",
+			dst:     assignableValue[*int](),
+			src:     reflect.ValueOf("NULL"),
+			wantDst: (*int)(nil),
+		},
+		{
+			name:    "null string to time.Time",
+			dst:     assignableValue[time.Time](),
+			src:     reflect.ValueOf("null"),
+			wantDst: time.Time{},
+		},
+		// Destinations that can hold the string keep it, because only
+		// the source format knows whether a cell reading NULL is a null
+		// value or that text, and a string column can hold the text.
+		{
+			name:    "NULL string to string keeps the text",
+			dst:     assignableValue[string](),
+			src:     reflect.ValueOf("NULL"),
+			wantDst: "NULL",
+		},
+		{
+			name:    "NULL string to *string keeps the text",
+			dst:     assignableValue[*string](),
+			src:     reflect.ValueOf("NULL"),
+			wantDst: pointerTo("NULL"),
+		},
+		// A parser without NilStrings makes every string a value again
+		{
+			name:    "NULL string to int without nil strings",
+			dst:     assignableValue[int](),
+			src:     reflect.ValueOf("NULL"),
+			parser:  &StringParser{},
+			wantErr: true,
+		},
+
 		// reflect.Value.Convert applies Go's string(rune) conversion
 		// for integer sources, which would assign the character with
 		// that code point ("*" for 42) instead of the decimal digits.

@@ -101,7 +101,7 @@ func (f ScannerFunc) ScanString(dest reflect.Value, str string, parser Parser) e
 //
 // Example:
 //
-//	scanner := retable.Scanners{retable.StrictEmptyStrings, myScanner}
+//	scanner := retable.Scanners{retable.StrictNilStrings, myScanner}
 //	rows, err := retable.ViewToStructSlice[Row](view, nil, scanner, nil, nil, nil)
 type Scanners []Scanner
 
@@ -116,10 +116,11 @@ func (s Scanners) ScanString(dest reflect.Value, str string, parser Parser) erro
 	return errors.ErrUnsupported
 }
 
-// StrictEmptyStrings is a Scanner that reports an error for an empty
-// source string assigned to a destination type that has no way to
-// represent the absence of a value, which are the numeric types, bool,
-// time.Time and time.Duration.
+// StrictNilStrings is a Scanner that reports an error for a source
+// string that means no value, which the passed Parser classifies with
+// its IsNil method, when it is assigned to a destination type that has
+// no way to represent the absence of a value, which are the numeric
+// types, bool, time.Time and time.Duration.
 //
 // Without it SmartAssign assigns the zero value to those, because an
 // empty cell of a CSV file or a spreadsheet usually means "no value"
@@ -135,10 +136,10 @@ func (s Scanners) ScanString(dest reflect.Value, str string, parser Parser) erro
 //
 // Combine it with an own Scanner using Scanners:
 //
-//	scanner := retable.Scanners{retable.StrictEmptyStrings, myScanner}
-var StrictEmptyStrings ScannerFunc = func(dest reflect.Value, str string, _ Parser) error {
-	if str != "" || dest.Kind() == reflect.Pointer || !zeroValueForEmptyString(dest.Type()) {
+//	scanner := retable.Scanners{retable.StrictNilStrings, myScanner}
+var StrictNilStrings ScannerFunc = func(dest reflect.Value, str string, parser Parser) error {
+	if !parser.IsNil(str) || dest.Kind() == reflect.Pointer || !zeroValueForNilString(dest.Type()) {
 		return errors.ErrUnsupported
 	}
-	return fmt.Errorf("cannot assign an empty string to %s, use a pointer type for an optional column", dest.Type())
+	return fmt.Errorf("cannot assign %q to %s, use a pointer type for an optional column", str, dest.Type())
 }
