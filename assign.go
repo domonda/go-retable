@@ -5,6 +5,7 @@ import (
 	"encoding"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 )
@@ -126,13 +127,13 @@ import (
 //	// output == "#42"
 func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcFormatter Formatter) (err error) {
 	if !dst.IsValid() {
-		return fmt.Errorf("dst value is invalid")
+		return errors.New("dst value is invalid")
 	}
 	if !dst.CanSet() {
-		return fmt.Errorf("cannot set dst value")
+		return errors.New("cannot set dst value")
 	}
 	if !src.IsValid() {
-		return fmt.Errorf("src value is invalid")
+		return errors.New("src value is invalid")
 	}
 	parser = cmp.Or(parser, DefaultParser)
 	var (
@@ -151,11 +152,17 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 		}
 	}()
 
+	// Interface allocates for an addressable src, so call it
+	// once here instead of again for every type assertion below.
+	// It stays after the deferred recover because it panics
+	// for a value obtained from an unexported field.
+	srcAny := src.Interface()
+
 	// Assign zero value in case of IsNull.
 	// Conversions further down might assign something
 	// different than the zero value dependent on the
 	// underlying type.
-	if nullable, ok := src.Interface().(interface{ IsNull() bool }); ok && nullable.IsNull() {
+	if nullable, ok := srcAny.(interface{ IsNull() bool }); ok && nullable.IsNull() {
 		dst.Set(reflect.Zero(dstType))
 		return nil
 	}
@@ -236,7 +243,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	}
 
 	// Try assigning string from MarshalText method
-	if m, ok := src.Interface().(encoding.TextMarshaler); ok {
+	if m, ok := srcAny.(encoding.TextMarshaler); ok {
 		txt, err := m.MarshalText()
 		if err != nil {
 			return err
@@ -249,7 +256,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	}
 
 	// Try assigning string from String method
-	if m, ok := src.Interface().(fmt.Stringer); ok {
+	if m, ok := srcAny.(fmt.Stringer); ok {
 		err = SmartAssign(dst, reflect.ValueOf(m.String()), dstScanner, parser, srcFormatter)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return err // nil or other than errors.ErrUnsupported
@@ -352,19 +359,29 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 			}
 		}
 
-	// Convert string to integers
+	// Convert string to integers.
+	// The Parser always parses 64 bits, while reflect.Value.SetInt
+	// silently truncates to the width of the destination, so a value
+	// that does not fit has to be reported instead of assigned as a
+	// different number: "300" into an int8 would be 44.
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if srcKind == reflect.String {
 			if i, e := parser.ParseInt(src.String()); e == nil {
+				if dst.OverflowInt(i) {
+					return fmt.Errorf("%d overflows %s", i, dstType)
+				}
 				dst.SetInt(i)
 				return nil
 			}
 		}
 
-	// Convert string to unsigned integers
+	// Convert string to unsigned integers, see the overflow note above
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		if srcKind == reflect.String {
 			if i, e := parser.ParseUint(src.String()); e == nil {
+				if dst.OverflowUint(i) {
+					return fmt.Errorf("%d overflows %s", i, dstType)
+				}
 				dst.SetUint(i)
 				return nil
 			}
@@ -373,6 +390,13 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	case reflect.Float32, reflect.Float64:
 		if srcKind == reflect.String {
 			if f, e := parser.ParseFloat(src.String()); e == nil {
+				// A finite value that does not fit becomes an infinity,
+				// which is a different number, so it is reported.
+				// An infinity that was parsed as such is assigned,
+				// because it represents exactly what the source said.
+				if !math.IsInf(f, 0) && dst.OverflowFloat(f) {
+					return fmt.Errorf("%v overflows %s", f, dstType)
+				}
 				dst.SetFloat(f)
 				return nil
 			}
@@ -380,7 +404,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 
 	// Convert any type to string with fmt.Sprint
 	case reflect.String:
-		dst.SetString(fmt.Sprint(src.Interface()))
+		dst.SetString(fmt.Sprint(srcAny))
 		return nil
 
 	// If all other failed and dest is a pointer,

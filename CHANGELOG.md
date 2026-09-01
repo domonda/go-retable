@@ -8,6 +8,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A lone space or apostrophe between digits is a thousands separator again, not
+  a decimal separator, so `1 234` parses as 1234 instead of 1.234. The rule that
+  a single separator is the decimal one resolves a real ambiguity for `.` and
+  `,`, where `1,234` has two readings, but no locale writes a decimal fraction
+  after a space or an apostrophe. The old reading was silent and never an error,
+  and it hit exactly the amounts that carry no decimals, so a currency column
+  mixed values a factor of 1000 apart while the amounts with decimals stayed
+  correct. `csvtable` made this reachable for ordinary files because
+  `sanitizeUTF8` rewrites the non-breaking space that Excel, SAP and French or
+  Nordic exports use for grouping into a plain space before parsing. A space or
+  apostrophe group that is not 3 digits long is now rejected rather than read as
+  a fraction.
+
+- `t`, `T`, `f` and `F` are accepted as booleans again. They are what
+  `strconv.ParseBool` accepted before the conversions moved to the `Parser`, and
+  what PostgreSQL writes for booleans in CSV exports, so a previously readable
+  file failed to import entirely.
+
+- A `StringParser` that leaves fields nil uses the defaults for them instead of
+  accepting nothing. Every `SmartAssign` string conversion now goes through the
+  `Parser`, so a parser built by a struct literal or unmarshalled from a
+  configuration file that only sets `TimeFormats` silently stopped parsing
+  numbers and booleans for a whole file. Set a field to an empty non-nil slice
+  to really accept nothing.
+
+- `NewStringParser` no longer shares its `TimeFormats` backing array with the
+  package defaults and every other parser. Writing through a parser a caller
+  owned reconfigured `DefaultParser` and every other live parser unsynchronised,
+  which defeated the isolation that `ViewToStructSlice` documents for a `Scanner`
+  that reconfigures the `Parser` it receives.
+
+- A number that does not fit its destination is reported instead of silently
+  truncated. The `Parser` always parses 64 bits while `reflect.Value.SetInt`,
+  `SetUint` and `SetFloat` narrow to the destination width, so a cell reading
+  `300` became `44` in an `int8` column and `1e39` became `+Inf` in a `float32`
+  one, with no error. An infinity the source really spelled out is still
+  assigned, because it represents what the cell said.
+
+- A truncated UTF-32 file is reported instead of silently altered.
+  `golang.org/x/text` decodes a partial trailing code unit to U+FFFD with no
+  error, which `sanitizeUTF8` then turns into a space, so the last cell gained a
+  character and the row count could change. UTF-16 has rejected an odd length
+  all along.
+
+- Format detection and a named encoding consume the same number of byte order
+  marks. Detection split one mark off and then stripped a second, while a named
+  encoding stripped one, so a file beginning with two marks parsed differently
+  through `ParseDetectFormat` than through `ParseWithFormat` with the very
+  `Format` detection had just reported, leaving an invisible U+FEFF at the start
+  of the first cell.
+
 - CSV files in UTF-32LE are detected and decoded as UTF-32LE instead of being
   silently decoded as UTF-16LE into NUL padded garbage without any error. The
   UTF-16LE byte order mark `FF FE` is a prefix of the UTF-32LE mark
@@ -201,8 +252,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   null. `IsNil` only classifies the source string; what that means for the
   destination stays with `SmartAssign` and the `Scanner`.
 
-- `Scanners`, a `Scanner` that calls a slice of `Scanner`s in order until one of
-  them handles the destination type. The `Scanner` documentation already asked
+- `MultiScanner`, which combines `Scanner`s into a single `Scanner` that calls
+  them in order until one of them handles the destination type. The `Scanner` documentation already asked
   unsupported types to be reported as `errors.ErrUnsupported` "allowing scanner
   chains", but nothing composed them and `SmartAssign` and `ViewToStructSlice`
   take a single `Scanner`, so a caller had to choose between an own `Scanner`
@@ -225,7 +276,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and keeps an empty cell distinguishable from a parsed zero:
 
   ```go
-  scanner := retable.Scanners{retable.StrictNilStrings, myScanner}
+  scanner := retable.MultiScanner(retable.StrictNilStrings, myScanner)
   rows, err := retable.ViewToStructSlice[Row](view, nil, scanner, nil, nil, nil)
   ```
 

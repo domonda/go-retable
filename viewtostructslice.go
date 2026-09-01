@@ -55,8 +55,10 @@ import (
 //   - view: The source View to convert. Must not be nil.
 //   - naming: Defines how column names map to struct field names. Must not be nil.
 //   - dstScanner: Optional Scanner for custom string-to-type conversions (can be nil).
-//   - parser: Parser passed to dstScanner.ScanString (can be nil, in which case
-//     a default StringParser is allocated once for the whole view). Pass one
+//   - parser: Parser used by SmartAssign for every string conversion of a
+//     cell, which are the number, bool, time and duration ones and the
+//     classification of a cell as nil, and passed on to dstScanner.ScanString.
+//     Can be nil, in which case a default StringParser is used. Pass one
 //     explicitly to configure boolean strings, time formats or number locales.
 //   - srcFormatter: Optional Formatter for custom type-to-string conversions (can be nil).
 //   - validate: Optional function called after each field assignment for validation (can be nil).
