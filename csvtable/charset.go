@@ -41,13 +41,20 @@ const (
 )
 
 // allBOMs lists the byte order marks in the order in which they are
-// tested. The two byte UTF-16LE mark is tested before the four byte
-// UTF-32LE mark that begins with it, so UTF-32LE data is detected as
-// UTF-16LE. That is what go-types did and it is kept unchanged here,
-// because the alternative ordering makes the UTF-16 decoding of data
-// whose content happens to start with those bytes fail. UTF-32 is not
-// among the encodings that format detection tries by default.
-var allBOMs = []charsetBOM{bomUTF8, bomUTF16LE, bomUTF16BE, bomUTF32LE, bomUTF32BE}
+// tested. The four byte marks come before the two byte ones, because
+// the UTF-16LE mark FF FE is a prefix of the UTF-32LE mark FF FE 00 00
+// and would otherwise make it unreachable.
+//
+// Those two are not distinguishable from the bytes alone: UTF-16LE text
+// whose first character is U+0000 serializes to the same FF FE 00 00
+// and is reported as UTF-32LE here. Preferring the longer mark is the
+// conventional resolution, used by ICU, .NET and file(1) among others,
+// because a leading NUL is not plain text while real UTF-32LE data is.
+//
+// The ambiguity only exists while detecting an unknown encoding.
+// Decoding with a known encoding goes through trimExpectedBOM instead,
+// where FF FE can only mean UTF-16LE.
+var allBOMs = []charsetBOM{bomUTF8, bomUTF32LE, bomUTF32BE, bomUTF16LE, bomUTF16BE}
 
 // name returns the encoding name of the byte order mark,
 // which is what format detection reports as Format.Encoding.
@@ -79,13 +86,32 @@ func (bom charsetBOM) byteOrder() binary.ByteOrder {
 	return nil
 }
 
+// trimExpectedBOM strips a leading bom from data and returns the rest.
+//
+// bom is what the caller already knows the encoding to be, so it is
+// matched before falling back to detection. That order matters for the
+// UTF-16LE and UTF-32LE overlap: the valid UTF-16LE sequence FF FE 00 00,
+// a byte order mark followed by U+0000, is indistinguishable from the
+// UTF-32LE mark, and detection resolves it to UTF-32LE. A caller that
+// passes bomUTF16LE has already resolved that and must not be
+// second-guessed.
+func trimExpectedBOM(data []byte, bom charsetBOM) ([]byte, error) {
+	if bom != noBOM && bytes.HasPrefix(data, []byte(bom)) {
+		return data[len(bom):], nil
+	}
+	if dataBOM, _ := splitBOM(data); dataBOM != noBOM && dataBOM != bom {
+		return nil, fmt.Errorf("wrong BOM in data: %v, expected: %v", []byte(dataBOM), []byte(bom))
+	}
+	return data, nil
+}
+
 // decode decodes data that follows the byte order mark.
 // Data that begins with a further byte order mark has to repeat
 // the same one, which is then removed as well.
 func (bom charsetBOM) decode(data []byte) ([]byte, error) {
-	dataBOM, data := splitBOM(data)
-	if dataBOM != noBOM && dataBOM != bom {
-		return nil, fmt.Errorf("wrong BOM in data: %v, expected: %v", []byte(dataBOM), []byte(bom))
+	data, err := trimExpectedBOM(data, bom)
+	if err != nil {
+		return nil, err
 	}
 
 	switch bom {
@@ -116,11 +142,7 @@ func trimUTF8BOM(b []byte) []byte {
 }
 
 func decodeUTF8(b []byte) ([]byte, error) {
-	bom, rest := splitBOM(b)
-	if bom != noBOM && bom != bomUTF8 {
-		return nil, fmt.Errorf("wrong BOM in data: %v, expected: %v", []byte(bom), []byte(bomUTF8))
-	}
-	return rest, nil
+	return bomUTF8.decode(b)
 }
 
 func decodeUTF16(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
@@ -130,16 +152,22 @@ func decodeUTF16(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	if len(b)&1 != 0 {
 		return nil, fmt.Errorf("odd length of UTF-16 string: %d", len(b))
 	}
-	// A byte order mark must match the expected byte order
-	if bom, rest := splitBOM(b); bom != noBOM {
-		expected := bomUTF16LE
-		if byteOrder == binary.BigEndian {
-			expected = bomUTF16BE
-		}
-		if bom != expected {
-			return nil, fmt.Errorf("expected %s BOM but got %s", expected.name(), bom.name())
-		}
-		b = rest
+	// A byte order mark must match the expected byte order.
+	//
+	// byteOrder already says which UTF-16 mark is expected, so match that
+	// one first and only fall back to detection when it is absent. Going
+	// through detection first would misread the valid UTF-16LE sequence
+	// FF FE 00 00, a mark followed by U+0000, as the UTF-32LE mark and
+	// reject it, although the caller resolved that ambiguity already by
+	// passing binary.LittleEndian.
+	expected := bomUTF16LE
+	if byteOrder == binary.BigEndian {
+		expected = bomUTF16BE
+	}
+	if bytes.HasPrefix(b, []byte(expected)) {
+		b = b[len(expected):]
+	} else if bom, _ := splitBOM(b); bom != noBOM {
+		return nil, fmt.Errorf("expected %s BOM but got %s", expected.name(), bom.name())
 	}
 	u16 := make([]uint16, len(b)/2)
 	for i := range u16 {
@@ -172,12 +200,28 @@ func decodeUTF32AfterBOM(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	return decodeUTF32(b, byteOrder)
 }
 
+// decodeUTF32Encoding decodes UTF-32 for a named encoding, stripping a
+// leading byte order mark of that encoding like decodeUTF16 does.
+//
+// golang.org/x/text decodes the mark to U+FEFF instead of removing it,
+// and go-types passed it straight through, so an encoding named
+// "UTF-32LE" turned the mark into the first character of the first cell.
+// That was unreachable before the byte order mark detection was fixed,
+// because UTF-32LE data was never detected as UTF-32LE.
+func decodeUTF32Encoding(b []byte, bom charsetBOM) ([]byte, error) {
+	b, err := trimExpectedBOM(b, bom)
+	if err != nil {
+		return nil, err
+	}
+	return decodeUTF32(b, bom.byteOrder())
+}
+
 var utfEncodings = map[string]*charsetEncoding{
 	"UTF-8":    {name: "UTF-8", decode: decodeUTF8},
 	"UTF-16LE": {name: "UTF-16LE", decode: func(b []byte) ([]byte, error) { return decodeUTF16(b, binary.LittleEndian) }},
 	"UTF-16BE": {name: "UTF-16BE", decode: func(b []byte) ([]byte, error) { return decodeUTF16(b, binary.BigEndian) }},
-	"UTF-32LE": {name: "UTF-32LE", decode: func(b []byte) ([]byte, error) { return decodeUTF32(b, binary.LittleEndian) }},
-	"UTF-32BE": {name: "UTF-32BE", decode: func(b []byte) ([]byte, error) { return decodeUTF32(b, binary.BigEndian) }},
+	"UTF-32LE": {name: "UTF-32LE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32LE) }},
+	"UTF-32BE": {name: "UTF-32BE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32BE) }},
 }
 
 // sharedEncodings maps names that golang.org/x/text does not

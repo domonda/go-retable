@@ -490,9 +490,10 @@ type Format struct {
 
 What detection covers:
 
-- **Encoding** — UTF-8, UTF-16LE, ISO 8859-1, Windows 1252 and Macintosh are tried
-  in order, and each candidate is validated by decoding a set of test characters
-  (umlauts, `§`, `€`, Cyrillic). Restrict either list to narrow the guess:
+- **Encoding** — a byte order mark decides on its own, otherwise UTF-8, UTF-16LE,
+  ISO 8859-1, Windows 1252 and Macintosh are tried in order, and each candidate is
+  validated by decoding a set of test characters (umlauts, `§`, `€`, Cyrillic).
+  Restrict either list to narrow the guess:
 
   ```go
   config := &csvtable.FormatDetectionConfig{
