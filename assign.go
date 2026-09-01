@@ -411,6 +411,12 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// try to create a new instance and assign to that
 	// then assign the pointer to the new instance.
 	case reflect.Pointer:
+		if _, ok := derefPointerType(dstType); !ok {
+			// A self referential pointer type never reaches a type to
+			// allocate, so it is reported as unsupported below instead
+			// of recursing until the stack overflows.
+			break
+		}
 		newDest := reflect.New(dstType.Elem())
 		err = SmartAssign(newDest.Elem(), src, dstScanner, parser, srcFormatter)
 		if err != nil && !errors.Is(err, errors.ErrUnsupported) {
@@ -425,6 +431,29 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	}
 
 	return fmt.Errorf("%w: assigning %s %#v to %s", errors.ErrUnsupported, srcType, src, dstType)
+}
+
+// maxPointerDepth bounds how far a pointer type is followed to the
+// type it finally points to.
+//
+// A self referential pointer type is legal Go and its element type is
+// itself, so "type SelfPtr *SelfPtr" makes an unbounded walk spin
+// forever and makes the recursion of the pointer case in SmartAssign
+// overflow the stack, which is a fatal error that no deferred recover
+// can catch. No real destination nests pointers this deep.
+const maxPointerDepth = 32
+
+// derefPointerType follows pointer types to the first type that is not
+// a pointer. ok is false when the chain did not end within
+// maxPointerDepth, which only a self referential type can do.
+func derefPointerType(t reflect.Type) (elem reflect.Type, ok bool) {
+	for range maxPointerDepth {
+		if t.Kind() != reflect.Pointer {
+			return t, true
+		}
+		t = t.Elem()
+	}
+	return t, false
 }
 
 // zeroValueForNilString reports whether a source string that means
@@ -444,8 +473,9 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 // the pointer allocation strategy of SmartAssign allocates every
 // level, so *string and **string must be treated alike.
 func zeroValueForNilString(dstType reflect.Type) bool {
-	for dstType.Kind() == reflect.Pointer {
-		dstType = dstType.Elem()
+	dstType, ok := derefPointerType(dstType)
+	if !ok {
+		return false
 	}
 	// time.Time has a struct kind, time.Duration an int64 kind
 	// that is covered by the integer kinds below.
