@@ -1,6 +1,8 @@
 package retable
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
 )
 
@@ -84,4 +86,59 @@ type ScannerFunc func(dest reflect.Value, str string, parser Parser) error
 // ScanString implements the Scanner interface by calling the function itself.
 func (f ScannerFunc) ScanString(dest reflect.Value, str string, parser Parser) error {
 	return f(dest, str, parser)
+}
+
+// Scanners calls every Scanner in order until one of them handles the
+// destination type, which is the chain the Scanner documentation refers
+// to when it asks unsupported types to be reported as
+// errors.ErrUnsupported.
+//
+// The first Scanner that does not report errors.ErrUnsupported decides
+// the result, so an earlier Scanner overrides a later one, and a real
+// parsing error stops the chain instead of falling through to the next
+// Scanner. If no Scanner handles the type, errors.ErrUnsupported is
+// returned so that SmartAssign continues with its own conversions.
+//
+// Example:
+//
+//	scanner := retable.Scanners{retable.StrictEmptyStrings, myScanner}
+//	rows, err := retable.ViewToStructSlice[Row](view, nil, scanner, nil, nil, nil)
+type Scanners []Scanner
+
+// ScanString implements the Scanner interface.
+func (s Scanners) ScanString(dest reflect.Value, str string, parser Parser) error {
+	for _, scanner := range s {
+		err := scanner.ScanString(dest, str, parser)
+		if !errors.Is(err, errors.ErrUnsupported) {
+			return err // nil or a real parsing error
+		}
+	}
+	return errors.ErrUnsupported
+}
+
+// StrictEmptyStrings is a Scanner that reports an error for an empty
+// source string assigned to a destination type that has no way to
+// represent the absence of a value, which are the numeric types, bool,
+// time.Time and time.Duration.
+//
+// Without it SmartAssign assigns the zero value to those, because an
+// empty cell of a CSV file or a spreadsheet usually means "no value"
+// and reading one must not fail a whole file. The cost is that the
+// parsed data cannot tell an empty cell from a cell containing 0, and
+// that a struct field wired to the wrong column keeps parsing every
+// empty cell and only fails on the first non-empty one.
+//
+// Pass this Scanner to require that an optional column is declared as a
+// pointer type instead. Pointer destinations are left to SmartAssign,
+// which assigns nil for an empty string, so the absence stays visible
+// in the parsed data and the type states which columns are optional.
+//
+// Combine it with an own Scanner using Scanners:
+//
+//	scanner := retable.Scanners{retable.StrictEmptyStrings, myScanner}
+var StrictEmptyStrings ScannerFunc = func(dest reflect.Value, str string, _ Parser) error {
+	if str != "" || dest.Kind() == reflect.Pointer || !zeroValueForEmptyString(dest.Type()) {
+		return errors.ErrUnsupported
+	}
+	return fmt.Errorf("cannot assign an empty string to %s, use a pointer type for an optional column", dest.Type())
 }
