@@ -150,7 +150,7 @@ func TestReadStringsToStructSlice_HeaderAndTrailerLines(t *testing.T) {
 	require.Equal(t, ";", format.Separator)
 
 	naming := &retable.StructFieldNaming{Tag: "csv"}
-	bookings, err := ReadStringsToStructSlice[booking](rows, naming, nil, nil, nil, "Datum", "Text", "Betrag")
+	bookings, err := ReadStringsToStructSlice[booking](rows, naming, nil, nil, nil, nil, "Datum", "Text", "Betrag")
 	require.NoError(t, err)
 	assert.Equal(t, []booking{
 		{Datum: "01.01.2025", Text: "Miete", Betrag: "-500,00"},

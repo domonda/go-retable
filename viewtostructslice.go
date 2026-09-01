@@ -55,6 +55,9 @@ import (
 //   - view: The source View to convert. Must not be nil.
 //   - naming: Defines how column names map to struct field names. Must not be nil.
 //   - dstScanner: Optional Scanner for custom string-to-type conversions (can be nil).
+//   - parser: Parser passed to dstScanner.ScanString (can be nil, in which case
+//     a default StringParser is allocated once for the whole view). Pass one
+//     explicitly to configure boolean strings, time formats or number locales.
 //   - srcFormatter: Optional Formatter for custom type-to-string conversions (can be nil).
 //   - validate: Optional function called after each field assignment for validation (can be nil).
 //   - requiredCols: Column names that must exist in both View and struct.
@@ -86,7 +89,7 @@ import (
 //
 //	// Convert to slice of structs
 //	naming := &StructFieldNaming{Tag: "db"}
-//	people, err := ViewToStructSlice[Person](view, naming, nil, nil, nil)
+//	people, err := ViewToStructSlice[Person](view, naming, nil, nil, nil, nil)
 //	// people[0] == Person{Name: "Alice", Age: 30}
 //	// people[1] == Person{Name: "Bob", Age: 25}
 //
@@ -94,15 +97,15 @@ import (
 //	people, err = ViewToStructSlice[Person](
 //	    view,
 //	    naming,
-//	    nil, nil,
+//	    nil, nil, nil,
 //	    CallValidateMethod, // Validate each field
 //	    "name", "age",      // Both columns are required
 //	)
 //
 //	// Using pointer type
-//	people, err := ViewToStructSlice[*Person](view, naming, nil, nil, nil)
+//	people, err := ViewToStructSlice[*Person](view, naming, nil, nil, nil, nil)
 //	// people[0] == &Person{Name: "Alice", Age: 30}
-func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner Scanner, srcFormatter Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
+func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner Scanner, parser Parser, srcFormatter Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
 	rowType := reflect.TypeFor[T]()
 	if rowType.Kind() != reflect.Struct && (rowType.Kind() != reflect.Pointer || rowType.Elem().Kind() != reflect.Struct) {
 		return nil, fmt.Errorf("slice element type %s is not a struct or pointer to struct", rowType)
@@ -110,6 +113,14 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 
 	viewCols := view.Columns()
 	reflectView := AsReflectCellView(view)
+
+	// Allocate the parser needed by dstScanner once per view
+	// instead of letting SmartAssign allocate one per cell.
+	// It is not shared between calls so that a Scanner which
+	// reconfigures it cannot affect a concurrent conversion.
+	if parser == nil && dstScanner != nil {
+		parser = NewStringParser()
+	}
 
 	if len(requiredCols) > 0 {
 		var v reflect.Value
@@ -144,7 +155,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			if !src.IsValid() {
 				continue
 			}
-			err := SmartAssign(dst, src, dstScanner, srcFormatter)
+			err := SmartAssign(dst, src, dstScanner, parser, srcFormatter)
 			if err == nil && validate != nil {
 				err = validate(dst)
 			}
@@ -198,7 +209,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 //	people, err := ViewToStructSlice[Person](
 //	    view,
 //	    naming,
-//	    nil, nil,
+//	    nil, nil, nil,
 //	    CallValidateMethod,
 //	)
 //
@@ -217,7 +228,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 //	people, err := ViewToStructSlice[PersonWithAge](
 //	    view,
 //	    naming,
-//	    nil, nil,
+//	    nil, nil, nil,
 //	    CallValidateMethod,
 //	)
 func CallValidateMethod(v reflect.Value) error {

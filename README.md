@@ -154,6 +154,7 @@ employees, err := retable.ViewToStructSlice[Employee](
     view,
     nil,  // Use default field naming
     nil,  // No custom scanner
+    nil,  // No custom parser
     nil,  // No custom formatter
     nil,  // No validation
     "Name", "Age", // Required columns
@@ -294,6 +295,7 @@ err := retable.SmartAssign(
     reflect.ValueOf(&dest).Elem(),
     reflect.ValueOf(src),
     nil, // scanner
+    nil, // parser
     nil, // formatter
 )
 // dest is now 42
@@ -421,7 +423,7 @@ func main() {
     bookings, err := csvtable.ReadStringsToStructSlice[Booking](
         rows,
         &retable.StructFieldNaming{Tag: "csv"},
-        nil, nil, nil, // scanner, formatter, validate
+        nil, nil, nil, nil, // scanner, parser, formatter, validate
         "Datum", "Text", "Betrag", // required columns
     )
     if err != nil {
@@ -743,7 +745,7 @@ type Record struct {
     Date time.Time
 }
 
-records, err := retable.ViewToStructSlice[Record](csvView, nil, nil, nil, nil)
+records, err := retable.ViewToStructSlice[Record](csvView, nil, nil, nil, nil, nil)
 check(err)
 
 // Process data...
@@ -777,6 +779,7 @@ users, err := retable.ViewToStructSlice[User](
     csvView,
     nil, // naming
     nil, // scanner
+    nil, // parser
     nil, // formatter
     retable.CallValidateMethod, // validation
     "Email", "Age", // required columns
