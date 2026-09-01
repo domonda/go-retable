@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `SmartAssign` no longer hangs or crashes on a self referential pointer type.
+  `type SelfPtr *SelfPtr` is legal Go and its element type is itself, so the
+  walk to the pointed-to type never ended: an empty cell spun forever and a
+  non-empty one recursed until the stack overflowed, which is fatal and cannot
+  be recovered. Such a destination is now reported as an unsupported operation.
+
 - A lone space or apostrophe between digits is a thousands separator again, not
   a decimal separator, so `1 234` parses as 1234 instead of 1.234. The rule that
   a single separator is the decimal one resolves a real ambiguity for `.` and
