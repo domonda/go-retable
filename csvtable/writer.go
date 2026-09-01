@@ -80,7 +80,7 @@ func (w *Writer[T]) clone() *Writer[T] {
 }
 
 // Write calls WriteView with the result of Viewer.NewView(table)
-// using the writer's viewer if not nil or else retable.DefaultViewer.
+// using the writer's viewer if not nil or else retable.SelectViewer.
 func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T) error {
 	viewer := w.viewer
 	if viewer == nil {

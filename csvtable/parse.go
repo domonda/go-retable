@@ -11,11 +11,14 @@ import (
 // then parses the data into rows of string fields.
 //
 // Format Detection Algorithm:
-//  1. Encoding Detection: Tests configured encodings against test strings to find
-//     the encoding that correctly decodes special characters
-//  2. Line Ending Detection: Prefers \r\n if present, otherwise uses \n
-//  3. Separator Detection: Counts occurrences of common separators (comma, semicolon, tab)
-//     and selects the most frequent one
+//  1. Encoding Detection: A byte order mark decides on its own, otherwise the
+//     configured encodings are tested against test strings to find the encoding
+//     that correctly decodes special characters
+//  2. Line Ending Detection: Counts \r\n, \n\r and bare \n outside of quoted
+//     fields and takes the most frequent one
+//  3. Separator Detection: Scores comma, semicolon, tab and pipe by how uniform
+//     the resulting column count is instead of by how often they occur, counting
+//     only outside of quoted fields
 //  4. Header Line Detection: Checks for "sep=X" header line that explicitly declares separator
 //
 // The function handles complex CSV formats including:
@@ -329,7 +332,7 @@ func splitLines(csv []byte, newline string) [][]byte {
 }
 
 // separatorCandidates are the separators that can be detected from the data,
-// ordered by preference so that the first one with the highest count wins.
+// ordered by preference so that the earlier one wins a tie in bestSeparator.
 var separatorCandidates = []byte{',', ';', '\t', '|'}
 
 // csvStructure is what scanStructure counted outside of quoted fields.

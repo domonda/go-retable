@@ -30,7 +30,8 @@ go get github.com/domonda/go-retable
 package main
 
 import (
-    "fmt"
+    "log"
+
     "github.com/domonda/go-retable"
 )
 
@@ -48,13 +49,16 @@ func main() {
     }
 
     // Create a view from struct slice
-    view := retable.NewStructRowsView("People", people, nil, nil)
+    view, err := retable.DefaultStructRowsViewer().NewView("People", people)
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Print the table
     retable.PrintlnView(view)
     // Output:
+    // People:
     // | Full Name   | Age | City     |
-    // |-------------|-----|----------|
     // | Alice Smith | 30  | New York |
     // | Bob Jones   | 25  | London   |
     // | Carol White | 35  | Tokyo    |
@@ -195,11 +199,11 @@ data := [][]string{
     {"Alice", "30"},
     {"Bob", "25"},
 }
-view := retable.NewStringsView("People", data, []string{"Name", "Age"})
+view := retable.NewStringsView("People", data, "Name", "Age")
 
 // From structs
 people := []Person{{"Alice", 30}, {"Bob", 25}}
-view := retable.NewStructRowsView("People", people, nil, nil)
+view, err := retable.DefaultStructRowsViewer().NewView("People", people)
 ```
 
 ### View Wrappers (Decorators)
@@ -222,10 +226,10 @@ deref := retable.DerefView(pointerView)
 withTotal := retable.ExtraColsReflectValueFuncView(
     view,
     []string{"Total"},
-    func(row int) []reflect.Value {
+    func(row, col int) reflect.Value {
         price := view.Cell(row, 1).(float64)
         qty := view.Cell(row, 2).(int)
-        return []reflect.Value{reflect.ValueOf(price * float64(qty))}
+        return reflect.ValueOf(price * float64(qty))
     },
 )
 
@@ -277,7 +281,7 @@ naming := &retable.StructFieldNaming{
     Ignore: "-",
 }
 
-view := retable.NewStructRowsView("Products", products, nil, naming)
+view, err := naming.NewView("Products", products)
 // Columns: ["Product Code", "Product Name", "Unit Price"]
 ```
 
@@ -317,7 +321,7 @@ Query in-memory Views using SQL:
 import "github.com/domonda/go-retable/sqltable"
 
 // Create virtual database
-view := retable.NewStructRowsView("users", users, nil, nil)
+view, err := retable.DefaultStructRowsViewer().NewView("users", users)
 db := sqltable.NewViewDB("users", view)
 defer db.Close()
 
@@ -342,8 +346,9 @@ import "github.com/domonda/go-retable/csvtable"
 
 // A nil config uses NewDefaultFormatDetectionConfig()
 data, format, err := csvtable.ParseDetectFormat(csvBytes, nil)
-// Detects: UTF-8/UTF-16LE/ISO 8859-1/Windows 1252/Macintosh
-// Detects: , or ; or \t separators
+// Detects: UTF-8/UTF-16LE/ISO 8859-1/Windows 1252/Macintosh, plus
+//          UTF-16BE/UTF-32LE/UTF-32BE from a byte order mark
+// Detects: , or ; or \t or | separators
 // Detects: \n or \r\n or \n\r line endings
 
 // Or restrict which encodings are tried and how they are validated
@@ -446,9 +451,10 @@ The required column names are what makes the last one work — see
 
 To read straight from a file or from bytes, skip the two-step and use
 `ReadFileDetectFormatToStructSlice` or `ReadBytesDetectFormatToStructSlice`.
-Both take the same naming, scanner, formatter, validate and required-column
-arguments, and also return the detected `*Format`. The `WithFormat` variants take
-an explicit `*Format` instead of detecting one.
+Both take a `*FormatDetectionConfig` after the file or the bytes, nil for the
+defaults, then the same naming, scanner, parser, formatter, validate and
+required-column arguments, and also return the detected `*Format`. The
+`WithFormat` variants take an explicit `*Format` instead of detecting one.
 
 #### Parsing
 
@@ -490,10 +496,13 @@ type Format struct {
 
 What detection covers:
 
-- **Encoding** — a byte order mark decides on its own, otherwise UTF-8, UTF-16LE,
-  ISO 8859-1, Windows 1252 and Macintosh are tried in order, and each candidate is
-  validated by decoding a set of test characters (umlauts, `§`, `€`, Cyrillic).
-  Restrict either list to narrow the guess:
+- **Encoding** — a byte order mark decides on its own, and also reports the
+  UTF-16BE, UTF-32LE and UTF-32BE that are not in the candidate list. The marks
+  are matched longest first, so `FF FE 00 00` is UTF-32LE rather than UTF-16LE
+  followed by a NUL. Otherwise UTF-8, UTF-16LE, ISO 8859-1, Windows 1252 and
+  Macintosh are tried in order, and each candidate is validated by decoding a set
+  of test characters (umlauts, `§`, `€`, Cyrillic). Restrict either list to
+  narrow the guess:
 
   ```go
   config := &csvtable.FormatDetectionConfig{
@@ -589,7 +598,7 @@ err := writer.Write(context.Background(), dest, products)
 ```
 
 `Writer[T]` is an immutable builder: every `With…` method returns a new writer, so
-keep the returned value. `Write` builds a view with `retable.DefaultViewer`,
+keep the returned value. `Write` builds a view with `retable.SelectViewer`,
 `WriteWithViewer` uses one you supply, and `WriteView` takes a `retable.View`
 directly. `ViewStrings` returns the formatted cells as `[][]string` without writing
 anything, which is useful for tests.
@@ -722,8 +731,8 @@ fields := retable.StructFieldTypes(reflect.TypeOf(MyStruct{}))
 // Convert PascalCase to spaced names
 title := retable.SpacePascalCase("UserID")  // "User ID"
 
-// Calculate column widths for alignment
-widths := retable.StringColumnWidths([][]string{...})
+// Calculate column widths for alignment, -1 for all columns
+widths := retable.StringColumnWidths([][]string{...}, -1)
 ```
 
 ## Examples
@@ -738,7 +747,7 @@ check(err)
 csvData, _, err := csvtable.ParseDetectFormat(csvBytes, nil)
 check(err)
 
-csvView := retable.NewStringsView("Data", csvData, nil)
+csvView := retable.NewStringsView("Data", csvData)
 
 // Convert to structs for processing
 type Record struct {
