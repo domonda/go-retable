@@ -33,15 +33,20 @@ import (
 //     dstScanner.ScanString is used to parse src into dst, using the
 //     passed parser for the primitive conversions.
 //
-//  6. Empty string handling: If src is an empty string, dst is set to its
-//     zero value, because an empty cell of a CSV file or a spreadsheet
-//     means "no value". This only applies to the destinations that the
+//  6. Nil string handling: If parser.IsNil reports the source string to
+//     represent no value, which the default StringParser does for the
+//     empty string of an empty cell and for "NULL", "null", "nil" and
+//     "<nil>", dst is set to its zero value, so a pointer destination
+//     becomes nil. This only applies to the destinations that the
 //     strategies below would parse the string into, which are the numeric
 //     kinds, bool, time.Time, and pointers to those. Destinations that can
 //     hold the string itself have already been assigned by the direct
-//     conversion above. Any other destination cannot hold a string of any
-//     content, so an empty one stays a type mismatch and is reported as an
+//     conversion above, so a *string keeps a pointer to the string rather
+//     than becoming nil. Any other destination cannot hold a string of any
+//     content, so a nil one stays a type mismatch and is reported as an
 //     error instead of being silently turned into a zero value.
+//     Pass the StrictNilStrings Scanner to report an error instead of
+//     assigning the zero value to a type that cannot represent absence.
 //
 //  7. TextMarshaler: If src implements encoding.TextMarshaler, its MarshalText
 //     method is used to get a text representation for further conversion.
@@ -211,19 +216,21 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 		// Continue after errors.ErrUnsupported
 	}
 
-	// Assign the zero value for an empty source string.
-	// An empty cell of a CSV file or a spreadsheet means
-	// "no value" and must not be an error for a numeric,
-	// boolean or time destination, the same way a null
-	// source assigns the zero value above.
-	// Without this the conversions further down would
-	// fail to parse the empty string and the value would
-	// fall through to the unsupported operation error.
-	// Destinations that can hold the string itself have
-	// already been assigned by the direct conversion above,
-	// and dstScanner has been asked first so that a custom
-	// scanner can give "" a different meaning.
-	if srcKind == reflect.String && src.Len() == 0 && zeroValueForEmptyString(dstType) {
+	// Assign the zero value for a source string that means no value.
+	// An empty cell of a CSV file or a spreadsheet means "no value"
+	// and must not be an error for a numeric, boolean or time
+	// destination, the same way a null source assigns the zero value
+	// above. Which strings mean that is configured on the parser,
+	// because only the source format knows whether a cell reading
+	// "NULL" is a null value or that text.
+	// Without this the conversions further down would fail to parse
+	// the string and the value would fall through to the unsupported
+	// operation error.
+	// Destinations that can hold the string itself have already been
+	// assigned by the direct conversion above, and dstScanner has been
+	// asked first so that a Scanner can give it a different meaning,
+	// which is what StrictNilStrings does.
+	if srcKind == reflect.String && parser.IsNil(src.String()) && zeroValueForNilString(dstType) {
 		dst.Set(reflect.Zero(dstType))
 		return nil
 	}
@@ -396,23 +403,23 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	return fmt.Errorf("%w: assigning %s %#v to %s", errors.ErrUnsupported, srcType, src, dstType)
 }
 
-// zeroValueForEmptyString reports whether an empty source string
-// assigns the zero value to a destination of type dstType.
+// zeroValueForNilString reports whether a source string that means
+// no value assigns the zero value to a destination of type dstType.
 //
 // Those are the destinations that the parsing strategies of
-// SmartAssign would parse a non-empty string into, which all fail
-// for "", so an empty cell has to mean "no value" for them.
+// SmartAssign would parse a value string into, which all fail for a
+// nil one, so an empty cell has to mean "no value" for them.
 //
 // Every other destination cannot hold a string of any content,
-// so an empty one is a type mismatch that stays an error instead
+// so a nil one is a type mismatch that stays an error instead
 // of being silently turned into a zero value. Reporting it keeps
 // a struct field wired to the wrong column type failing on the
-// first row instead of only on the first row with a non-empty cell.
+// first row instead of only on the first row with a value.
 //
 // Pointers are followed all the way to the pointed-to type because
 // the pointer allocation strategy of SmartAssign allocates every
 // level, so *string and **string must be treated alike.
-func zeroValueForEmptyString(dstType reflect.Type) bool {
+func zeroValueForNilString(dstType reflect.Type) bool {
 	for dstType.Kind() == reflect.Pointer {
 		dstType = dstType.Elem()
 	}

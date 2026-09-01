@@ -61,10 +61,17 @@ type Parser interface {
 	// Uses Go's standard duration format (e.g., "1h30m", "5s").
 	// Returns an error if the string is not a valid duration.
 	ParseDuration(string) (time.Duration, error)
-}
 
-// Ensure StringParser implements Parser
-var _ Parser = new(StringParser)
+	// IsNil reports whether str represents a nil or null value,
+	// like the empty string of an empty table cell.
+	//
+	// This is a classification of the source string, not a conversion,
+	// because the Parse methods above cannot express it: they return a
+	// value or an error, and "no value" is neither. Whether a nil source
+	// is an error, the zero value, or a nil pointer is decided by the
+	// caller from the destination type, not here.
+	IsNil(str string) bool
+}
 
 // StringParser is a configurable implementation of the Parser interface that handles
 // string-to-value conversions with support for multiple conventions and formats.
@@ -112,6 +119,9 @@ type StringParser struct {
 	// Default includes RFC3339, ISO dates, and several common formats.
 	TimeFormats []string `json:"timeFormats"`
 }
+
+// Ensure StringParser implements Parser
+var _ Parser = new(StringParser)
 
 // DefaultParser is used by SmartAssign when no Parser is passed to it.
 //
@@ -324,6 +334,29 @@ func (p *StringParser) ParseTime(str string) (time.Time, error) {
 //	_, err := parser.ParseDuration("invalid") // error
 func (p *StringParser) ParseDuration(str string) (time.Duration, error) {
 	return time.ParseDuration(str)
+}
+
+// IsNil reports whether str is one of the configured NilStrings,
+// which represent a nil or null value rather than a value to parse.
+//
+// The empty string is one of them by default, because an empty cell of
+// a CSV file or a spreadsheet means "no value", and exports of database
+// tables additionally write literal "NULL" or "null" for it.
+//
+// Parameters:
+//   - str: The string to check
+//
+// Returns:
+//   - bool: true if str is one of NilStrings
+//
+// Example:
+//
+//	parser := NewStringParser()
+//	parser.IsNil("")     // true
+//	parser.IsNil("NULL") // true
+//	parser.IsNil("0")    // false, that is a value
+func (p *StringParser) IsNil(str string) bool {
+	return slices.Contains(p.NilStrings, str)
 }
 
 // ParseTime is a standalone function that parses a time string and returns both the

@@ -188,6 +188,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `Parser.IsNil(str string) bool`, which reports whether a source string
+  represents a nil or null value. `StringParser` answers it from its
+  `NilStrings` field, which existed with a default of `"", "nil", "<nil>",
+  "null", "NULL"` and was documented as "used by higher-level scanning logic"
+  but was read by nothing, while `SmartAssign` hardcoded a check for the empty
+  string.
+
+  The interface needed a method rather than a field because the parsing methods
+  cannot express this: they return a value or an error, and "no value" is
+  neither, so a failing `ParseInt` cannot be told apart from a string that means
+  null. `IsNil` only classifies the source string; what that means for the
+  destination stays with `SmartAssign` and the `Scanner`.
+
 - `Scanners`, a `Scanner` that calls a slice of `Scanner`s in order until one of
   them handles the destination type. The `Scanner` documentation already asked
   unsupported types to be reported as `errors.ErrUnsupported` "allowing scanner
@@ -197,14 +210,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `errors.ErrUnsupported` decides, so an earlier one overrides a later one and
   a real parsing error stops the chain instead of being retried.
 
-- `StrictEmptyStrings`, a `Scanner` that reports an error when an empty source
-  string is assigned to a type that cannot represent the absence of a value,
-  which are the numeric types, `bool`, `time.Time` and `time.Duration`. By
-  default `SmartAssign` assigns the zero value to those, because an empty cell
-  usually means "no value" and reading one must not fail a whole file. The cost
-  is that the parsed data cannot tell an empty cell from a cell containing `0`,
-  and that a struct field wired to a column of the wrong type keeps parsing
-  every empty cell and only fails on the first non-empty one.
+- `StrictNilStrings`, a `Scanner` that reports an error when a source string
+  meaning no value is assigned to a type that cannot represent the absence of a
+  value, which are the numeric types, `bool`, `time.Time` and `time.Duration`.
+  By default `SmartAssign` assigns the zero value to those, because an empty
+  cell usually means "no value" and reading one must not fail a whole file. The
+  cost is that the parsed data cannot tell an empty cell from a cell containing
+  `0`, and that a struct field wired to a column of the wrong type keeps
+  parsing every empty cell and only fails on the first non-empty one.
 
   Pointer destinations are not rejected, they keep the `nil` that `SmartAssign`
   already assigns for an empty string. So the fix for an error is to declare
@@ -212,7 +225,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and keeps an empty cell distinguishable from a parsed zero:
 
   ```go
-  scanner := retable.Scanners{retable.StrictEmptyStrings, myScanner}
+  scanner := retable.Scanners{retable.StrictNilStrings, myScanner}
   rows, err := retable.ViewToStructSlice[Row](view, nil, scanner, nil, nil, nil)
   ```
 
@@ -294,6 +307,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     mark fixes listed under Fixed.
 
 ### Changed
+
+- `SmartAssign` assigns the zero value for every string that the `Parser`
+  reports as nil, not only for the empty string. With the default
+  `StringParser` a cell reading `NULL`, `null`, `nil` or `<nil>` now assigns
+  `0` to an `int` and `nil` to an `*int`, where it used to fail with an
+  unsupported operation error. Exports of database tables write those spellings
+  for a null value, so failing on them meant a column that is optional in the
+  database could not be read at all.
+
+  Destinations that can hold the string itself are unaffected and keep the
+  text, so a `string` or `*string` column still reads `"NULL"` as `"NULL"`.
+  Only the source format knows whether such a cell is a null value or that
+  text, which is why the strings are configured on the `Parser` through
+  `StringParser.NilStrings` rather than hardcoded. A `Parser` with an empty
+  `NilStrings` restores the previous behavior for everything but the empty
+  string.
 
 - `SmartAssign`, `ViewToStructSlice` and the `csvtable` read functions take an
   additional `Parser` parameter after `dstScanner`. Pass `nil` to keep the
