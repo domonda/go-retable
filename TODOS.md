@@ -63,7 +63,18 @@ Worth covering, in rough order of value:
 
 **Why:** A hostile or merely corrupt CSV wedges the parser. This is a library that reads files from outside the process, so it is a denial of service and not only a slow path.
 
-**Context:** Measured on `"a,b\n` repeated: 5 KB → 12 ms, 10 KB → 40 ms, 20 KB → 139 ms, 40 KB → 565 ms, roughly 5x per doubling. A ~1 MB input wedges the parser for minutes. Pre-existing at the merge base and not introduced by the current branch; reproduces through `ParseWithFormat` alone, so format detection is not involved.
+**Context:** Pre-existing at the merge base and not introduced by the current branch.
+
+Use the right fixture: the two entry points blow up on different shapes, and the
+original write-up of this item named the wrong pair.
+
+- Through `ParseDetectFormat`, the shape is `"a,b\n` repeated: 5 KB → 10 ms,
+  10 KB → 37 ms, 20 KB → 142 ms, 40 KB → 590 ms. Roughly 4x per doubling.
+- Through `ParseWithFormat`, that same shape is **linear**. The shape that
+  reproduces there is `a,"b\n` repeated: 20 KB → 9 ms, 40 KB → 36 ms,
+  80 KB → 147 ms, 160 KB → 535 ms, 320 KB → 2.0 s.
+
+A ~1 MB hostile input wedges the parser for minutes either way.
 
 **Effort:** M
 **Priority:** P2
