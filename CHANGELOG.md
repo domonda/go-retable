@@ -8,11 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A number written with a dot or comma thousands separator and an exponent
+  parses correctly: `1.234.567e5` is 1.234567e11, not 1.234567e8. Only a *lone*
+  dot or comma is a decimal separator; two or more are integer grouping. The
+  exponent path applied the first half of that rule and not the second, so the
+  silent factor of 1000 came back on the very path the previous fix below
+  addressed. The rule now lives in one function that both paths call, because
+  splitting it across two copies is what let them drift apart in the first
+  place. `1.234.567` without an exponent was correct throughout, which is what
+  made the gap invisible.
+
 - A number written with a space or apostrophe thousands separator and an
   exponent parses correctly: `1 234e5` is 123400000, not 123400. The rule that
   only a dot or a comma can be the decimal separator was applied where a value
   ends but not where an exponent follows, so the same silent factor of 1000
   survived on that path.
+
+- A nil `*StringParser` stored in a `Parser` interface no longer panics. It is
+  not a nil interface, so `cmp.Or(parser, DefaultParser)` does not replace it
+  and it reaches the accessors; they now treat a nil receiver like a parser with
+  no field set.
+
+- `StringParser.ParseFloat` reports both readings when a cell is rejected.
+  Previously only the `strconv` error survived, so every rejected cell said
+  `invalid syntax` and never said what the locale reading made of the
+  separators. **The error text changed**: code matching on it should match on
+  `errors.Is`/`strconv.ErrSyntax` instead, which still holds through the join.
 
 - `SmartAssign` no longer crashes the process on a self referential pointer
   *source*. Bounding the destination walk left the source branch unbounded, and
@@ -362,8 +383,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   into an arbitrary number, which is what a hand written last-separator-wins
   heuristic would do.
   `strconv.ParseFloat` is still tried first so that everything in Go's float
-  literal syntax keeps parsing unchanged, and its error is the one returned when
-  both fail, so the message quotes the string the caller passed in. A lone comma
+  literal syntax keeps parsing unchanged. When both readings fail the two errors
+  are joined, so the message both quotes the string the caller passed in and says
+  what the locale reading made of its separators. A lone comma
   or dot stays the decimal separator, so `1,234` parses as 1.234 and not as 1234,
   an ambiguity nothing in the string can resolve. All of this is documented on the
   method, along with the first tests for `ParseFloat`, which cover the strategies,
@@ -460,8 +482,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   empty string is not special-cased. Leaving the field nil uses the defaults.
 
 - `SmartAssign`, `ViewToStructSlice` and the `csvtable` read functions take an
-  additional `Parser` parameter after `dstScanner`. Pass `nil` to keep the
-  previous behavior of using a default `StringParser`.
+  additional `Parser` parameter after `dstScanner`. Passing `nil` selects
+  `DefaultParser`. That is the recommended value, but it is **not** the previous
+  behavior: there was no `Parser` on these paths before, and `DefaultParser`
+  parses differently from the `strconv` calls it replaced. See the entries below
+  for what changed: locale aware float parsing, `NULL`/`nil`/`<nil>` read as no
+  value, `yes`/`no`/`on`/`off` read as booleans, and time parsed through
+  `TimeFormats`. A caller that needs the old parsing has to pass a `Parser` that
+  accepts only the Go literal formats.
 
 - `SmartAssign` performs all of its string conversions through the passed
   `Parser` instead of calling `strconv.ParseBool`, `strconv.ParseInt`,
