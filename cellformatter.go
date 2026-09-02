@@ -483,7 +483,15 @@ func ReflectCellFormatterFunc(function any, rawResult bool) (formatter CellForma
 			args[ctxIndex] = reflect.ValueOf(ctx)
 		}
 		if valIndex != -1 {
-			args[valIndex] = AsReflectCellView(view).ReflectCell(row, col)
+			cellVal := AsReflectCellView(view).ReflectCell(row, col)
+			if !cellVal.IsValid() {
+				// A cell of a nil interface has no value to pass,
+				// and reflect.Value.Call panics for a zero Value
+				// argument, so let the caller handle it as a null
+				// value like ReflectTypeCellFormatter.FormatCell does.
+				return "", false, errors.ErrUnsupported
+			}
+			args[valIndex] = cellVal
 		}
 		res := fv.Call(args)
 		if errIndex != -1 && !res[errIndex].IsNil() {
