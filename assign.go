@@ -387,7 +387,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 		if srcKind == reflect.String {
 			if i, e := parser.ParseInt(src.String()); e == nil {
 				if dst.OverflowInt(i) {
-					return fmt.Errorf("%d overflows %s", i, dstType)
+					return fmt.Errorf("%d overflows %s: %w", i, dstType, strconv.ErrRange)
 				}
 				dst.SetInt(i)
 				return nil
@@ -399,7 +399,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 		if srcKind == reflect.String {
 			if i, e := parser.ParseUint(src.String()); e == nil {
 				if dst.OverflowUint(i) {
-					return fmt.Errorf("%d overflows %s", i, dstType)
+					return fmt.Errorf("%d overflows %s: %w", i, dstType, strconv.ErrRange)
 				}
 				dst.SetUint(i)
 				return nil
@@ -414,7 +414,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 				// An infinity that was parsed as such is assigned,
 				// because it represents exactly what the source said.
 				if !math.IsInf(f, 0) && dst.OverflowFloat(f) {
-					return fmt.Errorf("%v overflows %s", f, dstType)
+					return fmt.Errorf("%v overflows %s: %w", f, dstType, strconv.ErrRange)
 				}
 				dst.SetFloat(f)
 				return nil
@@ -580,9 +580,14 @@ func floatKind(kind reflect.Kind) bool {
 	return kind == reflect.Float32 || kind == reflect.Float64
 }
 
-// numericKind reports whether kind is an integer or a float kind.
+// complexKind reports whether kind is one of the complex kinds.
+func complexKind(kind reflect.Kind) bool {
+	return kind == reflect.Complex64 || kind == reflect.Complex128
+}
+
+// numericKind reports whether kind is an integer, float, or complex kind.
 func numericKind(kind reflect.Kind) bool {
-	return integerKind(kind) || floatKind(kind)
+	return integerKind(kind) || floatKind(kind) || complexKind(kind)
 }
 
 // checkNumericConversion reports an error when converting src into dst
@@ -616,25 +621,37 @@ func checkNumericConversion(src, dst reflect.Value) error {
 		f := src.Float()
 		switch {
 		case math.IsNaN(f) || math.IsInf(f, 0):
-			return fmt.Errorf("cannot assign %v to %s", f, dstType)
+			return fmt.Errorf("cannot assign %v to %s: %w", f, dstType, strconv.ErrRange)
 		case f != math.Trunc(f):
-			return fmt.Errorf("%v is not a whole number and cannot be assigned to %s", f, dstType)
+			return fmt.Errorf("%v is not a whole number and cannot be assigned to %s: %w", f, dstType, strconv.ErrSyntax)
 		case unsignedKind(dst.Kind()):
 			if f < 0 || f >= maxUintFloat || dst.OverflowUint(uint64(f)) {
-				return fmt.Errorf("%v overflows %s", f, dstType)
+				return fmt.Errorf("%v overflows %s: %w", f, dstType, strconv.ErrRange)
 			}
 		default:
 			if f >= maxIntFloat || f < -maxIntFloat || dst.OverflowInt(int64(f)) {
-				return fmt.Errorf("%v overflows %s", f, dstType)
+				return fmt.Errorf("%v overflows %s: %w", f, dstType, strconv.ErrRange)
 			}
 		}
 
 	// A finite value that does not fit becomes an infinity, which is a
 	// different number. An infinity the source already held is assigned,
 	// because that is what it says.
+	//
+	// Underflow is deliberately not reported: a value too small for the
+	// destination becomes zero, which is the nearest representable
+	// number rather than a wrapped one, so it is allowed for the same
+	// reason integer to float is. float32(1e-300) is 0.
 	case floatKind(src.Kind()) && floatKind(dst.Kind()):
 		if f := src.Float(); !math.IsInf(f, 0) && dst.OverflowFloat(f) {
-			return fmt.Errorf("%v overflows %s", f, dstType)
+			return fmt.Errorf("%v overflows %s: %w", f, dstType, strconv.ErrRange)
+		}
+
+	// Same rule for the complex kinds, applied to either part.
+	case complexKind(src.Kind()) && complexKind(dst.Kind()):
+		c := src.Complex()
+		if !math.IsInf(real(c), 0) && !math.IsInf(imag(c), 0) && dst.OverflowComplex(c) {
+			return fmt.Errorf("%v overflows %s: %w", c, dstType, strconv.ErrRange)
 		}
 
 	case unsignedKind(src.Kind()) && integerKind(dst.Kind()):
@@ -642,11 +659,11 @@ func checkNumericConversion(src, dst reflect.Value) error {
 		switch {
 		case unsignedKind(dst.Kind()):
 			if dst.OverflowUint(u) {
-				return fmt.Errorf("%d overflows %s", u, dstType)
+				return fmt.Errorf("%d overflows %s: %w", u, dstType, strconv.ErrRange)
 			}
 		default:
 			if u > math.MaxInt64 || dst.OverflowInt(int64(u)) {
-				return fmt.Errorf("%d overflows %s", u, dstType)
+				return fmt.Errorf("%d overflows %s: %w", u, dstType, strconv.ErrRange)
 			}
 		}
 
@@ -658,11 +675,11 @@ func checkNumericConversion(src, dst reflect.Value) error {
 			// wraps to a large positive one, which is the shape that
 			// turns -1 into 255.
 			if i < 0 || dst.OverflowUint(uint64(i)) {
-				return fmt.Errorf("%d overflows %s", i, dstType)
+				return fmt.Errorf("%d overflows %s: %w", i, dstType, strconv.ErrRange)
 			}
 		default:
 			if dst.OverflowInt(i) {
-				return fmt.Errorf("%d overflows %s", i, dstType)
+				return fmt.Errorf("%d overflows %s: %w", i, dstType, strconv.ErrRange)
 			}
 		}
 	}

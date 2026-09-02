@@ -1211,3 +1211,67 @@ func TestSmartAssignNumericConversionDoesNotTruncate(t *testing.T) {
 		require.Equal(t, float64(9007199254740992), f)
 	})
 }
+
+// TestSmartAssignNumericConversionBoundaries pins the edges of
+// checkNumericConversion that the ordinary cases do not reach: the
+// powers of two the float bounds are built from, the kinds that are
+// numeric but neither int nor float, and the two conversions that lose
+// information on purpose.
+func TestSmartAssignNumericConversionBoundaries(t *testing.T) {
+	assign := func(t *testing.T, dstPtr, src any) error {
+		t.Helper()
+		return SmartAssign(reflect.ValueOf(dstPtr).Elem(), reflect.ValueOf(src), nil, nil, nil)
+	}
+
+	// float64 cannot represent MaxInt64 or MaxUint64 exactly, so the
+	// bounds are the powers of two above them. Off by one here would
+	// either admit a value that wraps or reject one that fits.
+	t.Run("the float to integer bounds are exact", func(t *testing.T) {
+		var i64 int64
+		require.NoError(t, assign(t, &i64, -float64(1<<63)), "the most negative int64 is representable")
+		require.Equal(t, int64(math.MinInt64), i64)
+		require.Error(t, assign(t, &i64, float64(1<<63)), "one past the largest int64 is not")
+
+		var u64 uint64
+		require.NoError(t, assign(t, &u64, float64(1<<63)), "still inside uint64")
+		require.Error(t, assign(t, &u64, float64(1<<64)), "one past the largest uint64 is not")
+		require.Error(t, assign(t, &u64, -1.0), "and a negative float has no unsigned reading")
+	})
+
+	t.Run("uintptr is guarded like the other unsigned kinds", func(t *testing.T) {
+		var p uintptr
+		require.NoError(t, assign(t, &p, 42))
+		require.EqualValues(t, 42, p)
+		require.Error(t, assign(t, &p, -1))
+	})
+
+	// complex is a numeric kind too, so the guard has to cover it or its
+	// contract is not the unconditional one the doc states.
+	t.Run("complex overflow is reported", func(t *testing.T) {
+		var c64 complex64
+		require.Error(t, assign(t, &c64, complex(1e300, 0)), "would have stored +Inf")
+		require.Error(t, assign(t, &c64, complex(0, 1e300)), "the imaginary part counts too")
+
+		require.NoError(t, assign(t, &c64, complex(1.5, 2.5)))
+		require.EqualValues(t, complex(1.5, 2.5), c64)
+	})
+
+	// Two losses are allowed on purpose, both because the result is the
+	// nearest representable number rather than a wrapped one.
+	t.Run("underflow to zero is allowed", func(t *testing.T) {
+		var f32 float32
+		require.NoError(t, assign(t, &f32, 1e-300))
+		require.Zero(t, f32, "0 is the nearest float32, the same rationale as integer to float")
+	})
+
+	// The errors carry a sentinel, because the change is breaking and a
+	// caller needs to tell "did not fit" from any other failure.
+	t.Run("the errors are matchable", func(t *testing.T) {
+		var i8 int8
+		require.ErrorIs(t, assign(t, &i8, int64(300)), strconv.ErrRange)
+		require.ErrorIs(t, assign(t, &i8, "300"), strconv.ErrRange, "the string side reports the same")
+
+		var n int
+		require.ErrorIs(t, assign(t, &n, 1234.56), strconv.ErrSyntax, "a fraction is malformed, not out of range")
+	})
+}

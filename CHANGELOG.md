@@ -19,11 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   readers produce string cells, while `sqltable.ScanRowsAsView`,
   `AnyValuesView` and `ReflectValuesView` produce the numbers themselves.
 
-  **This is a breaking change** for a caller that relied on the narrowing.
+  **This is a breaking change** for a caller that relied on the narrowing. The
+  errors wrap `strconv.ErrRange`, or `strconv.ErrSyntax` for a fraction assigned
+  to an integer, so a caller can tell "did not fit" from any other assignment
+  failure with `errors.Is`. The string side reports the same sentinels.
   Integer to float is deliberately still allowed: above 2^53 it loses precision
   but lands on the closest representable number rather than a wrapped one, and
-  rejecting it would reject every ID stored in a `float64`. An infinity the
-  source already held is also still assigned, because that is what it says.
+  rejecting it would reject every ID stored in a `float64`. Float underflow is
+  allowed for the same reason: `float32(1e-300)` is 0, which is the nearest
+  representable value and not a wrapped one. An infinity the source already held
+  is also still assigned, because that is what it says.
 
 - A number written with a dot or comma thousands separator and an exponent
   parses correctly: `1.234.567e5` is 1.234567e11, not 1.234567e8. Only a *lone*
@@ -49,8 +54,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `StringParser.ParseFloat` reports both readings when a cell is rejected.
   Previously only the `strconv` error survived, so every rejected cell said
   `invalid syntax` and never said what the locale reading made of the
-  separators. **The error text changed**: code matching on it should match on
-  `errors.Is`/`strconv.ErrSyntax` instead, which still holds through the join.
+  separators. **The error text changed**: code matching on it should use
+  `errors.Is` instead, against `strconv.ErrSyntax` for a malformed number and
+  `strconv.ErrRange` for one that is out of range. Both still hold through the
+  join; matching on either alone was never enough, and matching on the message
+  no longer works.
 
 - `SmartAssign` no longer crashes the process on a self referential pointer
   *source*. Bounding the destination walk left the source branch unbounded, and

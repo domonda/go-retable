@@ -277,6 +277,18 @@ func Test_parseFloat_groupSeparatorBeforeExponent(t *testing.T) {
 		})
 	}
 
+	// Resolving a grouping at the "e" clears the grouping state so the
+	// end of string block does not judge it twice, which also re-arms
+	// the state machine for the digits of the exponent itself. No
+	// number has a separator in its exponent, so one is rejected rather
+	// than silently grouped away: "1.234.567e 123" must not parse.
+	for _, str := range []string{"1.234.567e 123", ".234.234e'234", "1 234e 567", "1e2.5", "1e1,000"} {
+		t.Run("separator in the exponent "+str, func(t *testing.T) {
+			_, err := parseFloat(str)
+			require.Error(t, err, "parseFloat(%q)", str)
+		})
+	}
+
 	// A space or apostrophe group that is not 3 digits is not a
 	// grouping, before an exponent just as at the end of the string.
 	for _, str := range []string{"1 23e5", "1 2345e5", "1'23e5"} {
