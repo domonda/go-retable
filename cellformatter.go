@@ -491,6 +491,13 @@ func ReflectCellFormatterFunc(function any, rawResult bool) (formatter CellForma
 				// value like ReflectTypeCellFormatter.FormatCell does.
 				return "", false, errors.ErrUnsupported
 			}
+			if !cellVal.Type().AssignableTo(ft.In(valIndex)) {
+				// The formatter is registered by kind or by interface,
+				// so the cell can be a defined type the function does
+				// not accept. reflect.Value.Call panics on that, and
+				// nothing on the formatter path recovers.
+				return "", false, errors.ErrUnsupported
+			}
 			args[valIndex] = cellVal
 		}
 		res := fv.Call(args)

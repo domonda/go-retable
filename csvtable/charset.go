@@ -182,28 +182,16 @@ func decodeUTF32AfterBOM(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 }
 
 // decodeUTF32Encoding decodes UTF-32 for a named encoding, stripping a
-// leading byte order mark of that encoding like decodeUTF16 does.
+// leading byte order mark of that encoding.
 //
 // golang.org/x/text decodes the mark to U+FEFF instead of removing it,
 // and go-types passed it straight through, so an encoding named
 // "UTF-32LE" turned the mark into the first character of the first cell.
 // That was unreachable before the byte order mark detection was fixed,
 // because UTF-32LE data was never detected as UTF-32LE.
-// decodeUTF16Encoding decodes UTF-16 for a named encoding, stripping a
-// leading byte order mark of that encoding.
 //
-// The mark of the named encoding is matched before falling back to
-// detection, so a caller that named UTF-16LE reads the valid sequence
-// FF FE 00 00, a mark followed by U+0000, as UTF-16LE instead of having
-// it rejected as the UTF-32LE mark.
-func decodeUTF16Encoding(b []byte, bom charsetBOM) ([]byte, error) {
-	b, err := trimExpectedBOM(b, bom)
-	if err != nil {
-		return nil, err
-	}
-	return decodeUTF16(b, bom.byteOrder())
-}
-
+// The UTF-16 encodings need no counterpart: charsetBOM.decode already
+// is one for them, so utfEncodings uses the method directly.
 func decodeUTF32Encoding(b []byte, bom charsetBOM) ([]byte, error) {
 	b, err := trimExpectedBOM(b, bom)
 	if err != nil {
@@ -214,8 +202,8 @@ func decodeUTF32Encoding(b []byte, bom charsetBOM) ([]byte, error) {
 
 var utfEncodings = map[string]*charsetEncoding{
 	"UTF-8":    {name: "UTF-8", decode: bomUTF8.decode},
-	"UTF-16LE": {name: "UTF-16LE", decode: func(b []byte) ([]byte, error) { return decodeUTF16Encoding(b, bomUTF16LE) }},
-	"UTF-16BE": {name: "UTF-16BE", decode: func(b []byte) ([]byte, error) { return decodeUTF16Encoding(b, bomUTF16BE) }},
+	"UTF-16LE": {name: "UTF-16LE", decode: bomUTF16LE.decode},
+	"UTF-16BE": {name: "UTF-16BE", decode: bomUTF16BE.decode},
 	"UTF-32LE": {name: "UTF-32LE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32LE) }},
 	"UTF-32BE": {name: "UTF-32BE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32BE) }},
 }
@@ -245,8 +233,16 @@ var charmapsByUpperName = sync.OnceValue(func() map[string]*charmap.Charmap {
 
 func charmapEncoding(name string, cm *charmap.Charmap) *charsetEncoding {
 	return &charsetEncoding{
-		name:   name,
-		decode: func(b []byte) ([]byte, error) { return cm.NewDecoder().Bytes(b) },
+		name: name,
+		decode: func(b []byte) ([]byte, error) {
+			// Excel writes a UTF-8 byte order mark in front of files it
+			// otherwise encodes in a code page, and a code page has no
+			// mark of its own, so it can only be that one. Decoding it
+			// as text puts "ï»¿" in front of the first column title,
+			// which then matches no struct field and leaves that whole
+			// column at its zero value for every row, silently.
+			return cm.NewDecoder().Bytes(trimUTF8BOM(b))
+		},
 	}
 }
 

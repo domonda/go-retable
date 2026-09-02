@@ -1,18 +1,30 @@
 package retable
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"reflect"
 )
 
-// Scanner is the interface for parsing string values into Go values using reflection.
-// This is the inverse operation of formatting - it converts string representations
-// back into typed Go values.
+// Scanner assigns a string to a destination of any type, dispatching on the
+// type of that destination. It is the extension point of SmartAssign for a
+// string source and the inverse of Formatter, which converts a reflect.Value
+// into a string.
 //
-// Scanners work in conjunction with Parsers to handle the actual string-to-value conversion.
-// The Scanner is responsible for orchestrating the conversion, while the Parser provides
-// the primitive parsing operations (int, float, bool, time, etc.).
+// A Scanner does not do the conversions of Go's basic types itself: it decides
+// what the string means for the destination it was handed and calls the Parser
+// it receives for the number, bool, time and duration conversions. That
+// division is what separates the two interfaces. A Parser has a fixed method
+// per type and never sees a destination, so it can only answer what a string
+// is as an int64 or a time.Time, while a Scanner sees the destination type and
+// decides what the string means for it, including that it is an error, which
+// is what StrictNilStrings does.
+//
+// SmartAssign asks the Scanner after its direct conversion, so a destination
+// that the source string is convertible to, which are string, a type defined
+// as string, []byte and []rune, is assigned the string itself and never
+// reaches the Scanner.
 //
 // The Scanner interface operates at a lower level than the table system, working directly
 // with reflect.Value. This makes it reusable across different contexts beyond just table
@@ -42,19 +54,25 @@ import (
 //	err := scanner.ScanString(destValue, "42", parser)
 //	// result == 42
 type Scanner interface {
-	// ScanString parses a string value into the destination reflect.Value.
+	// ScanString assigns str to dest, converted to the type of dest.
 	//
 	// The dest parameter must be settable (obtained from a pointer's Elem()).
 	// The scanner should check dest's type and use the appropriate parser method
 	// to convert the string.
 	//
 	// Returns errors.ErrUnsupported if the scanner doesn't support the dest type,
-	// allowing scanner chains. Other errors indicate actual parsing failures.
+	// allowing scanner chains, see MultiScanner. Any other error is a parsing
+	// failure that stops the chain and SmartAssign instead of falling through
+	// to the built-in conversions.
 	//
 	// Parameters:
 	//   - dest: The settable reflect.Value to write the parsed value into
 	//   - str: The string to parse
-	//   - parser: The Parser to use for primitive type conversions
+	//   - parser: The Parser to use for the conversions of Go's basic types.
+	//     SmartAssign defaults it to the shared DefaultParser, which must not
+	//     be modified, so a Scanner that reconfigures the Parser it receives
+	//     needs the caller to pass one explicitly. ViewToStructSlice allocates
+	//     a Parser per view when it has a Scanner but was passed none.
 	//
 	// Returns:
 	//   - error: Parsing error, or errors.ErrUnsupported if type not supported
@@ -154,6 +172,10 @@ func (s multiScanner) ScanString(dest reflect.Value, str string, parser Parser) 
 //
 //	scanner := retable.MultiScanner(retable.StrictNilStrings, myScanner)
 var StrictNilStrings ScannerFunc = func(dest reflect.Value, str string, parser Parser) error {
+	// A Scanner is documented as usable on its own, and only SmartAssign
+	// substitutes DefaultParser for a nil one, so a direct call has to
+	// resolve it here too instead of dereferencing nil.
+	parser = cmp.Or(parser, DefaultParser)
 	if !parser.IsNil(str) || dest.Kind() == reflect.Pointer || !zeroValueForNilString(dest.Type()) {
 		return errors.ErrUnsupported
 	}

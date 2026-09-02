@@ -200,9 +200,25 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 				return 0, 0, 0, 0, fmt.Errorf("e can't be the first or a repeating character: %q", str)
 			}
 			if numGroupingRunes > 0 && !pointWritten {
-				floatBuilder.WriteByte('.')
-				pointWritten = true
-				decimalSep = '.'
+				// Same rule as at the end of the string below: only a
+				// dot or a comma can be the decimal separator. A space
+				// or an apostrophe is only ever a thousands separator,
+				// so writing a point here would turn "1 234e5" into
+				// 123400 instead of 123400000.
+				if lastGroupingRune == '.' || lastGroupingRune == ',' {
+					floatBuilder.WriteByte('.')
+					pointWritten = true
+					decimalSep = '.'
+				} else {
+					if lastDigitIndex-lastGroupingIndex != 3 {
+						return 0, 0, 0, 0, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
+					}
+					thousandsSep = lastGroupingRune
+					// Resolved here, so the end of string block below
+					// does not judge the same grouping a second time
+					// against the digits of the exponent.
+					numGroupingRunes = 0
+				}
 			}
 			floatBuilder.WriteString(trimmedSignsStr[lastNonDigitIndex+1 : i+1]) // i+1 to write including the 'e'
 			lastNonDigitIndex = i
