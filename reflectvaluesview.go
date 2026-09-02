@@ -147,7 +147,14 @@ func (view *ReflectValuesView) Cell(row, col int) any {
 	if row < 0 || col < 0 || row >= len(view.Rows) || col >= len(view.Rows[row]) {
 		return nil
 	}
-	return view.Rows[row][col].Interface()
+	val := view.Rows[row][col]
+	if !val.IsValid() {
+		// A cell of a nil interface has no value to unwrap, and
+		// reflect.Value.Interface panics for a zero Value, so it is
+		// reported as no value like an out of range position is.
+		return nil
+	}
+	return val.Interface()
 }
 
 // ReflectCell returns the reflect.Value at the specified row and column indices.
@@ -252,7 +259,12 @@ type SingleReflectValueView struct {
 //	priceView := retable.NewSingleReflectValueView(source, 1, 1)
 //	fmt.Println(priceView.Cell(0, 0)) // Output: 19.99
 func NewSingleReflectValueView(source View, row, col int) *SingleReflectValueView {
-	if source == nil || row < 0 || col < 0 || row >= source.NumRows() || col >= len(source.Columns()) {
+	if source == nil {
+		// Reading the title of the source would dereference the nil
+		// this branch exists to guard against.
+		return &SingleReflectValueView{}
+	}
+	if row < 0 || col < 0 || row >= source.NumRows() || col >= len(source.Columns()) {
 		return &SingleReflectValueView{Tit: source.Title()}
 	}
 	return &SingleReflectValueView{
@@ -283,7 +295,10 @@ func (view *SingleReflectValueView) NumRows() int { return 1 }
 //
 // Time complexity: O(1)
 func (view *SingleReflectValueView) Cell(row, col int) any {
-	if row != 0 || col != 0 {
+	if row != 0 || col != 0 || !view.Val.IsValid() {
+		// The zero value of the view, which a position outside the
+		// source produces, holds no value to unwrap, and
+		// reflect.Value.Interface panics for a zero Value.
 		return nil
 	}
 	return view.Val.Interface()
