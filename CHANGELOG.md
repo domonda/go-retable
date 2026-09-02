@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A numeric cell that does not fit its destination is reported instead of
+  silently becoming a different number. `reflect.Value.Convert` applies Go's
+  conversion rules, which truncate and wrap without complaining, so
+  `int64(300)` into an `int8` was 44, `float64(1234.56)` into an `int` was 1234
+  with the cents gone, `int64(-1)` into a `uint8` was 255 and a float too large
+  for its destination became an infinity. The string side of `SmartAssign`
+  already reported all of these, so which behavior a caller got depended only on
+  whether the `View` held strings or numbers: the `csvtable` and `exceltable`
+  readers produce string cells, while `sqltable.ScanRowsAsView`,
+  `AnyValuesView` and `ReflectValuesView` produce the numbers themselves.
+
+  **This is a breaking change** for a caller that relied on the narrowing.
+  Integer to float is deliberately still allowed: above 2^53 it loses precision
+  but lands on the closest representable number rather than a wrapped one, and
+  rejecting it would reject every ID stored in a `float64`. An infinity the
+  source already held is also still assigned, because that is what it says.
+
 - A number written with a dot or comma thousands separator and an exponent
   parses correctly: `1.234.567e5` is 1.234567e11, not 1.234567e8. Only a *lone*
   dot or comma is a decimal separator; two or more are integer grouping. The

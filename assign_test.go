@@ -1116,3 +1116,98 @@ func TestSmartAssignSelfReferentialPointerSource(t *testing.T) {
 	require.NoError(t, SmartAssign(reflect.ValueOf(&str).Elem(), reflect.ValueOf(&s), nil, nil, nil))
 	require.Equal(t, "text", str)
 }
+
+// TestSmartAssignNumericConversionDoesNotTruncate covers the numeric to
+// numeric path, which reaches SmartAssign through reflect.Value.Convert
+// rather than through the Parser.
+//
+// Go's conversion rules truncate and wrap silently, and the string side
+// of SmartAssign already reports that as an error, so without the guard
+// which of the two a caller gets depends only on whether the View holds
+// strings or numbers. A csvtable or exceltable read produces string
+// cells; sqltable.ScanRowsAsView over a live *sql.Rows, AnyValuesView
+// and ReflectValuesView produce the numbers themselves.
+func TestSmartAssignNumericConversionDoesNotTruncate(t *testing.T) {
+	assign := func(t *testing.T, dstPtr, src any) error {
+		t.Helper()
+		return SmartAssign(reflect.ValueOf(dstPtr).Elem(), reflect.ValueOf(src), nil, nil, nil)
+	}
+
+	t.Run("a value that does not fit is an error, not a different number", func(t *testing.T) {
+		var i8 int8
+		require.ErrorContains(t, assign(t, &i8, int64(300)), "300 overflows int8")
+		require.Zero(t, i8, "and nothing is assigned; Convert would have stored 44")
+
+		var i32 int32
+		require.ErrorContains(t, assign(t, &i32, 1e20), "overflows int32", "Convert stores -1")
+
+		var f32 float32
+		require.ErrorContains(t, assign(t, &f32, 1e300), "overflows float32", "Convert stores +Inf")
+
+		var n int
+		require.ErrorContains(t, assign(t, &n, uint64(math.MaxUint64)), "overflows int")
+	})
+
+	t.Run("a negative number has no unsigned reading", func(t *testing.T) {
+		var u8 uint8
+		require.ErrorContains(t, assign(t, &u8, int64(-1)), "-1 overflows uint8")
+		require.Zero(t, u8, "Convert would have stored 255")
+	})
+
+	t.Run("a fraction assigned to an integer is an error", func(t *testing.T) {
+		// The cents of a money column have nowhere to go in an int, and
+		// losing them silently is the whole reason this is reported.
+		var n int
+		require.ErrorContains(t, assign(t, &n, 1234.56), "not a whole number")
+		require.Zero(t, n, "Convert would have stored 1234")
+
+		require.ErrorContains(t, assign(t, &n, math.NaN()), "cannot assign NaN")
+		require.ErrorContains(t, assign(t, &n, math.Inf(1)), "cannot assign +Inf")
+	})
+
+	// The guard has to stay narrow: everything that represents its
+	// source exactly still assigns, or a numeric column stops reading.
+	t.Run("values that fit are still assigned", func(t *testing.T) {
+		var i8 int8
+		require.NoError(t, assign(t, &i8, int64(42)))
+		require.EqualValues(t, 42, i8)
+
+		var u8 uint8
+		require.NoError(t, assign(t, &u8, int64(255)))
+		require.EqualValues(t, 255, u8, "the boundary value is not an overflow")
+
+		var whole int
+		require.NoError(t, assign(t, &whole, 1234.0))
+		require.Equal(t, 1234, whole, "a float that is a whole number is one")
+
+		var f32 float32
+		require.NoError(t, assign(t, &f32, 0.5))
+		require.EqualValues(t, 0.5, f32)
+
+		var d time.Duration
+		require.NoError(t, assign(t, &d, int64(5e9)))
+		require.Equal(t, 5*time.Second, d, "a defined int64 type still converts")
+
+		var minInt int64
+		require.NoError(t, assign(t, &minInt, -float64(1<<63)))
+		require.Equal(t, int64(math.MinInt64), minInt, "the most negative int64 is representable")
+	})
+
+	// An infinity the source already held is what the source says, so it
+	// is assigned. Only a finite value that BECOMES an infinity is a
+	// different number.
+	t.Run("an infinity is passed through", func(t *testing.T) {
+		var f32 float32
+		require.NoError(t, assign(t, &f32, math.Inf(1)))
+		require.True(t, math.IsInf(float64(f32), 1))
+	})
+
+	// Integer to float loses precision above 2^53 but lands on the
+	// closest representable number rather than a wrapped one. Rejecting
+	// it would reject every ID stored in a float64, so it is allowed.
+	t.Run("integer to float precision loss is allowed", func(t *testing.T) {
+		var f float64
+		require.NoError(t, assign(t, &f, int64(9007199254740993)))
+		require.Equal(t, float64(9007199254740992), f)
+	})
+}

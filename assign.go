@@ -24,6 +24,9 @@ import (
 //     Integer sources are excluded for string destinations because
 //     reflect.Value.Convert applies Go's string(rune) conversion, which
 //     would yield the character with that code point instead of digits.
+//     A numeric source that the destination cannot represent is reported
+//     rather than converted, because Go's rules truncate and wrap
+//     silently: see checkNumericConversion.
 //
 //  3. Nil pointer handling: If src is a nil pointer, dst is set to its zero value.
 //
@@ -193,6 +196,12 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 			}
 			if arrayType.Kind() == reflect.Array && arrayType.Len() > src.Len() {
 				return fmt.Errorf("cannot convert slice of length %d to array of length %d", src.Len(), arrayType.Len())
+			}
+		}
+		if numericKind(srcKind) && numericKind(dstKind) {
+			err := checkNumericConversion(src, dst)
+			if err != nil {
+				return err
 			}
 		}
 		dst.Set(src.Convert(dstType))
@@ -555,4 +564,112 @@ func integerKind(kind reflect.Kind) bool {
 		return true
 	}
 	return false
+}
+
+// unsignedKind reports whether kind is one of the unsigned integer kinds.
+func unsignedKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return false
+}
+
+// floatKind reports whether kind is one of the float kinds.
+func floatKind(kind reflect.Kind) bool {
+	return kind == reflect.Float32 || kind == reflect.Float64
+}
+
+// numericKind reports whether kind is an integer or a float kind.
+func numericKind(kind reflect.Kind) bool {
+	return integerKind(kind) || floatKind(kind)
+}
+
+// checkNumericConversion reports an error when converting src into dst
+// would store a different number than the one src holds.
+//
+// reflect.Value.Convert applies Go's conversion rules, which truncate and
+// wrap without complaining: int64(300) becomes int8(44), float64(1234.56)
+// becomes int(1234), int64(-1) becomes uint8(255), and a float too large
+// for its destination becomes an infinity. That is correct Go and wrong
+// for table data, where the cell said one number and the struct field
+// would hold another with nothing to notice it by. The string side of
+// SmartAssign already reports every one of these, so without this the two
+// routes into the same field disagree about whether a value that does not
+// fit is an error, and which one a caller gets depends only on whether
+// the View holds strings or numbers.
+func checkNumericConversion(src, dst reflect.Value) error {
+	// One past the largest value of each destination, as a float.
+	// float64 cannot represent MaxInt64 or MaxUint64 exactly, so the
+	// bound has to be the power of two above them, which it can.
+	const (
+		maxIntFloat  = float64(1 << 63)
+		maxUintFloat = float64(1 << 64)
+	)
+	dstType := dst.Type()
+
+	switch {
+	// A float source has to hold a whole number in range. The
+	// fractional digits have nowhere to go in an integer, and dropping
+	// them silently is how a money column loses its cents.
+	case floatKind(src.Kind()) && integerKind(dst.Kind()):
+		f := src.Float()
+		switch {
+		case math.IsNaN(f) || math.IsInf(f, 0):
+			return fmt.Errorf("cannot assign %v to %s", f, dstType)
+		case f != math.Trunc(f):
+			return fmt.Errorf("%v is not a whole number and cannot be assigned to %s", f, dstType)
+		case unsignedKind(dst.Kind()):
+			if f < 0 || f >= maxUintFloat || dst.OverflowUint(uint64(f)) {
+				return fmt.Errorf("%v overflows %s", f, dstType)
+			}
+		default:
+			if f >= maxIntFloat || f < -maxIntFloat || dst.OverflowInt(int64(f)) {
+				return fmt.Errorf("%v overflows %s", f, dstType)
+			}
+		}
+
+	// A finite value that does not fit becomes an infinity, which is a
+	// different number. An infinity the source already held is assigned,
+	// because that is what it says.
+	case floatKind(src.Kind()) && floatKind(dst.Kind()):
+		if f := src.Float(); !math.IsInf(f, 0) && dst.OverflowFloat(f) {
+			return fmt.Errorf("%v overflows %s", f, dstType)
+		}
+
+	case unsignedKind(src.Kind()) && integerKind(dst.Kind()):
+		u := src.Uint()
+		switch {
+		case unsignedKind(dst.Kind()):
+			if dst.OverflowUint(u) {
+				return fmt.Errorf("%d overflows %s", u, dstType)
+			}
+		default:
+			if u > math.MaxInt64 || dst.OverflowInt(int64(u)) {
+				return fmt.Errorf("%d overflows %s", u, dstType)
+			}
+		}
+
+	case integerKind(src.Kind()) && integerKind(dst.Kind()):
+		i := src.Int()
+		switch {
+		case unsignedKind(dst.Kind()):
+			// A negative number has no unsigned reading. Converting it
+			// wraps to a large positive one, which is the shape that
+			// turns -1 into 255.
+			if i < 0 || dst.OverflowUint(uint64(i)) {
+				return fmt.Errorf("%d overflows %s", i, dstType)
+			}
+		default:
+			if dst.OverflowInt(i) {
+				return fmt.Errorf("%d overflows %s", i, dstType)
+			}
+		}
+	}
+
+	// An integer source into a float destination is left alone. Above
+	// 2^53 it loses precision, but it still lands on the closest
+	// representable number rather than a wrapped one, and rejecting it
+	// would reject every ID stored in a float64.
+	return nil
 }
