@@ -690,7 +690,7 @@ func FprintlnView(w io.Writer, view View) error {
 //	    log.Fatal(err)
 //	}
 //	fmt.Print(str)
-func SprintlnView(w io.Writer, view View) (string, error) {
+func SprintlnView(view View) (string, error) {
 	var b strings.Builder
 	err := FprintlnView(&b, view)
 	return b.String(), err
@@ -753,7 +753,6 @@ func FprintlnTable(w io.Writer, title string, table any) error {
 // and returns the resulting string. See FprintlnTable for details on supported table types.
 //
 // Parameters:
-//   - w: Ignored parameter (kept for signature compatibility)
 //   - title: The title to display above the table (can be empty)
 //   - table: The table data to format
 //
@@ -762,12 +761,12 @@ func FprintlnTable(w io.Writer, title string, table any) error {
 // Example:
 //
 //	people := []Person{{Name: "John", Age: 30}}
-//	str, err := SprintlnTable(nil, "People", people)
+//	str, err := SprintlnTable("People", people)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	fmt.Print(str)
-func SprintlnTable(w io.Writer, title string, table any) (string, error) {
+func SprintlnTable(title string, table any) (string, error) {
 	var b strings.Builder
 	err := FprintlnTable(&b, title, table)
 	return b.String(), err

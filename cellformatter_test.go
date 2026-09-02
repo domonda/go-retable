@@ -2,6 +2,7 @@ package retable
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -128,4 +129,48 @@ func TestReflectCellFormatterFunc(t *testing.T) {
 			require.NoErrorf(t, err, "gotFormatter() error = %v", err)
 		})
 	}
+}
+
+// TestReflectCellFormatterFuncInvalidCell covers that a cell with no
+// value is reported as unsupported instead of panicking.
+//
+// The formatter passes the cell into reflect.Value.Call, which panics
+// with "reflect: Call using zero Value argument" for a zero Value. A
+// nil interface cell of an AnyValuesView produces exactly that, so this
+// was reachable through a view of this package, and the panic escaped
+// into the caller because nothing in the formatter path recovers.
+// ReflectTypeCellFormatter.FormatCell has had the same guard all along.
+func TestReflectCellFormatterFuncInvalidCell(t *testing.T) {
+	formatter, valType, err := ReflectCellFormatterFunc(
+		func(s string) (string, error) { return "fn:" + s, nil },
+		false,
+	)
+	require.NoError(t, err)
+	require.Equal(t, reflect.TypeFor[string](), valType)
+
+	t.Run("nil interface cell", func(t *testing.T) {
+		view := &AnyValuesView{Cols: []string{"a"}, Rows: [][]any{{nil}}}
+		require.False(t, AsReflectCellView(view).ReflectCell(0, 0).IsValid())
+
+		str, raw, err := formatter(context.Background(), view, 0, 0)
+		require.ErrorIs(t, err, errors.ErrUnsupported, "an alternative formatter has to get a chance")
+		require.Empty(t, str)
+		require.False(t, raw)
+	})
+
+	t.Run("out of range cell", func(t *testing.T) {
+		view := NewStringsView("", [][]string{{"only a header"}})
+		require.Zero(t, view.NumRows())
+
+		_, _, err := formatter(context.Background(), view, 0, 0)
+		require.ErrorIs(t, err, errors.ErrUnsupported)
+	})
+
+	// A cell that does have a value is still formatted
+	t.Run("valid cell", func(t *testing.T) {
+		view := NewStringsView("", [][]string{{"col"}, {"x"}})
+		str, _, err := formatter(context.Background(), view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "fn:x", str)
+	})
 }

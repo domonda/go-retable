@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A cell formatter built by `ReflectCellFormatterFunc` reports a cell without a
+  value as an unsupported operation instead of panicking. It passed the cell
+  straight into `reflect.Value.Call`, which panics with `reflect: Call using
+  zero Value argument` for a zero `reflect.Value`. A nil interface cell of an
+  `AnyValuesView` produces exactly that, so the panic was reachable through a
+  view of this package and escaped into the caller, because nothing on the
+  formatter path recovers. `ReflectTypeCellFormatter.FormatCell` has had the
+  same guard all along.
+
 - `SmartAssign` no longer hangs or crashes on a self referential pointer type.
   `type SelfPtr *SelfPtr` is legal Go and its element type is itself, so the
   walk to the pointed-to type never ended: an empty cell spun forever and a
@@ -365,6 +374,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     mark fixes listed under Fixed.
 
 ### Changed
+
+- `SprintlnView` and `SprintlnTable` no longer take an `io.Writer`. Both build
+  their result into a `strings.Builder` and return it, so the parameter was
+  never written to; its own documentation described it as "Ignored parameter
+  (kept for signature compatibility)", and the `SprintlnView` example already
+  showed the call without it. Use the `Fprintln` pair to write to a writer.
 
 - `SmartAssign` assigns the zero value for every string that the `Parser`
   reports as nil, not only for the empty string. With the default

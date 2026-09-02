@@ -353,16 +353,15 @@ func ExamplePrintlnTable() {
 }
 
 // TestSprintlnViewAndTable covers the two Sprintln helpers, which had no
-// test. Note that both take an io.Writer they never write to: the result
-// is built into a local strings.Builder and returned. Passing nil is
-// therefore safe, which is what the doc examples do.
+// test. They build the result into a strings.Builder and return it, so
+// unlike the Fprintln pair they take no writer.
 func TestSprintlnViewAndTable(t *testing.T) {
 	view := NewStringsView("People", [][]string{
 		{"Name", "Age"},
 		{"Erik", "42"},
 	})
 
-	str, err := SprintlnView(nil, view)
+	str, err := SprintlnView(view)
 	require.NoError(t, err)
 	require.Contains(t, str, "Name")
 	require.Contains(t, str, "Erik")
@@ -372,14 +371,14 @@ func TestSprintlnViewAndTable(t *testing.T) {
 		Name string
 		Age  int
 	}
-	str, err = SprintlnTable(nil, "People", []Person{{Name: "Erik", Age: 42}})
+	str, err = SprintlnTable("People", []Person{{Name: "Erik", Age: 42}})
 	require.NoError(t, err)
 	require.Contains(t, str, "People")
 	require.Contains(t, str, "Name")
 	require.Contains(t, str, "Erik")
 
 	// A table type that has no viewer is reported
-	_, err = SprintlnTable(nil, "", 42)
+	_, err = SprintlnTable("", 42)
 	require.Error(t, err)
 }
 
