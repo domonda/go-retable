@@ -200,19 +200,15 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 				return 0, 0, 0, 0, fmt.Errorf("e can't be the first or a repeating character: %q", str)
 			}
 			if numGroupingRunes > 0 && !pointWritten {
-				// Same rule as at the end of the string below: only a
-				// dot or a comma can be the decimal separator. A space
-				// or an apostrophe is only ever a thousands separator,
-				// so writing a point here would turn "1 234e5" into
-				// 123400 instead of 123400000.
-				if lastGroupingRune == '.' || lastGroupingRune == ',' {
+				isDecimalSep, err := lastGroupingIsDecimalSep(numGroupingRunes, lastGroupingRune, lastDigitIndex, lastGroupingIndex, str)
+				if err != nil {
+					return 0, 0, 0, 0, err
+				}
+				if isDecimalSep {
 					floatBuilder.WriteByte('.')
 					pointWritten = true
-					decimalSep = '.'
+					decimalSep = lastGroupingRune
 				} else {
-					if lastDigitIndex-lastGroupingIndex != 3 {
-						return 0, 0, 0, 0, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
-					}
 					thousandsSep = lastGroupingRune
 					// Resolved here, so the end of string block below
 					// does not judge the same grouping a second time
@@ -234,33 +230,15 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 	}
 
 	if numGroupingRunes > 0 && !pointWritten {
-		if numGroupingRunes > 1 {
-			// If more than one grouping rune has been written, but no point
-			// then it was pure integer grouping, so the last there
-			// have to be 3 bytes since last grouping rune
-			if lastDigitIndex-lastGroupingIndex != 3 {
-				return 0, 0, 0, 0, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
-			}
-			thousandsSep = lastGroupingRune
-		} else if lastGroupingRune == '.' || lastGroupingRune == ',' {
+		isDecimalSep, err := lastGroupingIsDecimalSep(numGroupingRunes, lastGroupingRune, lastDigitIndex, lastGroupingIndex, str)
+		if err != nil {
+			return 0, 0, 0, 0, err
+		}
+		if isDecimalSep {
 			floatBuilder.WriteByte('.')
 			pointWritten = true
 			decimalSep = lastGroupingRune
 		} else {
-			// A space or an apostrophe is only ever a thousands
-			// separator, no locale writes a decimal fraction after
-			// one, so the digits following it have to be a complete
-			// group of three.
-			//
-			// Without this a single group parses as a fraction and
-			// "1 234" becomes 1.234 instead of 1234, which is not an
-			// error anywhere downstream: a currency column then mixes
-			// amounts that are a factor of 1000 apart, because the
-			// values that do carry decimals ("1 234,56") take the
-			// branch above and stay correct.
-			if lastDigitIndex-lastGroupingIndex != 3 {
-				return 0, 0, 0, 0, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
-			}
 			thousandsSep = lastGroupingRune
 		}
 	}
@@ -284,4 +262,31 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 
 	}
 	return f, thousandsSep, decimalSep, decimals, nil
+}
+
+// lastGroupingIsDecimalSep reports whether the last grouping rune of a
+// number is its decimal separator instead of a thousands separator.
+//
+// Only a dot or a comma can be a decimal separator, and only when it is
+// the single grouping rune in the number. A space or an apostrophe is
+// never one, and two or more separators mean pure integer grouping.
+//
+// Both conditions matter and both fail silently when they are missing,
+// which is why they are decided in one place instead of at every call
+// site: without the dot-or-comma test "1 234" parses as 1.234, and
+// without the single-group test "1.234.567e5" parses as 1234.567e5. Neither
+// is an error anywhere downstream, so a currency column ends up mixing
+// amounts that are a factor of 1000 apart while the values that do carry
+// decimals ("1 234,56") stay correct.
+//
+// A rune that is not the decimal separator is a thousands separator, and
+// then the digits following it have to be a complete group of three.
+func lastGroupingIsDecimalSep(numGroupingRunes int, lastGroupingRune rune, lastDigitIndex, lastGroupingIndex int, str string) (bool, error) {
+	if numGroupingRunes == 1 && (lastGroupingRune == '.' || lastGroupingRune == ',') {
+		return true, nil
+	}
+	if lastDigitIndex-lastGroupingIndex != 3 {
+		return false, fmt.Errorf("thousands separators have to be 3 characters apart: %q", str)
+	}
+	return false, nil
 }
