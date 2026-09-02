@@ -314,6 +314,38 @@ Supports:
 - Null-like value handling
 - Custom formatters and scanners
 
+#### A number that does not fit is an error
+
+Go's conversion rules truncate and wrap without complaining, so `int64(300)`
+would become `int8(44)` and `float64(1234.56)` would become `int(1234)`: the cell
+says one number and the struct field holds another, with nothing to notice it by.
+`SmartAssign` reports both instead of converting them.
+
+```go
+var count int8
+err := retable.SmartAssign(
+    reflect.ValueOf(&count).Elem(), reflect.ValueOf(int64(300)), nil, nil, nil)
+// 300 overflows int8: value out of range
+// errors.Is(err, strconv.ErrRange)
+
+var cents int
+err = retable.SmartAssign(
+    reflect.ValueOf(&cents).Elem(), reflect.ValueOf(1234.56), nil, nil, nil)
+// 1234.56 is not a whole number and cannot be assigned to int: invalid syntax
+// errors.Is(err, strconv.ErrSyntax)
+```
+
+The same rule covers a negative number assigned to an unsigned type, and a float
+too large for its destination, which would otherwise become an infinity. Only the
+conversions that land on the nearest representable number rather than a wrapped
+one are still allowed: an integer into a float, and a float too small for its
+destination, which becomes `0`.
+
+This is a behavior change. Assignments that used to succeed with a silently
+altered number now return an error, which is the point — the string side of
+`SmartAssign` already rejected every one of them, so the two routes into the same
+struct field now agree.
+
 ### Parsers and Scanners
 
 `SmartAssign`, `ViewToStructSlice` and the `csvtable` read functions all take a
