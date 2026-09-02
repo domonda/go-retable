@@ -171,9 +171,10 @@ func decodeUTF32(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 }
 
 // decodeUTF32AfterBOM returns nil instead of an empty slice for empty
-// data, like decodeUTF16 does. Decoding after a byte order mark and
-// decoding through an encoding returned by getCharsetEncoding differ
-// in this detail, which is kept from the go-types implementation.
+// data, like decodeUTF16 does, which is kept from the go-types
+// implementation. Both the byte order mark path and the named encoding
+// path reach it through charsetBOM.decode, so they no longer differ in
+// this detail the way they did in go-types.
 func decodeUTF32AfterBOM(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	if len(b) == 0 {
 		return nil, nil

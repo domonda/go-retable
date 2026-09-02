@@ -122,6 +122,9 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 			if pointWritten {
 				return 0, 0, 0, 0, fmt.Errorf("no further separators allowed after decimal separator: %q", str)
 			}
+			if eIndex != -1 {
+				return 0, 0, 0, 0, fmt.Errorf("no separators allowed in the exponent: %q", str)
+			}
 
 			// Write everything after the lastNonDigitIndex and before current index
 			floatBuilder.WriteString(trimmedSignsStr[lastNonDigitIndex+1 : i])
@@ -160,6 +163,14 @@ func parseFloatDetails(str string) (f float64, thousandsSep, decimalSep rune, de
 		case r == ' ':
 			if pointWritten {
 				return 0, 0, 0, 0, fmt.Errorf("no further separators allowed after decimal separator: %q", str)
+			}
+			// Resolving a grouping at the 'e' clears numGroupingRunes so
+			// the end of string block does not judge it twice, which
+			// also re-arms this state machine for the digits of the
+			// exponent itself. No number has a separator in its
+			// exponent, so reject one rather than group by it.
+			if eIndex != -1 {
+				return 0, 0, 0, 0, fmt.Errorf("no separators allowed in the exponent: %q", str)
 			}
 
 			// Write everything after the lastNonDigitIndex and before current index
