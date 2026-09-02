@@ -301,12 +301,14 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// value pointing at itself makes src.Elem() the same value forever,
 	// and the recursion below overflows the stack, which is fatal and
 	// not something the deferred recover above can catch.
-	if _, ok := derefPointerType(srcType); srcKind == reflect.Pointer && !src.IsNil() && ok {
-		err := SmartAssign(dst, src.Elem(), dstScanner, parser, srcFormatter)
-		if !errors.Is(err, errors.ErrUnsupported) {
-			return err // nil or other than errors.ErrUnsupported
+	if srcKind == reflect.Pointer && !src.IsNil() {
+		if _, ok := derefPointerType(srcType); ok {
+			err := SmartAssign(dst, src.Elem(), dstScanner, parser, srcFormatter)
+			if !errors.Is(err, errors.ErrUnsupported) {
+				return err // nil or other than errors.ErrUnsupported
+			}
+			// Continue after errors.ErrUnsupported
 		}
-		// Continue after errors.ErrUnsupported
 	}
 
 	// A pure empty struct represents the zero value
