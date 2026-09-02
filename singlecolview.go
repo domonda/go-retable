@@ -48,6 +48,7 @@ import "reflect"
 // will be visible through the view.
 func SingleColView[T any](column string, rows []T) View {
 	return &singleColsView[T]{
+		title:          column,
 		columns:        []string{column},
 		rows:           rows,
 		isReflectValue: reflect.TypeFor[[]T]().Elem() == reflect.TypeFor[reflect.Value](),
@@ -97,6 +98,7 @@ func SingleColView[T any](column string, rows []T) View {
 // that is modified externally), safe for concurrent reads.
 func SingleCellView[T any](title, column string, value T) View {
 	return &singleColsView[T]{
+		title:          title,
 		columns:        []string{column},
 		rows:           []T{value},
 		isReflectValue: reflect.TypeOf(value) == reflect.TypeFor[reflect.Value](),
@@ -113,6 +115,11 @@ func SingleCellView[T any](title, column string, value T) View {
 // Due to Go's lack of generic type specialization, this requires runtime type checking
 // and dynamic type assertions to properly unwrap reflect.Value types.
 type singleColsView[T any] struct {
+	// title is what Title returns. SingleColView has no title
+	// argument and uses the column name for it, SingleCellView
+	// uses the title it was passed.
+	title string
+
 	// columns contains the column name(s). Always has length 1.
 	columns []string
 
@@ -123,9 +130,11 @@ type singleColsView[T any] struct {
 	isReflectValue bool
 }
 
-// Title returns the column name as the title for single-column views.
+// Title returns the title of the view, which is the title passed to
+// SingleCellView, or the column name for a view built by SingleColView,
+// which takes no title.
 func (s *singleColsView[T]) Title() string {
-	return s.columns[0]
+	return s.title
 }
 
 // Columns returns the column names (always a single-element slice).
