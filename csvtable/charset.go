@@ -181,31 +181,21 @@ func decodeUTF32AfterBOM(b []byte, byteOrder binary.ByteOrder) ([]byte, error) {
 	return decodeUTF32(b, byteOrder)
 }
 
-// decodeUTF32Encoding decodes UTF-32 for a named encoding, stripping a
-// leading byte order mark of that encoding.
+// utfEncodings maps the UTF encoding names to their decoder.
 //
+// Every one of them is charsetBOM.decode, which strips a leading byte
+// order mark of that encoding before decoding. That matters because
 // golang.org/x/text decodes the mark to U+FEFF instead of removing it,
 // and go-types passed it straight through, so an encoding named
 // "UTF-32LE" turned the mark into the first character of the first cell.
 // That was unreachable before the byte order mark detection was fixed,
 // because UTF-32LE data was never detected as UTF-32LE.
-//
-// The UTF-16 encodings need no counterpart: charsetBOM.decode already
-// is one for them, so utfEncodings uses the method directly.
-func decodeUTF32Encoding(b []byte, bom charsetBOM) ([]byte, error) {
-	b, err := trimExpectedBOM(b, bom)
-	if err != nil {
-		return nil, err
-	}
-	return decodeUTF32(b, bom.byteOrder())
-}
-
 var utfEncodings = map[string]*charsetEncoding{
 	"UTF-8":    {name: "UTF-8", decode: bomUTF8.decode},
 	"UTF-16LE": {name: "UTF-16LE", decode: bomUTF16LE.decode},
 	"UTF-16BE": {name: "UTF-16BE", decode: bomUTF16BE.decode},
-	"UTF-32LE": {name: "UTF-32LE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32LE) }},
-	"UTF-32BE": {name: "UTF-32BE", decode: func(b []byte) ([]byte, error) { return decodeUTF32Encoding(b, bomUTF32BE) }},
+	"UTF-32LE": {name: "UTF-32LE", decode: bomUTF32LE.decode},
+	"UTF-32BE": {name: "UTF-32BE", decode: bomUTF32BE.decode},
 }
 
 // sharedEncodings maps names that golang.org/x/text does not
