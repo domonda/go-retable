@@ -189,7 +189,14 @@ func TestStrictNilStringsInViewToStructSlice(t *testing.T) {
 func TestStrictNilStringsUsesParserIsNil(t *testing.T) {
 	scanner := MultiScanner(StrictNilStrings)
 
-	for _, str := range NewStringParser().NilStrings {
+	// Spelled out rather than ranged over the parser's own field:
+	// deriving the cases from the code under test means shrinking the
+	// defaults silently shrinks this test instead of failing it.
+	wantNilStrings := []string{"", "nil", "<nil>", "null", "NULL"}
+	require.Equal(t, wantNilStrings, NewStringParser().NilStrings,
+		"the cases below have to stay in step with the documented defaults")
+
+	for _, str := range wantNilStrings {
 		t.Run("rejects "+str+" for int", func(t *testing.T) {
 			var i int
 			err := SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf(str), scanner, nil, nil)
@@ -210,4 +217,27 @@ func TestStrictNilStringsUsesParserIsNil(t *testing.T) {
 	err := SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf("NULL"), scanner, parser, nil)
 	require.ErrorIs(t, err, errors.ErrUnsupported, "NULL is no longer nil, so it fails as an unparsable int")
 	require.NotContains(t, err.Error(), "use a pointer type")
+}
+
+// A Scanner is documented as usable on its own, and only SmartAssign
+// substitutes DefaultParser for a nil one, so calling one directly with
+// no Parser has to be defined behaviour rather than a nil dereference in
+// the middle of reading a table.
+func TestStrictNilStringsWithoutParser(t *testing.T) {
+	var i int
+	dst := reflect.ValueOf(&i).Elem()
+
+	require.NotPanics(t, func() {
+		err := StrictNilStrings.ScanString(dst, "", nil)
+		require.ErrorContains(t, err, "use a pointer type for an optional column")
+	})
+	require.NotPanics(t, func() {
+		err := MultiScanner(StrictNilStrings).ScanString(dst, "", nil)
+		require.ErrorContains(t, err, "use a pointer type for an optional column")
+	})
+
+	// A value string is still passed on for the normal conversions
+	require.NotPanics(t, func() {
+		require.ErrorIs(t, StrictNilStrings.ScanString(dst, "42", nil), errors.ErrUnsupported)
+	})
 }

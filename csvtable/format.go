@@ -22,7 +22,7 @@ import (
 // or written during serialization.
 //
 // Format validation ensures compliance with common CSV standards:
-//   - Encoding must be specified and supported by the charset package
+//   - Encoding must be specified and supported by the encoding support in charset.go
 //   - Separator must be exactly one character
 //   - Newline must be one of: "\n", "\r\n", or "\n\r"
 //

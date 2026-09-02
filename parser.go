@@ -7,9 +7,12 @@ import (
 	"time"
 )
 
-// Parser is the interface for parsing string representations into primitive Go types.
-// This is the counterpart to formatting - it handles the conversion from strings back
-// to typed values.
+// Parser converts a string into one of a fixed set of Go types, which are
+// int64, uint64, float64, bool, time.Time and time.Duration, and classifies a
+// string as meaning no value. It has one method per type and never sees a
+// destination, which is what separates it from a Scanner: a Scanner sees the
+// destination type and decides what the string means for it, a Parser only
+// converts.
 //
 // Parser provides a centralized place to configure parsing behavior, including:
 //   - Which strings represent boolean true/false values
@@ -17,9 +20,10 @@ import (
 //   - Which time formats to try when parsing time values
 //   - Locale-specific number formatting (e.g., comma vs. period decimal separators)
 //
-// The Parser interface is used by Scanners to perform the actual string-to-value
-// conversions. By abstracting parsing into an interface, different parsing strategies
-// can be used (strict vs. lenient, different locale conventions, etc.).
+// SmartAssign uses the Parser it was passed for every string conversion it does
+// itself and hands it to Scanner.ScanString, so a single Parser configures the
+// parsing of a whole view. Implementing the interface substitutes a different
+// parsing strategy, strict or lenient, or other locale conventions.
 //
 // Example usage:
 //
@@ -113,7 +117,8 @@ type StringParser struct {
 
 	// NilStrings lists all strings that represent nil/null values.
 	// Default includes: "", "nil", "<nil>", "null", "NULL"
-	// This is used by higher-level scanning logic to detect null values.
+	// They are reported by IsNil, which SmartAssign asks before it parses a
+	// string source and which StrictNilStrings uses to reject one.
 	NilStrings []string `json:"nilStrings"`
 
 	// TimeFormats lists time layout strings to try when parsing time values.

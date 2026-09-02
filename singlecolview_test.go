@@ -30,6 +30,18 @@ func TestSingleColView(t *testing.T) {
 		require.Nil(t, view.Cell(-1, 0))
 	})
 
+	// ReflectCell needs the same guard as Cell, and is the method that
+	// ViewToStructSlice and the writers of this module actually call,
+	// so an out of range position reached through it must report no
+	// value instead of panicking with an index out of range.
+	t.Run("positions outside the view have no reflect.Value", func(t *testing.T) {
+		reflectView := AsReflectCellView(view)
+		require.False(t, reflectView.ReflectCell(3, 0).IsValid())
+		require.False(t, reflectView.ReflectCell(-1, 0).IsValid())
+		require.False(t, reflectView.ReflectCell(0, 1).IsValid())
+		require.False(t, reflectView.ReflectCell(0, -1).IsValid())
+	})
+
 	t.Run("the cell type is preserved", func(t *testing.T) {
 		ints := SingleColView("N", []int{1, 2})
 		require.Equal(t, 1, ints.Cell(0, 0))
