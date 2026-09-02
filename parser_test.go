@@ -3,6 +3,7 @@ package retable
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -138,4 +139,32 @@ func TestStringParser_ParseFloatSpecialValues(t *testing.T) {
 	f, err = p.ParseFloat("0x1p-2")
 	require.NoError(t, err)
 	require.Equal(t, 0.25, f)
+}
+
+// TestStringParserZeroValueFalseAndTimeDefaults completes what
+// TestStringParserZeroValueUsesDefaults covers for the true strings and
+// the nil strings: the two remaining nil-field fallbacks. A parser built
+// from a configuration file that only names its true strings still has
+// to recognize the false strings and the time formats, or half of the
+// columns of the file it configures stop parsing without anyone having
+// asked for that.
+func TestStringParserZeroValueFalseAndTimeDefaults(t *testing.T) {
+	var zero StringParser
+
+	t.Run("default false strings", func(t *testing.T) {
+		// ParseBool returns before it reads the false strings for
+		// anything that is a true string, so only a false one reaches
+		// the fallback under test here.
+		for _, str := range []string{"false", "FALSE", "no", "0", "f"} {
+			b, err := zero.ParseBool(str)
+			require.NoErrorf(t, err, "ParseBool(%q)", str)
+			require.Falsef(t, b, "ParseBool(%q)", str)
+		}
+	})
+
+	t.Run("default time formats", func(t *testing.T) {
+		tm, err := zero.ParseTime("2024-03-15T14:30:00Z")
+		require.NoError(t, err)
+		require.Equal(t, time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC), tm)
+	})
 }

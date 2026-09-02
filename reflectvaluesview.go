@@ -141,6 +141,8 @@ func (view *ReflectValuesView) NumRows() int { return len(view.Rows) }
 // Returns:
 //   - The cell's underlying value (via reflect.Value.Interface()) if indices are valid
 //   - nil if row or col indices are out of bounds
+//   - nil if the stored reflect.Value is invalid, which is what a cell
+//     holding a nil interface produces
 //
 // Time complexity: O(1)
 func (view *ReflectValuesView) Cell(row, col int) any {
@@ -292,6 +294,8 @@ func (view *SingleReflectValueView) NumRows() int { return 1 }
 // Returns:
 //   - The underlying value extracted via Val.Interface() if row and col are both 0
 //   - nil if row is not 0 or col is not 0
+//   - nil if the view holds no value, which is what a position outside
+//     the source or a cell holding a nil interface produces
 //
 // Time complexity: O(1)
 func (view *SingleReflectValueView) Cell(row, col int) any {

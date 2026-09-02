@@ -2,6 +2,7 @@ package csvtable
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"testing"
 
@@ -258,7 +259,7 @@ func TestDecodeKnownEncodingBeatsBOMAmbiguity(t *testing.T) {
 	// followed by U+0000
 	ambiguous := []byte{0xFF, 0xFE, 0x00, 0x00, 'h', 0x00}
 
-	utf16, err := decodeUTF16Encoding(ambiguous, bomUTF16LE)
+	utf16, err := bomUTF16LE.decode(ambiguous)
 	require.NoError(t, err)
 	require.Equal(t, []byte("\x00h"), utf16)
 
@@ -267,12 +268,12 @@ func TestDecodeKnownEncodingBeatsBOMAmbiguity(t *testing.T) {
 	require.Equal(t, []byte("\x00h"), viaBOM)
 
 	// A UTF-16LE mark not followed by 00 00 still decodes normally
-	normal, err := decodeUTF16Encoding([]byte{0xFF, 0xFE, 'h', 0, 'i', 0}, bomUTF16LE)
+	normal, err := bomUTF16LE.decode([]byte{0xFF, 0xFE, 'h', 0, 'i', 0})
 	require.NoError(t, err)
 	require.Equal(t, []byte("hi"), normal)
 
 	// A mark of a different encoding is still an error
-	_, err = decodeUTF16Encoding([]byte{0xFE, 0xFF, 0x00, 'h'}, bomUTF16LE)
+	_, err = bomUTF16LE.decode([]byte{0xFE, 0xFF, 0x00, 'h'})
 	require.ErrorContains(t, err, "wrong BOM in data")
 }
 
@@ -417,9 +418,12 @@ func TestBigEndianEncodings(t *testing.T) {
 	// The little and big endian decoders must not be interchangeable
 	t.Run("big endian data read as little endian is not the same text", func(t *testing.T) {
 		asLE, err := ParseWithFormat(encodeUTF16BE(csv), &Format{Encoding: "UTF-16LE", Separator: ";", Newline: "\n"})
-		if err == nil {
-			require.NotEqual(t, want, asLE[:min(2, len(asLE))])
+		if err != nil {
+			return // rejecting the wrong endianness outright is also correct
 		}
+		require.NotEmpty(t, asLE, "the assertion below must not pass because nothing was decoded")
+		require.NotEqual(t, want, asLE[:min(2, len(asLE))],
+			"the two decoders must not be interchangeable")
 	})
 }
 
@@ -472,4 +476,70 @@ func TestDecodeEmptyInput(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, text)
 	require.Equal(t, "", encName)
+}
+
+// TestCharsetBOMFallbacks covers the fallbacks of the byte order mark
+// helpers, which decide what happens to data whose mark is absent or
+// not one this package knows. Every one of them has to report that
+// rather than guess, because a wrong answer here is not a failure but a
+// wrong Format.Encoding and silently mis-decoded cells.
+func TestCharsetBOMFallbacks(t *testing.T) {
+	t.Run("data without a mark has no encoding name", func(t *testing.T) {
+		require.Equal(t, "No BOM", noBOM.name())
+	})
+
+	t.Run("only the UTF-16 and UTF-32 marks carry a byte order", func(t *testing.T) {
+		// UTF-8 is byte ordered by definition and its mark says
+		// nothing about endianness, so it must not claim one.
+		require.Nil(t, noBOM.byteOrder())
+		require.Nil(t, bomUTF8.byteOrder())
+		require.Equal(t, binary.LittleEndian, bomUTF16LE.byteOrder())
+		require.Equal(t, binary.BigEndian, bomUTF32BE.byteOrder())
+	})
+
+	t.Run("a mark that contradicts the expected encoding is an error", func(t *testing.T) {
+		// Decoding UTF-16LE bytes as UTF-8 because the caller named
+		// UTF-8 would put the raw code units into the cells.
+		utf16 := append([]byte(bomUTF16LE), encodeUTF16LE("a;b")...)
+		_, err := bomUTF8.decode(utf16)
+		require.ErrorContains(t, err, "wrong BOM in data")
+	})
+
+	t.Run("an unknown mark is an error, not undecoded bytes", func(t *testing.T) {
+		unknown := charsetBOM("\xAA\xBB")
+		_, err := unknown.decode([]byte("\xAA\xBBdata"))
+		require.ErrorContains(t, err, "unsupported BOM")
+	})
+
+	t.Run("empty UTF-32 data decodes to nothing", func(t *testing.T) {
+		decoded, err := bomUTF32LE.decode(nil)
+		require.NoError(t, err)
+		require.Empty(t, decoded)
+	})
+}
+
+// TestCharmapEncodingStripsUTF8BOM covers the byte order mark on a code
+// page encoding. Excel writes a UTF-8 mark in front of files it
+// otherwise encodes in a code page, and a code page has no mark of its
+// own, so decoding it as text put "ï»¿" in front of the first column
+// title. That title then matches no struct field, and the whole column
+// stays at its zero value for every row without an error anywhere.
+func TestCharmapEncodingStripsUTF8BOM(t *testing.T) {
+	body := "Name;Ort\nMüller;Köln\n"
+
+	for _, name := range []string{"ISO 8859-1", "Windows 1252", "Macintosh"} {
+		t.Run(name, func(t *testing.T) {
+			enc, err := getCharsetEncoding(name)
+			require.NoError(t, err)
+
+			withBOM := append([]byte(bomUTF8), encodeCharmap(t, charmap.Windows1252, body)...)
+			rows, err := ParseWithFormat(withBOM, &Format{Encoding: name, Separator: ";", Newline: "\n"})
+			require.NoError(t, err)
+			require.Equal(t, "Name", rows[0][0], "the mark must not become part of the first column title")
+
+			// Content that merely starts with those bytes as text is
+			// not affected, because a code page file cannot carry one.
+			_ = enc
+		})
+	}
 }

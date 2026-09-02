@@ -54,7 +54,10 @@ func TestReadBytesWithFormatToStructSlice(t *testing.T) {
 		_, err := ReadBytesWithFormatToStructSlice[booking](
 			[]byte(bookingsCSV), format, bookingNaming, nil, nil, nil, nil,
 		)
-		require.Error(t, err)
+		// Naming the cell, so this cannot start passing because some
+		// other column failed instead.
+		require.ErrorContains(t, err, "bool",
+			"the boolean column is what the default parser cannot read")
 	})
 
 	t.Run("an invalid format is reported instead of parsed", func(t *testing.T) {
@@ -98,6 +101,19 @@ func TestReadBytesDetectFormatToStructSlice(t *testing.T) {
 	require.Equal(t, "UTF-8", format.Encoding)
 	require.Equal(t, wantBookings, bookings)
 
+	// Format detection runs before anything is parsed, so its failure
+	// has to reach the caller. A configuration naming an encoding this
+	// package does not know decodes nothing, and returning an empty
+	// slice for it would look like an empty file.
+	t.Run("a failing format detection is reported", func(t *testing.T) {
+		_, _, err := ReadBytesDetectFormatToStructSlice[booking](
+			[]byte(bookingsCSV),
+			&FormatDetectionConfig{Encodings: []string{"NO-SUCH-ENCODING"}},
+			bookingNaming, nil, germanCSVParser(), nil, nil,
+		)
+		require.Error(t, err)
+	})
+
 	t.Run("a missing required column is reported", func(t *testing.T) {
 		// Without the column the table cannot be located either, so the
 		// caller has to learn that instead of getting zero valued rows.
@@ -121,4 +137,31 @@ func TestReadFileDetectFormatToStructSlice(t *testing.T) {
 	require.Equal(t, "UTF-8", format.Encoding)
 	require.Equal(t, "\r\n", format.Newline)
 	require.Equal(t, wantBookings, bookings)
+}
+
+// TestReadFileToStructSliceReadError covers that a file that cannot be
+// read is reported as that error. Both file entry points read the whole
+// file before they parse anything, and a missing or unreadable file is
+// the most common failure a caller hits, so it has to surface instead
+// of being parsed as empty CSV data into an empty slice.
+func TestReadFileToStructSliceReadError(t *testing.T) {
+	missing := fs.File("/nonexistent-directory-for-tests/bookings.csv")
+
+	t.Run("with format", func(t *testing.T) {
+		format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
+		bookings, err := ReadFileWithFormatToStructSlice[booking](
+			missing, format, bookingNaming, nil, nil, nil, nil,
+		)
+		require.Error(t, err)
+		require.Nil(t, bookings)
+	})
+
+	t.Run("detecting the format", func(t *testing.T) {
+		bookings, format, err := ReadFileDetectFormatToStructSlice[booking](
+			missing, nil, bookingNaming, nil, nil, nil, nil,
+		)
+		require.Error(t, err)
+		require.Nil(t, bookings)
+		require.Nil(t, format)
+	})
 }

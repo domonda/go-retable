@@ -43,26 +43,36 @@ func TestViewToStructSlice_ScannerGetsOwnParser(t *testing.T) {
 		require.NotSame(t, DefaultParser, received[0])
 	})
 
-	t.Run("reconfiguring the received parser leaves DefaultParser intact", func(t *testing.T) {
-		// A Scanner that strips the parser of everything it knows.
-		// Had it been handed DefaultParser, every later conversion in
-		// the process would stop recognizing booleans and nil strings.
-		wrecker := ScannerFunc(func(dest reflect.Value, str string, parser Parser) error {
-			if p, ok := parser.(*StringParser); ok {
-				p.TrueStrings = nil
-				p.FalseStrings = nil
-				p.NilStrings = nil
-				p.TimeFormats = nil
-			}
+	t.Run("the parser a Scanner receives cannot reach DefaultParser", func(t *testing.T) {
+		// Checked by identity, not by wrecking the parser and looking
+		// for damage. Setting its fields to nil proves nothing, because
+		// a nil field falls back to the package defaults, so the
+		// assertions afterwards pass whether or not DefaultParser was
+		// the object handed over. Writing a non-nil sentinel would
+		// prove it, but corrupts the package defaults for every later
+		// test in this package when it fails.
+		var received Parser
+		recorder := ScannerFunc(func(_ reflect.Value, _ string, parser Parser) error {
+			received = parser
 			return errors.ErrUnsupported
 		})
-		_, err := ViewToStructSlice[countRow](countView(), &StructFieldNaming{}, wrecker, nil, nil, nil)
+		_, err := ViewToStructSlice[countRow](countView(), &StructFieldNaming{}, recorder, nil, nil, nil)
 		require.NoError(t, err)
+		require.NotNil(t, received, "the Scanner has to be reached for this to prove anything")
 
-		b, err := DefaultParser.ParseBool("true")
-		require.NoError(t, err, "DefaultParser must still know its boolean strings")
-		require.True(t, b)
-		require.True(t, DefaultParser.IsNil(""), "DefaultParser must still know its nil strings")
+		require.NotSame(t, DefaultParser, received, "a Scanner must not be handed the shared parser")
+
+		got, ok := received.(*StringParser)
+		require.True(t, ok)
+		def, ok := DefaultParser.(*StringParser)
+		require.True(t, ok)
+
+		// Not the same object is not enough: sharing a backing array
+		// would let an in-place write reconfigure DefaultParser anyway.
+		sameArray := func(x, y []string) bool { return len(x) > 0 && len(y) > 0 && &x[0] == &y[0] }
+		require.False(t, sameArray(got.TrueStrings, def.TrueStrings), "TrueStrings must not alias")
+		require.False(t, sameArray(got.NilStrings, def.NilStrings), "NilStrings must not alias")
+		require.False(t, sameArray(got.TimeFormats, def.TimeFormats), "TimeFormats must not alias")
 	})
 
 	t.Run("each call gets its own parser", func(t *testing.T) {
@@ -212,4 +222,35 @@ func TestCallValidateMethod(t *testing.T) {
 		_, err = ViewToStructSlice[Row](bad, nil, nil, nil, nil, CallValidateMethod)
 		require.ErrorContains(t, err, "is not valid")
 	})
+}
+
+// nameCount has one string and one parsed field so that a missing cell
+// is distinguishable from an empty one.
+type nameCount struct {
+	Name  string
+	Count int
+}
+
+// TestViewToStructSlice_RaggedRows covers the skip for a cell that has
+// no value at all. A short line in a CSV file or a trailing empty
+// column in a spreadsheet produces a row with fewer cells than the view
+// has columns, and every view of this package reports those positions
+// as an invalid reflect.Value. Those fields have to stay at their zero
+// value, because failing the whole file over a missing optional column
+// is the behaviour the callers of this package read files to avoid.
+func TestViewToStructSlice_RaggedRows(t *testing.T) {
+	view := &ReflectValuesView{
+		Cols: []string{"Name", "Count"},
+		Rows: [][]reflect.Value{
+			{reflect.ValueOf("Erik"), reflect.ValueOf(7)},
+			{reflect.ValueOf("Ann")}, // no Count cell at all
+		},
+	}
+
+	rows, err := ViewToStructSlice[nameCount](view, &StructFieldNaming{}, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []nameCount{
+		{Name: "Erik", Count: 7},
+		{Name: "Ann", Count: 0},
+	}, rows)
 }

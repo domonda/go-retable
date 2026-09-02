@@ -71,7 +71,7 @@ func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]stri
 //
 // Encoding handling:
 //   - UTF-8: BOM is trimmed if present, data is used as-is
-//   - Other encodings: Data is decoded to UTF-8 using the charset package
+//   - Other encodings: Data is decoded to UTF-8 by the encoding support in charset.go
 //
 // Header line detection:
 //   - If first line matches pattern "sep=X" or "SEP=X" (possibly quoted),
@@ -143,21 +143,23 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 //   - Sanitizes UTF-8 by replacing invalid characters
 //
 // 2. Line Ending Detection:
-//   - Checks if data contains \r\n sequences
-//   - If found, uses \r\n (CRLF - Windows/RFC 4180 standard)
-//   - Otherwise uses \n (LF - Unix standard)
+//   - Counts \r\n, \n\r and bare \n outside of quoted fields
+//   - Uses the most frequent one, defaulting to \n
 //
 // 3. Separator Detection:
 //   - Checks first line for "sep=X" or "SEP=X" header declaration
 //   - If header found: uses declared separator and removes header line
-//   - Otherwise: counts occurrences of comma, semicolon, and tab across all non-empty lines
-//   - Selects the separator with highest total count
-//   - Defaults to comma if counts are equal
+//   - Otherwise: scores comma, semicolon, tab and pipe by how uniform the
+//     column count is across rows, not by how often they occur, so a
+//     character that is frequent but ragged loses to one that splits
+//     every row the same way
+//   - Defaults to comma when no candidate scores
 //
 // The function handles edge cases:
 //   - Empty files: returns empty format and nil lines
 //   - Files with only empty lines: returns empty rows
-//   - Quoted separators within fields: counted but handled during parsing
+//   - Separators and newlines inside quoted fields: excluded from both
+//     detections, so a quoted field cannot outvote the real structure
 //
 // Parameters:
 //   - csv: Raw CSV data as bytes

@@ -1,6 +1,7 @@
 package retable
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -591,6 +592,61 @@ func TestSmartAssign(t *testing.T) {
 			wantDst:   "#42",
 		},
 
+		// The false branch of the boolean conversions has to write the
+		// zero number, not leave the destination at whatever it held.
+		// A row struct is reused across rows in some callers, so a
+		// false cell that skipped the assignment would keep the 1 of
+		// the previous row.
+		{
+			name:    "false bool to int",
+			dst:     reflect.ValueOf(pointerTo(int(7))).Elem(),
+			src:     reflect.ValueOf(false),
+			wantDst: int(0),
+		},
+		{
+			name:    "true bool to uint8",
+			dst:     assignableValue[uint8](),
+			src:     reflect.ValueOf(true),
+			wantDst: uint8(1),
+		},
+		{
+			name:    "false bool to float64",
+			dst:     reflect.ValueOf(pointerTo(float64(7))).Elem(),
+			src:     reflect.ValueOf(false),
+			wantDst: float64(0),
+		},
+
+		// A null source means "no value" and must overwrite the
+		// destination with its zero value. A database driver reports a
+		// NULL column as a value that is present but null, and the
+		// wrapped value it still carries must not be assigned.
+		{
+			name:    "null source to int",
+			dst:     reflect.ValueOf(pointerTo(int(7))).Elem(),
+			src:     reflect.ValueOf(nullableInt{value: 42, null: true}),
+			wantDst: int(0),
+		},
+		{
+			name:    "non null source to int",
+			dst:     assignableValue[int](),
+			src:     reflect.ValueOf(nullableInt{value: 42}),
+			wantErr: true, // not convertible, IsNull only shortcuts a null
+		},
+		{
+			name:    "nil pointer to int",
+			dst:     reflect.ValueOf(pointerTo(int(7))).Elem(),
+			src:     reflect.ValueOf((*int)(nil)),
+			wantDst: int(0),
+		},
+		// An empty struct carries no data, so it is the zero value of
+		// whatever it is assigned to rather than an unsupported type.
+		{
+			name:    "empty struct to int",
+			dst:     reflect.ValueOf(pointerTo(int(7))).Elem(),
+			src:     reflect.ValueOf(struct{}{}),
+			wantDst: int(0),
+		},
+
 		// Error cases
 		{
 			name:    "invalid src",
@@ -602,6 +658,28 @@ func TestSmartAssign(t *testing.T) {
 			name:    "invalid dst",
 			dst:     reflect.Value{},
 			src:     reflect.ValueOf(int(1)),
+			wantErr: true,
+		},
+		// A Formatter reports an unsupported source with
+		// errors.ErrUnsupported so that the conversions below it still
+		// run. Every other error is a real formatting failure and must
+		// abort instead of falling through to the fmt.Sprint fallback,
+		// which would write a string the Formatter refused to produce.
+		{
+			name:      "formatter error to string",
+			dst:       assignableValue[string](),
+			src:       reflect.ValueOf(float64(1.5)),
+			formatter: failingFormatter(),
+			wantErr:   true,
+		},
+		// The pointer destination allocates and assigns through to the
+		// pointed to type, so an error from that assignment is the
+		// caller's error and must not be swallowed into an allocated
+		// pointer to a zero value.
+		{
+			name:    "overflowing string to *int8",
+			dst:     assignableValue[*int8](),
+			src:     reflect.ValueOf("300"),
 			wantErr: true,
 		},
 	}
@@ -626,6 +704,39 @@ func TestSmartAssign(t *testing.T) {
 
 func pointerTo[T any](v T) *T {
 	return &v
+}
+
+// nullableInt is a source that reports whether it holds a value, like
+// the nullable column types of a database driver do. SmartAssign has to
+// ask before it converts, because the wrapped value of a null is
+// meaningless.
+type nullableInt struct {
+	value int
+	null  bool
+}
+
+func (n nullableInt) IsNull() bool { return n.null }
+
+// failingFormatter returns a Formatter whose error is not
+// errors.ErrUnsupported and must abort the assignment.
+func failingFormatter() Formatter {
+	return FormatterFunc(func(reflect.Value) (string, error) {
+		return "", errors.New("formatter failed")
+	})
+}
+
+// TestSmartAssignUnsettableDst covers the guard in front of every
+// reflect.Value.Set of this package. A destination reached through
+// reflection is easily not settable, an unexported struct field or a
+// value that was never addressed, and reflect panics on writing one.
+// The caller has to get an error instead of a crashing process.
+func TestSmartAssignUnsettableDst(t *testing.T) {
+	notSettable := reflect.ValueOf(42)
+	require.True(t, notSettable.IsValid(), "the value is valid, only not settable")
+	require.False(t, notSettable.CanSet())
+
+	err := SmartAssign(notSettable, reflect.ValueOf(1), nil, nil, nil)
+	require.ErrorContains(t, err, "cannot set dst value")
 }
 
 // date, timeout and byteCount are types defined as time.Time,
@@ -878,6 +989,27 @@ func TestSmartAssignSelfReferentialPointerType(t *testing.T) {
 	elem, ok := derefPointerType(reflect.TypeFor[**string]())
 	require.True(t, ok)
 	require.Equal(t, reflect.TypeFor[string](), elem)
+
+	// Both sides of the bound, so changing maxPointerDepth or the loop
+	// is a visible failure: one level below it still resolves, at it the
+	// walk gives up rather than spinning.
+	pointerTypeOfDepth := func(n int) reflect.Type {
+		typ := reflect.TypeFor[int]()
+		for range n {
+			typ = reflect.PointerTo(typ)
+		}
+		return typ
+	}
+	_, ok = derefPointerType(pointerTypeOfDepth(maxPointerDepth - 1))
+	require.True(t, ok, "a chain shorter than the bound still resolves")
+	_, ok = derefPointerType(pointerTypeOfDepth(maxPointerDepth))
+	require.False(t, ok, "at the bound the walk gives up")
+
+	// The user visible effect of giving up
+	deep := reflect.New(pointerTypeOfDepth(maxPointerDepth)).Elem()
+	require.ErrorIs(t, SmartAssign(deep, reflect.ValueOf("42"), nil, nil, nil), errors.ErrUnsupported)
+	shallow := reflect.New(pointerTypeOfDepth(maxPointerDepth - 1)).Elem()
+	require.NoError(t, SmartAssign(shallow, reflect.ValueOf("42"), nil, nil, nil))
 }
 
 // textNumber has an integer kind and a MarshalText method, so assigning
@@ -949,4 +1081,63 @@ func TestParseTime(t *testing.T) {
 
 	_, _, err := ParseTime("not a date")
 	require.Error(t, err)
+}
+
+// TestSmartAssignSelfReferentialPointerSource covers the source side of
+// the self referential pointer walk. Bounding only the destination left
+// this one: src.Elem() of a value pointing at itself is the same value,
+// so the recursion never ends and overflows the stack, which is a fatal
+// error that the deferred recover cannot turn into an error.
+//
+// A regression here crashes the whole test binary rather than failing
+// this test, with a stack full of the SmartAssign source pointer branch.
+func TestSmartAssignSelfReferentialPointerSource(t *testing.T) {
+	var src selfPtr
+	src = &src // legal Go: the value points at itself
+
+	// An int destination has no catch-all below the pointer branch, so
+	// this is where the guard is observable as an error.
+	var dst int
+	err := SmartAssign(reflect.ValueOf(&dst).Elem(), reflect.ValueOf(src), nil, nil, nil)
+	require.ErrorIs(t, err, errors.ErrUnsupported)
+
+	// A string destination reaches the fmt.Sprint fallback and renders
+	// the pointer itself. That is not useful, but it returns, which is
+	// the property under test.
+	var str string
+	require.NoError(t, SmartAssign(reflect.ValueOf(&str).Elem(), reflect.ValueOf(src), nil, nil, nil))
+	require.NotEmpty(t, str)
+
+	// A pointer source that does terminate is still dereferenced
+	s := "text"
+	require.NoError(t, SmartAssign(reflect.ValueOf(&str).Elem(), reflect.ValueOf(&s), nil, nil, nil))
+	require.Equal(t, "text", str)
+}
+
+// TestReflectCellFormatterFuncWrongCellType covers that a cell whose
+// type the function does not accept is reported instead of panicking.
+// The invalid-cell guard was not enough: a formatter registered by kind
+// or by interface receives defined types, and reflect.Value.Call panics
+// on an argument that is not assignable, which escapes through
+// TryFormattersOrSprint into the CSV and HTML writers.
+func TestReflectCellFormatterFuncWrongCellType(t *testing.T) {
+	type definedInt int
+
+	formatter, _, err := ReflectCellFormatterFunc(func(int) string { return "formatted" }, false)
+	require.NoError(t, err)
+
+	byKind := new(ReflectTypeCellFormatter).WithKindFormatter(reflect.Int, formatter)
+	view := &AnyValuesView{Cols: []string{"c"}, Rows: [][]any{{definedInt(7)}}}
+
+	require.NotPanics(t, func() {
+		str, _, err := byKind.FormatCell(context.Background(), view, 0, 0)
+		require.ErrorIs(t, err, errors.ErrUnsupported, "an alternative formatter has to get its chance")
+		require.Empty(t, str)
+	})
+
+	// The exact type the function accepts is still formatted
+	plain := &AnyValuesView{Cols: []string{"c"}, Rows: [][]any{{7}}}
+	str, _, err := byKind.FormatCell(context.Background(), plain, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, "formatted", str)
 }

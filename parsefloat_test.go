@@ -1,7 +1,9 @@
 package retable
 
 import (
+	"maps"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -77,22 +79,28 @@ func Test_parseFloatDetails(t *testing.T) {
 		}
 	}
 
-	for str, ref := range validDecimalFloats {
-		t.Run("no sign", testFunc(str, ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+	// Sorted, and the input is part of every subtest name. Ranging a map
+	// registers 300+ subtests under 9 repeated names, which Go dedups
+	// with #NN suffixes handed out in the randomized map order, so a
+	// failure reported as "no_sign#17" names a different input on the
+	// next run and cannot be reproduced with -run.
+	for _, str := range slices.Sorted(maps.Keys(validDecimalFloats)) {
+		ref := validDecimalFloats[str]
+		t.Run("no sign "+str, testFunc(str, ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
 		if str == "NaN" {
 			continue
 		}
-		t.Run("plus in front", testFunc("+"+str, ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+		t.Run("plus in front "+str, testFunc("+"+str, ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
 		if str != "Inf" {
-			t.Run("plus in front with space", testFunc("+ "+str, ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
-			t.Run("plus on end", testFunc(str+"+", ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
-			t.Run("plus on end with space", testFunc(str+" +", ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+			t.Run("plus in front with space "+str, testFunc("+ "+str, ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+			t.Run("plus on end "+str, testFunc(str+"+", ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+			t.Run("plus on end with space "+str, testFunc(str+" +", ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
 		}
-		t.Run("minus in front", testFunc("-"+str, -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+		t.Run("minus in front "+str, testFunc("-"+str, -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
 		if str != "Inf" {
-			t.Run("minus in front with space", testFunc("- "+str, -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
-			t.Run("minus on end", testFunc(str+"-", -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
-			t.Run("minus on end with space", testFunc(str+" -", -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+			t.Run("minus in front with space "+str, testFunc("- "+str, -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+			t.Run("minus on end "+str, testFunc(str+"-", -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
+			t.Run("minus on end with space "+str, testFunc(str+" -", -ref.f, ref.thousandsSep, ref.decimalSep, ref.decimals))
 		}
 	}
 }
@@ -126,6 +134,11 @@ func Test_parseFloat_invalid(t *testing.T) {
 		"10.23,560",
 		"1.234.56",
 		"1,234,56",
+		// Two thousands separators can only group three digits each, so
+		// more than six digits in front of the second one means the
+		// string is not grouped and must not be read as if it were.
+		"1234567,890,123",
+		"1234567 890 123",
 		"123-456",
 		"123.45.67.890",
 		"123.45.67.890,0",
@@ -211,6 +224,43 @@ func Test_parseFloat_singleGroupSeparator(t *testing.T) {
 			got, err := parseFloat(tt.str)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// Test_parseFloat_groupSeparatorBeforeExponent is the exponent-branch
+// half of the single-group separator rule. The end-of-string branch was
+// fixed first, and the "e" branch kept writing a decimal point for any
+// separator, so "1 234e5" parsed as 123400 instead of 123400000 — the
+// same silent factor of 1000, on the path the first fix did not cover.
+func Test_parseFloat_groupSeparatorBeforeExponent(t *testing.T) {
+	grouped := []struct {
+		str  string
+		want float64
+	}{
+		{str: "1 234e5", want: 123400000},
+		{str: "1'234e5", want: 123400000},
+		{str: "1 234 567e2", want: 123456700},
+		{str: "1 234e-3", want: 1.234},
+		// A dot or a comma before the exponent is still the decimal
+		// separator, which is the reading that was already correct.
+		{str: "1.234e5", want: 123400},
+		{str: "1,234e5", want: 123400},
+	}
+	for _, tt := range grouped {
+		t.Run(tt.str, func(t *testing.T) {
+			got, err := parseFloat(tt.str)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+
+	// A space or apostrophe group that is not 3 digits is not a
+	// grouping, before an exponent just as at the end of the string.
+	for _, str := range []string{"1 23e5", "1 2345e5", "1'23e5"} {
+		t.Run("invalid group "+str, func(t *testing.T) {
+			_, err := parseFloat(str)
+			require.Error(t, err, "parseFloat(%q)", str)
 		})
 	}
 }
