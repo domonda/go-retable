@@ -1,6 +1,7 @@
 package retable
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -195,28 +196,28 @@ func NewStringParser() *StringParser {
 // configured values, or the package defaults for a field left nil, so
 // that the zero value of StringParser is usable.
 func (p *StringParser) trueStrings() []string {
-	if p.TrueStrings == nil {
+	if p == nil || p.TrueStrings == nil {
 		return defaultTrueStrings
 	}
 	return p.TrueStrings
 }
 
 func (p *StringParser) falseStrings() []string {
-	if p.FalseStrings == nil {
+	if p == nil || p.FalseStrings == nil {
 		return defaultFalseStrings
 	}
 	return p.FalseStrings
 }
 
 func (p *StringParser) nilStrings() []string {
-	if p.NilStrings == nil {
+	if p == nil || p.NilStrings == nil {
 		return defaultNilStrings
 	}
 	return p.NilStrings
 }
 
 func (p *StringParser) parseTimeFormats() []string {
-	if p.TimeFormats == nil {
+	if p == nil || p.TimeFormats == nil {
 		return defaultTimeFormats
 	}
 	return p.TimeFormats
@@ -300,7 +301,11 @@ func (p *StringParser) ParseFloat(str string) (float64, error) {
 	if err != nil {
 		f, e := parseFloat(str)
 		if e != nil {
-			return 0, err // return original error
+			// Both readings failed. The strconv error names the string
+			// the caller passed in, the separator detection says what
+			// was wrong with it, and an operator looking at a rejected
+			// cell needs the second one.
+			return 0, errors.Join(err, e)
 		}
 		return f, nil
 	}
