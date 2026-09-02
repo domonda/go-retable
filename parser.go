@@ -141,6 +141,8 @@ var DefaultParser Parser = NewStringParser()
 //   - TimeFormats: Comprehensive list of common formats (RFC3339, ISO, etc.)
 //
 // The returned parser can be used as-is or customized by modifying its fields.
+// It owns its slices, so configuring it never affects DefaultParser or any
+// other parser, and two parsers can be configured differently at the same time.
 //
 // Returns:
 //   - A new StringParser with default configurations
@@ -155,30 +157,34 @@ var DefaultParser Parser = NewStringParser()
 //	parser.TrueStrings = append(parser.TrueStrings, "ja", "oui", "si")
 func NewStringParser() *StringParser {
 	c := &StringParser{
+		// The defaults are cloned because the fields they fill are
+		// exported: assigning the default slices directly would hand
+		// every caller a writable alias of package state, since a slice
+		// value shares its backing array. A single in-place write
+		// through a parser the caller believes it owns, as in
+		//
+		//	p := NewStringParser()
+		//	p.NilStrings[0] = "N/A"    // or slices.Sort(p.TrueStrings)
+		//
+		// would then reconfigure the defaults, DefaultParser and every
+		// other live parser in the process. Unsynchronised, so it is a
+		// data race and not merely a surprise.
+		//
+		// It would also defeat the two guarantees documented elsewhere:
+		// that DefaultParser is never modified after initialization,
+		// and that the parser ViewToStructSlice allocates per view
+		// keeps a Scanner which reconfigures it from affecting a
+		// concurrent conversion.
+		//
+		// Replacing a whole field with a new slice is always safe and
+		// is the normal way to configure a parser, see the example above.
 		TrueStrings:  slices.Clone(defaultTrueStrings),
 		FalseStrings: slices.Clone(defaultFalseStrings),
 		NilStrings:   slices.Clone(defaultNilStrings),
-		TimeFormats:  slices.Clone(timeFormats),
+		TimeFormats:  slices.Clone(defaultTimeFormats),
 	}
 	return c
 }
-
-// Default values for the StringParser fields.
-//
-// They are also used for a field that was left nil, so that a
-// StringParser built by a struct literal or unmarshalled from a
-// configuration file that only sets some of the fields still parses
-// the rest, instead of silently accepting nothing. Set a field to an
-// empty non-nil slice to really accept nothing.
-//
-// The boolean strings include the single letter "t" and "f" that
-// strconv.ParseBool accepts, because that is what PostgreSQL writes
-// for booleans in CSV exports.
-var (
-	defaultTrueStrings  = []string{"true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"}
-	defaultFalseStrings = []string{"false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"}
-	defaultNilStrings   = []string{"", "nil", "<nil>", "null", "NULL"}
-)
 
 // trueStrings, falseStrings, nilStrings and parseTimeFormats return the
 // configured values, or the package defaults for a field left nil, so
@@ -206,7 +212,7 @@ func (p *StringParser) nilStrings() []string {
 
 func (p *StringParser) parseTimeFormats() []string {
 	if p.TimeFormats == nil {
-		return timeFormats
+		return defaultTimeFormats
 	}
 	return p.TimeFormats
 }
@@ -436,7 +442,7 @@ func (p *StringParser) IsNil(str string) bool {
 //	// Use the format to maintain consistency
 //	formatted := t.Format(format) // Returns string in same format as input
 func ParseTime(str string) (t time.Time, format string, err error) {
-	for _, format := range timeFormats {
+	for _, format := range defaultTimeFormats {
 		t, err = time.Parse(format, str)
 		if err == nil {
 			return t, format, nil
@@ -445,42 +451,64 @@ func ParseTime(str string) (t time.Time, format string, err error) {
 	return time.Time{}, "", fmt.Errorf("cannot parse %q as time", str)
 }
 
-// timeFormats is the default list of time layout strings tried when parsing time values.
-// The formats are ordered from most specific/common to less common, with ISO/RFC formats
-// prioritized. This ordering optimizes parsing performance for typical use cases.
+// Default values for the StringParser fields.
 //
-// The list includes:
-//   - RFC3339 formats (ISO 8601) - most common in APIs and web applications
-//   - RFC formats (RFC1123, RFC822, etc.) - common in email and HTTP headers
-//   - Standard Go time constants (UnixDate, ANSIC, etc.)
-//   - Custom formats for common use cases (browser inputs, database outputs, etc.)
-//   - German date formats (DD.MM.YYYY) - locale-specific example
+// They are also used for a field that was left nil, so that a
+// StringParser built by a struct literal or unmarshalled from a
+// configuration file that only sets some of the fields still parses
+// the rest, instead of silently accepting nothing. Set a field to an
+// empty non-nil slice to really accept nothing.
 //
-// Applications can customize this list globally or use StringParser.TimeFormats
-// for per-parser customization.
-var timeFormats = []string{
-	time.RFC3339Nano,       // "2006-01-02T15:04:05.999999999Z07:00" - ISO 8601 with nanoseconds
-	time.RFC3339,           // "2006-01-02T15:04:05Z07:00" - ISO 8601, most common API format
-	formatBrowserLocalTime, // "2006-01-02T15:04" - HTML5 datetime-local input format
-	time.RFC1123Z,          // "Mon, 02 Jan 2006 15:04:05 -0700" - HTTP date format
-	time.RFC850,            // "Monday, 02-Jan-06 15:04:05 MST" - Old HTTP format
-	time.RFC1123,           // "Mon, 02 Jan 2006 15:04:05 MST" - Email/HTTP dates
-	time.RubyDate,          // "Mon Jan 02 15:04:05 -0700 2006" - Ruby time format
-	time.UnixDate,          // "Mon Jan _2 15:04:05 MST 2006" - Unix date command output
-	time.ANSIC,             // "Mon Jan _2 15:04:05 2006" - ANSI C asctime() format
-	time.RFC822Z,           // "02 Jan 06 15:04 -0700" - RFC 822 with numeric timezone
-	time.RFC822,            // "02 Jan 06 15:04 MST" - RFC 822 format
-	time.StampNano,         // "Jan _2 15:04:05.000000000" - Timestamp with nanoseconds
-	time.StampMicro,        // "Jan _2 15:04:05.000000" - Timestamp with microseconds
-	time.StampMilli,        // "Jan _2 15:04:05.000" - Timestamp with milliseconds
-	time.Stamp,             // "Jan _2 15:04:05" - Unix timestamp format
-	formatTimeString,       // "2006-01-02 15:04:05.999999999 -0700 MST" - Complete time string
-	time.DateTime,          // "2006-01-02 15:04:05" - SQL datetime format
-	formatDateTimeMinute,   // "2006-01-02 15:04" - DateTime without seconds
-	time.DateOnly,          // "2006-01-02" - ISO date only, SQL date format
-	formatDateTimeGerman,   // "02.01.2006 15:04:05" - German datetime format
-	formatDateGerman,       // "02.01.2006" - German date format (DD.MM.YYYY)
-}
+// The boolean strings include the single letter "t" and "f" that
+// strconv.ParseBool accepts, because that is what PostgreSQL writes
+// for booleans in CSV exports.
+//
+// These must never be modified. NewStringParser clones them so that a
+// configured parser cannot write through to them, and the nil-field
+// fallbacks return them directly, but only into the parse methods of
+// this file, which read them and never let them escape to a caller.
+var (
+	defaultTrueStrings  = []string{"true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"}
+	defaultFalseStrings = []string{"false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"}
+	defaultNilStrings   = []string{"", "nil", "<nil>", "null", "NULL"}
+
+	// defaultTimeFormats is the default list of time layout strings tried when parsing time values.
+	// The formats are ordered from most specific/common to less common, with ISO/RFC formats
+	// prioritized. This ordering optimizes parsing performance for typical use cases.
+	//
+	// The list includes:
+	//   - RFC3339 formats (ISO 8601) - most common in APIs and web applications
+	//   - RFC formats (RFC1123, RFC822, etc.) - common in email and HTTP headers
+	//   - Standard Go time constants (UnixDate, ANSIC, etc.)
+	//   - Custom formats for common use cases (browser inputs, database outputs, etc.)
+	//   - German date formats (DD.MM.YYYY) - locale-specific example
+	//
+	// Applications can customize this list globally or use StringParser.TimeFormats
+	// for per-parser customization.
+	defaultTimeFormats = []string{
+		time.RFC3339Nano,       // "2006-01-02T15:04:05.999999999Z07:00" - ISO 8601 with nanoseconds
+		time.RFC3339,           // "2006-01-02T15:04:05Z07:00" - ISO 8601, most common API format
+		formatBrowserLocalTime, // "2006-01-02T15:04" - HTML5 datetime-local input format
+		time.RFC1123Z,          // "Mon, 02 Jan 2006 15:04:05 -0700" - HTTP date format
+		time.RFC850,            // "Monday, 02-Jan-06 15:04:05 MST" - Old HTTP format
+		time.RFC1123,           // "Mon, 02 Jan 2006 15:04:05 MST" - Email/HTTP dates
+		time.RubyDate,          // "Mon Jan 02 15:04:05 -0700 2006" - Ruby time format
+		time.UnixDate,          // "Mon Jan _2 15:04:05 MST 2006" - Unix date command output
+		time.ANSIC,             // "Mon Jan _2 15:04:05 2006" - ANSI C asctime() format
+		time.RFC822Z,           // "02 Jan 06 15:04 -0700" - RFC 822 with numeric timezone
+		time.RFC822,            // "02 Jan 06 15:04 MST" - RFC 822 format
+		time.StampNano,         // "Jan _2 15:04:05.000000000" - Timestamp with nanoseconds
+		time.StampMicro,        // "Jan _2 15:04:05.000000" - Timestamp with microseconds
+		time.StampMilli,        // "Jan _2 15:04:05.000" - Timestamp with milliseconds
+		time.Stamp,             // "Jan _2 15:04:05" - Unix timestamp format
+		formatTimeString,       // "2006-01-02 15:04:05.999999999 -0700 MST" - Complete time string
+		time.DateTime,          // "2006-01-02 15:04:05" - SQL datetime format
+		formatDateTimeMinute,   // "2006-01-02 15:04" - DateTime without seconds
+		time.DateOnly,          // "2006-01-02" - ISO date only, SQL date format
+		formatDateTimeGerman,   // "02.01.2006 15:04:05" - German datetime format
+		formatDateGerman,       // "02.01.2006" - German date format (DD.MM.YYYY)
+	}
+)
 
 // Custom time format constants for common patterns not included in the time package.
 const (

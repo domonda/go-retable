@@ -443,6 +443,79 @@ func TestSmartAssign(t *testing.T) {
 			wantDst: time.Duration(90),
 		},
 
+		// A type defined as time.Time or time.Duration parses from the
+		// same strings as the type it is defined as, because it has the
+		// same underlying type and a string cannot be converted to it
+		// directly. Applications declare such types for domain specific
+		// columns, and before this they only reported an unsupported
+		// operation unless a Scanner was passed for them.
+		{
+			name:    "date string to defined time.Time type",
+			dst:     assignableValue[date](),
+			src:     reflect.ValueOf("2024-03-15"),
+			wantDst: date(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)),
+		},
+		{
+			name:    "date string to pointer to defined time.Time type",
+			dst:     assignableValue[*date](),
+			src:     reflect.ValueOf("2024-03-15"),
+			wantDst: pointerTo(date(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC))),
+		},
+		{
+			// The empty cell of an optional column means "no value"
+			// for a defined type too, not only for time.Time itself.
+			name:    "empty string to defined time.Time type",
+			dst:     assignableValue[date](),
+			src:     reflect.ValueOf(""),
+			wantDst: date{},
+		},
+		{
+			// A struct that embeds time.Time has a different underlying
+			// type, so it is not a time.Time and stays unsupported.
+			name:    "date string to struct embedding time.Time",
+			dst:     assignableValue[embeddedTime](),
+			src:     reflect.ValueOf("2024-03-15"),
+			wantErr: true,
+		},
+		{
+			name:    "duration string to defined time.Duration type",
+			dst:     assignableValue[timeout](),
+			src:     reflect.ValueOf("1h30m"),
+			wantDst: timeout(90 * time.Minute),
+		},
+		{
+			name:    "duration string to pointer to defined time.Duration type",
+			dst:     assignableValue[*timeout](),
+			src:     reflect.ValueOf("5s"),
+			wantDst: pointerTo(timeout(5 * time.Second)),
+		},
+		{
+			// A plain number without a unit stays nanoseconds
+			// for a defined type as well.
+			name:    "nanoseconds string to defined time.Duration type",
+			dst:     assignableValue[timeout](),
+			src:     reflect.ValueOf("90"),
+			wantDst: timeout(90),
+		},
+		{
+			// Reflection cannot tell a type defined as time.Duration
+			// from any other defined int64 type, so both parse duration
+			// strings. This is the cost documented at durationType and
+			// the case that makes it visible.
+			name:    "duration string to defined int64 type",
+			dst:     assignableValue[byteCount](),
+			src:     reflect.ValueOf("5m"),
+			wantDst: byteCount(5 * time.Minute),
+		},
+		{
+			// The predeclared int64 is excluded from that, so an
+			// ordinary numeric column keeps rejecting duration strings.
+			name:    "duration string to int64",
+			dst:     assignableValue[int64](),
+			src:     reflect.ValueOf("1h30m"),
+			wantErr: true,
+		},
+
 		// dstScanner overrides the built-in string parsing and
 		// falls through to it for errors.ErrUnsupported.
 		{
@@ -554,6 +627,17 @@ func TestSmartAssign(t *testing.T) {
 func pointerTo[T any](v T) *T {
 	return &v
 }
+
+// date, timeout and byteCount are types defined as time.Time,
+// time.Duration and int64, like an application declares for a domain
+// specific column. embeddedTime is the case that must not be mistaken
+// for one, because embedding is not the same underlying type.
+type (
+	date         time.Time
+	timeout      time.Duration
+	byteCount    int64
+	embeddedTime struct{ time.Time }
+)
 
 // intScanner returns a Scanner that assigns value to int
 // destinations and reports errors.ErrUnsupported for all
@@ -737,19 +821,27 @@ func TestStringParserZeroValueUsesDefaults(t *testing.T) {
 func TestNewStringParserDoesNotShareSlices(t *testing.T) {
 	a := NewStringParser()
 	b := NewStringParser()
-
-	a.TimeFormats[0] = "not a format"
-	a.TrueStrings[0] = "not true"
-	a.NilStrings[0] = "not nil"
-
-	require.NotEqual(t, "not a format", b.TimeFormats[0])
-	require.NotEqual(t, "not true", b.TrueStrings[0])
-	require.NotEqual(t, "not nil", b.NilStrings[0])
-
 	def, ok := DefaultParser.(*StringParser)
 	require.True(t, ok)
-	require.NotEqual(t, "not a format", def.TimeFormats[0])
-	require.NotEqual(t, "not a format", timeFormats[0], "the package level defaults must stay untouched")
+
+	// Compare the backing arrays instead of writing through one of them.
+	// A destructive check corrupts the package defaults for every later
+	// test in this package when it fails, turning one real failure into
+	// a cascade of unrelated ones in tests that never touch a parser.
+	sameArray := func(x, y []string) bool { return len(x) > 0 && len(y) > 0 && &x[0] == &y[0] }
+
+	require.False(t, sameArray(a.TimeFormats, b.TimeFormats), "two parsers must not share TimeFormats")
+	require.False(t, sameArray(a.TrueStrings, b.TrueStrings), "two parsers must not share TrueStrings")
+	require.False(t, sameArray(a.FalseStrings, b.FalseStrings), "two parsers must not share FalseStrings")
+	require.False(t, sameArray(a.NilStrings, b.NilStrings), "two parsers must not share NilStrings")
+
+	require.False(t, sameArray(a.TimeFormats, def.TimeFormats), "a new parser must not share TimeFormats with DefaultParser")
+	require.False(t, sameArray(a.TimeFormats, defaultTimeFormats), "a new parser must not share the package defaults")
+	require.False(t, sameArray(a.NilStrings, defaultNilStrings), "a new parser must not share the package defaults")
+
+	// The clone still carries the same values
+	require.Equal(t, defaultTimeFormats, a.TimeFormats)
+	require.Equal(t, defaultNilStrings, a.NilStrings)
 }
 
 // selfPtr is a self referential pointer type, which is legal Go: its
