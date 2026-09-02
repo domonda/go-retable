@@ -42,8 +42,11 @@ import (
 //     strategies below would parse the string into, which are the numeric
 //     kinds, bool, time.Time, types defined as one of those, and pointers
 //     to any of them. Destinations that can hold the string itself have
-//     already been assigned by the direct conversion above, so a *string
-//     keeps a pointer to the string rather than becoming nil. Any other
+//     already been assigned by the direct conversion above. A *string is
+//     not one of them, because a string is not convertible to a pointer:
+//     it keeps a pointer to the string rather than becoming nil because
+//     the pointer allocation strategy below allocates and recurses, and
+//     that recursion hits the direct conversion. Any other
 //     destination cannot hold a string of any content, so a nil one stays
 //     a type mismatch and is reported as an error instead of being
 //     silently turned into a zero value.
@@ -92,7 +95,9 @@ import (
 // Parameters:
 //   - dst: The destination reflect.Value to assign to. Must be valid and settable.
 //   - src: The source reflect.Value to assign from. Must be valid.
-//   - dstScanner: Optional Scanner for custom string-to-type conversions (can be nil).
+//   - dstScanner: Optional Scanner for custom string-to-type conversions,
+//     asked for a string source before the built-in conversions and skipped
+//     on errors.ErrUnsupported (can be nil).
 //   - parser: Parser used for all string conversions and passed to
 //     dstScanner.ScanString. Can be nil, in which case the shared
 //     DefaultParser is used. Pass one explicitly to configure parsing,
@@ -239,9 +244,11 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// the string and the value would fall through to the unsupported
 	// operation error.
 	// Destinations that can hold the string itself have already been
-	// assigned by the direct conversion above, and dstScanner has been
-	// asked first so that a Scanner can give it a different meaning,
-	// which is what StrictNilStrings does.
+	// assigned by the direct conversion above; a *string gets there via
+	// the pointer allocation strategy below, whose recursion hits that
+	// same conversion. dstScanner has been asked first so that a Scanner
+	// can give the string a different meaning, which is what
+	// StrictNilStrings does.
 	if srcKind == reflect.String && parser.IsNil(src.String()) && zeroValueForNilString(dstType) {
 		dst.Set(reflect.Zero(dstType))
 		return nil
@@ -290,7 +297,11 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	}
 
 	// Try assigning the dereferenced value
-	if srcKind == reflect.Pointer && !src.IsNil() {
+	// The bound matters on this side too: `type SelfPtr *SelfPtr` with a
+	// value pointing at itself makes src.Elem() the same value forever,
+	// and the recursion below overflows the stack, which is fatal and
+	// not something the deferred recover above can catch.
+	if _, ok := derefPointerType(srcType); srcKind == reflect.Pointer && !src.IsNil() && ok {
 		err := SmartAssign(dst, src.Elem(), dstScanner, parser, srcFormatter)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return err // nil or other than errors.ErrUnsupported

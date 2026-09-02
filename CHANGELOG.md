@@ -8,6 +8,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A number written with a space or apostrophe thousands separator and an
+  exponent parses correctly: `1 234e5` is 123400000, not 123400. The rule that
+  only a dot or a comma can be the decimal separator was applied where a value
+  ends but not where an exponent follows, so the same silent factor of 1000
+  survived on that path.
+
+- `SmartAssign` no longer crashes the process on a self referential pointer
+  *source*. Bounding the destination walk left the source branch unbounded, and
+  `src.Elem()` of a value that points at itself is the same value, so the
+  recursion overflowed the stack. A stack overflow is fatal, so the deferred
+  recover could not report it.
+
+- A cell formatter built by `ReflectCellFormatterFunc` reports a cell whose type
+  its function does not accept, instead of panicking. Guarding only the invalid
+  cell was not enough: a formatter registered by kind or by interface receives
+  defined types, and `reflect.Value.Call` panics on an argument that is not
+  assignable. The panic escaped through `TryFormattersOrSprint` into the CSV and
+  HTML writers.
+
+- A code page encoding strips a leading UTF-8 byte order mark. Excel writes one
+  in front of files it otherwise encodes in a code page, and a code page has no
+  mark of its own, so the mark was decoded as text and put `ï»¿` in front of the
+  first column title. That title then matched no struct field and the whole
+  column stayed at its zero value for every row, with no error anywhere.
+
+- `StrictNilStrings` no longer dereferences a nil `Parser`. A `Scanner` is
+  documented as usable on its own, and only `SmartAssign` substitutes
+  `DefaultParser`, so calling one directly panicked.
+
 - `SingleCellView` reports the title it was passed. The title argument was never
   stored, so `Title()` returned the column name instead, which contradicted both
   the parameter documentation and the example on the function itself, where
@@ -390,7 +419,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `float.Parse` becomes the unexported `parseFloat` in `parsefloat.go`,
     ported verbatim together with its upstream test suite and with the
     `strutil.TrimSpace` that also trims the zero width space U+200B. It was
-    verified against `float.Parse` over 114,337 inputs without a difference.
+    verified against `float.Parse` over 114,337 inputs without a difference at
+    the time of the port, before the separator fix listed under Fixed
+    deliberately diverged it from upstream.
     Nothing in the parser needs `go-types/language`, which is what pulled in
     the JSON schema packages.
   - `charset.GetEncoding`, `charset.AutoDecode` and `charset.TrimBOM` become
@@ -424,8 +455,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Only the source format knows whether such a cell is a null value or that
   text, which is why the strings are configured on the `Parser` through
   `StringParser.NilStrings` rather than hardcoded. A `Parser` with an empty
-  `NilStrings` restores the previous behavior for everything but the empty
-  string.
+  non-nil `NilStrings` treats every string as a value, including the empty one,
+  because the zero-value branch is gated entirely on `Parser.IsNil` and the
+  empty string is not special-cased. Leaving the field nil uses the defaults.
 
 - `SmartAssign`, `ViewToStructSlice` and the `csvtable` read functions take an
   additional `Parser` parameter after `dstScanner`. Pass `nil` to keep the
