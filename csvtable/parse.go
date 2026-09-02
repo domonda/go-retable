@@ -71,7 +71,7 @@ func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]stri
 //
 // Encoding handling:
 //   - UTF-8: BOM is trimmed if present, data is used as-is
-//   - Other encodings: Data is decoded to UTF-8 by the encoding support in charset.go
+//   - Other encodings: Data is decoded to UTF-8 by getCharsetEncoding
 //
 // Header line detection:
 //   - If first line matches pattern "sep=X" or "SEP=X" (possibly quoted),

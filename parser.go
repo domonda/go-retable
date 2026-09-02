@@ -195,6 +195,12 @@ func NewStringParser() *StringParser {
 // trueStrings, falseStrings, nilStrings and parseTimeFormats return the
 // configured values, or the package defaults for a field left nil, so
 // that the zero value of StringParser is usable.
+//
+// They are also safe to call with a nil receiver, which behaves like a
+// StringParser with no field set. That is not merely defensive: a nil
+// *StringParser stored in a Parser interface is not a nil interface, so
+// the cmp.Or(parser, DefaultParser) in SmartAssign does not substitute
+// DefaultParser for it and the nil receiver reaches these methods.
 func (p *StringParser) trueStrings() []string {
 	if p == nil || p.TrueStrings == nil {
 		return defaultTrueStrings
@@ -431,7 +437,7 @@ func (p *StringParser) IsNil(str string) bool {
 // This is useful when you need to know which format was used, for example to maintain
 // consistent formatting when round-tripping time values, or for validation purposes.
 //
-// The function tries all formats in the package-level timeFormats list in order.
+// The function tries all formats in the package-level defaultTimeFormats list in order.
 //
 // Parameters:
 //   - str: The string to parse
