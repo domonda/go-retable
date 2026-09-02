@@ -235,23 +235,45 @@ func Test_parseFloat_singleGroupSeparator(t *testing.T) {
 // same silent factor of 1000, on the path the first fix did not cover.
 func Test_parseFloat_groupSeparatorBeforeExponent(t *testing.T) {
 	grouped := []struct {
-		str  string
-		want float64
+		str              string
+		want             float64
+		wantThousandsSep rune
+		wantDecimalSep   rune
 	}{
-		{str: "1 234e5", want: 123400000},
-		{str: "1'234e5", want: 123400000},
-		{str: "1 234 567e2", want: 123456700},
-		{str: "1 234e-3", want: 1.234},
-		// A dot or a comma before the exponent is still the decimal
+		{str: "1 234e5", want: 123400000, wantThousandsSep: ' '},
+		{str: "1'234e5", want: 123400000, wantThousandsSep: '\''},
+		{str: "1 234 567e2", want: 123456700, wantThousandsSep: ' '},
+		{str: "1 234e-3", want: 1.234, wantThousandsSep: ' '},
+		// A LONE dot or comma before the exponent is still the decimal
 		// separator, which is the reading that was already correct.
-		{str: "1.234e5", want: 123400},
-		{str: "1,234e5", want: 123400},
+		{str: "1.234e5", want: 123400, wantDecimalSep: '.'},
+		{str: "1,234e5", want: 123400, wantDecimalSep: ','},
+		// But two or more of them are pure integer grouping, exactly as
+		// they are at the end of the string. The first fix of this
+		// branch only carried over the lone-separator half of the rule,
+		// so "1.234.567e5" kept parsing as 1234.567e5: the factor of
+		// 1000 the rule exists to prevent, reintroduced by the fix for
+		// it. "1.234.567" without the exponent was correct throughout,
+		// which is what made it invisible.
+		{str: "1.234.567e5", want: 1.234567e11, wantThousandsSep: '.'},
+		{str: "1,234,567e5", want: 1.234567e11, wantThousandsSep: ','},
+		{str: "12.345.678e2", want: 1.2345678e9, wantThousandsSep: '.'},
 	}
 	for _, tt := range grouped {
 		t.Run(tt.str, func(t *testing.T) {
-			got, err := parseFloat(tt.str)
+			got, thousandsSep, decimalSep, decimals, err := parseFloatDetails(tt.str)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
+
+			// The reported separators are part of the contract, not a
+			// by-product: a caller scaling money by `decimals` is
+			// corrupted a second time when a thousands separator is
+			// reported as the decimal one.
+			require.Equal(t, string(tt.wantThousandsSep), string(thousandsSep), "thousands separator")
+			require.Equal(t, string(tt.wantDecimalSep), string(decimalSep), "decimal separator")
+			if tt.wantDecimalSep == 0 {
+				require.Zero(t, decimals, "an integer grouping has no decimals")
+			}
 		})
 	}
 
