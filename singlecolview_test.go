@@ -17,7 +17,7 @@ func TestSingleColView(t *testing.T) {
 	require.Equal(t, "Erik", view.Cell(0, 0))
 	require.Equal(t, "Bo", view.Cell(2, 0))
 
-	// The column name doubles as the title, there is no separate one
+	// SingleColView takes no title, so the column name is used for it
 	require.Equal(t, "Name", view.Title())
 
 	t.Run("only column 0 exists", func(t *testing.T) {
@@ -66,20 +66,29 @@ func TestSingleColViewOfReflectValues(t *testing.T) {
 
 // SingleCellView wraps one value as a one by one table.
 func TestSingleCellView(t *testing.T) {
-	view := SingleCellView("the title argument", "Amount", 42)
+	view := SingleCellView("Count", "Total", 42)
 
-	require.Equal(t, []string{"Amount"}, view.Columns())
+	require.Equal(t, []string{"Total"}, view.Columns())
 	require.Equal(t, 1, view.NumRows())
 	require.Equal(t, 42, view.Cell(0, 0))
 
-	// The title argument is not stored: Title reports the column name,
-	// the same as SingleColView does. Pinning it so the behaviour is a
-	// decision rather than a surprise, and so removing the unused
-	// parameter is a deliberate change.
-	require.Equal(t, "Amount", view.Title(), "the title argument is ignored, the column name is the title")
+	// The title argument is the title, which is what the documented
+	// example of this constructor has always shown. It used to be
+	// dropped and the column name reported instead.
+	require.Equal(t, "Count", view.Title())
 
 	require.Nil(t, view.Cell(1, 0))
 	require.Nil(t, view.Cell(0, 1))
+
+	// A title and a column name that differ must not be confused for
+	// each other, which a view reporting the column as its title would.
+	require.NotEqual(t, view.Title(), view.Columns()[0])
+
+	t.Run("an empty title stays empty", func(t *testing.T) {
+		untitled := SingleCellView("", "Total", 42)
+		require.Equal(t, "", untitled.Title(), "no title means no title, not the column name")
+		require.Equal(t, []string{"Total"}, untitled.Columns())
+	})
 }
 
 func TestSingleCellViewOfReflectValue(t *testing.T) {

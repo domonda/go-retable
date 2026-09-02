@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `SingleCellView` reports the title it was passed. The title argument was never
+  stored, so `Title()` returned the column name instead, which contradicted both
+  the parameter documentation and the example on the function itself, where
+  `SingleCellView("Count", "Total", 42)` is shown returning `"Count"`.
+  `SingleColView`, which takes no title, still uses its column name for it.
+
 - A cell formatter built by `ReflectCellFormatterFunc` reports a cell without a
   value as an unsupported operation instead of panicking. It passed the cell
   straight into `reflect.Value.Call`, which panics with `reflect: Call using
