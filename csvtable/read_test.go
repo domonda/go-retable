@@ -111,7 +111,9 @@ func TestReadBytesDetectFormatToStructSlice(t *testing.T) {
 			&FormatDetectionConfig{Encodings: []string{"NO-SUCH-ENCODING"}},
 			bookingNaming, nil, germanCSVParser(), nil, nil,
 		)
-		require.Error(t, err)
+		// Naming the encoding, so this cannot start passing because
+		// naming or parsing failed for some unrelated reason instead.
+		require.ErrorContains(t, err, "NO-SUCH-ENCODING")
 	})
 
 	t.Run("a missing required column is reported", func(t *testing.T) {

@@ -527,19 +527,35 @@ func TestCharsetBOMFallbacks(t *testing.T) {
 func TestCharmapEncodingStripsUTF8BOM(t *testing.T) {
 	body := "Name;Ort\nMüller;Köln\n"
 
-	for _, name := range []string{"ISO 8859-1", "Windows 1252", "Macintosh"} {
-		t.Run(name, func(t *testing.T) {
-			enc, err := getCharsetEncoding(name)
-			require.NoError(t, err)
+	// Each code page has to be encoded with its own charmap, or every
+	// case decodes Windows-1252 bytes and the three of them prove the
+	// same single thing. The non-ASCII cells are what tells them apart:
+	// "ü" is 0xFC in the two Latin-1 derived pages and 0x9F in Macintosh.
+	for _, tt := range []struct {
+		name string
+		cm   *charmap.Charmap
+	}{
+		{name: "ISO 8859-1", cm: charmap.ISO8859_1},
+		{name: "Windows 1252", cm: charmap.Windows1252},
+		{name: "Macintosh", cm: charmap.Macintosh},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := encodeCharmap(t, tt.cm, body)
+			format := &Format{Encoding: tt.name, Separator: ";", Newline: "\n"}
 
-			withBOM := append([]byte(bomUTF8), encodeCharmap(t, charmap.Windows1252, body)...)
-			rows, err := ParseWithFormat(withBOM, &Format{Encoding: name, Separator: ";", Newline: "\n"})
+			withBOM := append([]byte(bomUTF8), encoded...)
+			rows, err := ParseWithFormat(withBOM, format)
 			require.NoError(t, err)
 			require.Equal(t, "Name", rows[0][0], "the mark must not become part of the first column title")
+			require.Equal(t, []string{"Müller", "Köln"}, rows[1],
+				"and the body still has to decode through the named code page")
 
-			// Content that merely starts with those bytes as text is
-			// not affected, because a code page file cannot carry one.
-			_ = enc
+			// Without the mark the same file parses the same way, so
+			// stripping it cannot be eating a real leading character.
+			rows, err = ParseWithFormat(encoded, format)
+			require.NoError(t, err)
+			require.Equal(t, "Name", rows[0][0])
+			require.Equal(t, []string{"Müller", "Köln"}, rows[1])
 		})
 	}
 }
