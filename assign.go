@@ -40,12 +40,13 @@ import (
 //     "<nil>", dst is set to its zero value, so a pointer destination
 //     becomes nil. This only applies to the destinations that the
 //     strategies below would parse the string into, which are the numeric
-//     kinds, bool, time.Time, and pointers to those. Destinations that can
-//     hold the string itself have already been assigned by the direct
-//     conversion above, so a *string keeps a pointer to the string rather
-//     than becoming nil. Any other destination cannot hold a string of any
-//     content, so a nil one stays a type mismatch and is reported as an
-//     error instead of being silently turned into a zero value.
+//     kinds, bool, time.Time, types defined as one of those, and pointers
+//     to any of them. Destinations that can hold the string itself have
+//     already been assigned by the direct conversion above, so a *string
+//     keeps a pointer to the string rather than becoming nil. Any other
+//     destination cannot hold a string of any content, so a nil one stays
+//     a type mismatch and is reported as an error instead of being
+//     silently turned into a zero value.
 //     Pass the StrictNilStrings Scanner to report an error instead of
 //     assigning the zero value to a type that cannot represent absence.
 //
@@ -60,6 +61,10 @@ import (
 //     If dst is time.Duration or *time.Duration, parser.ParseDuration is used,
 //     falling back to the integer parsing below for a plain number
 //     of nanoseconds without a unit.
+//     Types defined as time.Time, like "type Date time.Time", are
+//     included, and so is every defined int64 type for the duration
+//     case, because reflection cannot tell one defined as time.Duration
+//     apart from any other, see timeType and durationType.
 //
 //  10. Pointer dereferencing: If src is a non-nil pointer, SmartAssign is
 //     recursively called with the dereferenced value.
@@ -265,13 +270,9 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	}
 
 	// Try converting string to time.Time
-	if srcKind == reflect.String && (dstType == typeOfTime || dstKind == reflect.Pointer && dstType.Elem() == typeOfTime) {
+	if srcKind == reflect.String && (timeType(dstType) || dstKind == reflect.Pointer && timeType(dstType.Elem())) {
 		if t, err := parser.ParseTime(src.String()); err == nil {
-			if dstType == typeOfTime {
-				dst.Set(reflect.ValueOf(t))
-			} else {
-				dst.Set(reflect.ValueOf(&t))
-			}
+			setParsed(dst, reflect.ValueOf(t))
 			return nil
 		}
 	}
@@ -279,13 +280,9 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// Try converting string to time.Duration.
 	// Without this the underlying int64 kind of time.Duration
 	// would only accept a plain number of nanoseconds.
-	if srcKind == reflect.String && (dstType == typeOfDuration || dstKind == reflect.Pointer && dstType.Elem() == typeOfDuration) {
+	if srcKind == reflect.String && (durationType(dstType) || dstKind == reflect.Pointer && durationType(dstType.Elem())) {
 		if d, err := parser.ParseDuration(src.String()); err == nil {
-			if dstType == typeOfDuration {
-				dst.Set(reflect.ValueOf(d))
-			} else {
-				dst.Set(reflect.ValueOf(&d))
-			}
+			setParsed(dst, reflect.ValueOf(d))
 			return nil
 		}
 		// Continue to the integer parsing further down
@@ -456,6 +453,53 @@ func derefPointerType(t reflect.Type) (elem reflect.Type, ok bool) {
 	return t, false
 }
 
+// timeType reports whether t is time.Time or a type defined as it,
+// like "type Date time.Time", which parses from the same strings
+// because it has the same underlying type.
+//
+// Only such a type is convertible to time.Time, because a conversion
+// between struct types needs identical underlying types and the
+// unexported fields of time.Time can only be named by package time.
+// The kind is checked first because time.Time is also convertible to
+// every interface type it implements, like fmt.Stringer.
+func timeType(t reflect.Type) bool {
+	return t.Kind() == reflect.Struct && typeOfTime.ConvertibleTo(t)
+}
+
+// durationType reports whether t is time.Duration or a type defined
+// as it, like "type Timeout time.Duration", which parses from the
+// same strings because it has the same underlying type.
+//
+// A defined type only keeps the underlying type of time.Duration,
+// which is int64, so reflection cannot tell "type Timeout
+// time.Duration" from "type Bytes int64". Every defined int64 type is
+// therefore accepted, which costs a "5m" cell of a Bytes column being
+// read as 5 minutes in nanoseconds instead of being reported as an
+// error. The predeclared int64 has no package path and is excluded,
+// so a plain int64 destination keeps rejecting duration strings.
+// Both types still parse a plain number of nanoseconds, because
+// ParseDuration rejects a number without a unit and the integer
+// parsing of SmartAssign handles it.
+func durationType(t reflect.Type) bool {
+	return t.Kind() == typeOfDuration.Kind() && t.PkgPath() != ""
+}
+
+// setParsed assigns the parsed value val to dst, converting it to the
+// destination type, which is val's type, a type defined as it, or a
+// pointer to one of those. A pointer destination is allocated here
+// instead of by the pointer strategy of SmartAssign, which would
+// re-parse the string for the allocated value.
+func setParsed(dst, val reflect.Value) {
+	dstType := dst.Type()
+	if dstType.Kind() != reflect.Pointer {
+		dst.Set(val.Convert(dstType))
+		return
+	}
+	ptr := reflect.New(dstType.Elem())
+	ptr.Elem().Set(val.Convert(dstType.Elem()))
+	dst.Set(ptr)
+}
+
 // zeroValueForNilString reports whether a source string that means
 // no value assigns the zero value to a destination of type dstType.
 //
@@ -479,7 +523,7 @@ func zeroValueForNilString(dstType reflect.Type) bool {
 	}
 	// time.Time has a struct kind, time.Duration an int64 kind
 	// that is covered by the integer kinds below.
-	if dstType == typeOfTime {
+	if timeType(dstType) {
 		return true
 	}
 	switch dstType.Kind() {

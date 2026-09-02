@@ -333,6 +333,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   an ambiguity nothing in the string can resolve. All of this is documented on the
   method, along with the first tests for `ParseFloat`, which cover the strategies,
   the ambiguity and the strings it rejects.
+- Types defined as `time.Time` or `time.Duration`, like `type Date time.Time`
+  and `type Timeout time.Duration`, are parsed from strings by `SmartAssign`
+  like the types they are defined as, and an empty cell assigns the zero value
+  for them. Before, the destination had to be exactly `time.Time` or
+  `time.Duration`: a string is not convertible to a defined type, so a `Date`
+  column reported an unsupported operation for every cell, and a `Timeout`
+  column fell through to the integer parsing, which accepted a plain number of
+  nanoseconds but not `"5s"`. Such a column needed an own `Scanner`.
+
+  A type defined as `time.Time` is recognized exactly, because only such a type
+  is convertible to `time.Time`: a conversion between struct types needs
+  identical underlying types and the unexported fields of `time.Time` can only
+  be named by package `time`. A struct that embeds `time.Time` has a different
+  underlying type and stays unsupported.
+
+  A type defined as `time.Duration` cannot be recognized at all, because a
+  defined type only keeps its underlying type, which is `int64`, so reflection
+  cannot tell `type Timeout time.Duration` from `type Bytes int64`. Every
+  defined `int64` type therefore parses duration strings, which costs a `"5m"`
+  cell of a `Bytes` column being read as 5 minutes in nanoseconds instead of
+  being reported as an error. The predeclared `int64` has no package path and
+  is excluded, so an ordinary numeric column keeps rejecting duration strings,
+  and all of these types still parse a plain number as nanoseconds.
+
 - Tests for the `exceltable` package, which previously had none: its only test was
   commented out and referenced a fixture file that did not exist. The new tests
   build xlsx workbooks in memory and cover sparse rows, header trimming, empty
