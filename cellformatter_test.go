@@ -174,3 +174,118 @@ func TestReflectCellFormatterFuncInvalidCell(t *testing.T) {
 		require.Equal(t, "fn:x", str)
 	})
 }
+
+// The small string-typed formatters are the ones a caller reaches for
+// to format a single column, and each carries the raw flag that decides
+// whether the writer escapes its output. Getting that flag wrong is
+// silent: it either double-escapes visible output or injects unescaped
+// markup into a table.
+func TestStringCellFormatters(t *testing.T) {
+	view := NewStringsView("", [][]string{{"A"}, {"value"}})
+	ctx := context.Background()
+
+	t.Run("PrintfCellFormatter formats and is not raw", func(t *testing.T) {
+		str, raw, err := PrintfCellFormatter("<%s>").FormatCell(ctx, view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "<value>", str)
+		require.False(t, raw, "the output has to be escaped by the writer")
+	})
+
+	t.Run("PrintfRawCellFormatter formats and is raw", func(t *testing.T) {
+		str, raw, err := PrintfRawCellFormatter("<b>%s</b>").FormatCell(ctx, view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "<b>value</b>", str)
+		require.True(t, raw, "the markup must reach the output unescaped")
+	})
+
+	t.Run("SprintCellFormatter passes its raw flag through", func(t *testing.T) {
+		for _, wantRaw := range []bool{false, true} {
+			str, raw, err := SprintCellFormatter(wantRaw).FormatCell(ctx, view, 0, 0)
+			require.NoError(t, err)
+			require.Equal(t, "value", str)
+			require.Equal(t, wantRaw, raw)
+		}
+	})
+
+	t.Run("RawCellString ignores the cell and is raw", func(t *testing.T) {
+		str, raw, err := RawCellString("&nbsp;").FormatCell(ctx, view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "&nbsp;", str, "the constant is the output, whatever the cell holds")
+		require.True(t, raw)
+	})
+
+	t.Run("UnsupportedCellFormatter reports unsupported so a chain continues", func(t *testing.T) {
+		str, raw, err := UnsupportedCellFormatter{}.FormatCell(ctx, view, 0, 0)
+		require.ErrorIs(t, err, errors.ErrUnsupported)
+		require.Empty(t, str)
+		require.False(t, raw)
+	})
+}
+
+// SprintCellFormatter renders a number as its digits. reflect based
+// conversion of an integer to a string would produce the character with
+// that code point instead, which is the mistake this package has hit
+// before, so a numeric cell is worth pinning.
+func TestSprintCellFormatterOnNumbers(t *testing.T) {
+	view := &AnyValuesView{Cols: []string{"N"}, Rows: [][]any{{42}}}
+
+	str, _, err := SprintCellFormatter(false).FormatCell(context.Background(), view, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, "42", str)
+}
+
+// LayoutFormatter formats a cell that knows how to format itself, which
+// is how a time or a decimal column takes a layout string.
+func TestLayoutFormatter(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a cell implementing Format is given the layout", func(t *testing.T) {
+		view := &AnyValuesView{Cols: []string{"T"}, Rows: [][]any{{layoutCell{}}}}
+
+		str, raw, err := LayoutFormatter("2006-01-02").FormatCell(ctx, view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "formatted with 2006-01-02", str)
+		require.False(t, raw)
+	})
+
+	t.Run("a cell that cannot format itself is an error, not a panic", func(t *testing.T) {
+		view := NewStringsView("", [][]string{{"A"}, {"plain"}})
+
+		_, _, err := LayoutFormatter("2006-01-02").FormatCell(ctx, view, 0, 0)
+		require.ErrorContains(t, err, "does not implement")
+	})
+}
+
+type layoutCell struct{}
+
+func (layoutCell) Format(layout string) string { return "formatted with " + layout }
+
+// StringIfTrue and RawStringIfTrue render a boolean column as a mark,
+// like a checkmark for true and nothing for false.
+func TestStringIfTrue(t *testing.T) {
+	ctx := context.Background()
+	view := &AnyValuesView{Cols: []string{"Active"}, Rows: [][]any{{true}, {false}}}
+
+	t.Run("StringIfTrue", func(t *testing.T) {
+		str, raw, err := StringIfTrue("yes").FormatCell(ctx, view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "yes", str)
+		require.False(t, raw)
+
+		str, _, err = StringIfTrue("yes").FormatCell(ctx, view, 1, 0)
+		require.NoError(t, err)
+		require.Empty(t, str, "false renders as nothing, not as the text")
+	})
+
+	t.Run("RawStringIfTrue is raw for both outcomes", func(t *testing.T) {
+		str, raw, err := RawStringIfTrue("&check;").FormatCell(ctx, view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "&check;", str)
+		require.True(t, raw)
+
+		str, raw, err = RawStringIfTrue("&check;").FormatCell(ctx, view, 1, 0)
+		require.NoError(t, err)
+		require.Empty(t, str)
+		require.True(t, raw, "the empty result is raw too, so it is not escaped into something visible")
+	})
+}
