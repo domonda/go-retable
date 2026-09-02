@@ -396,6 +396,11 @@ func (f RawStringIfTrue) FormatCell(ctx context.Context, view View, row, col int
 //   - valType: The reflect.Type of the value parameter (for type registration)
 //   - err: Error if function signature is invalid
 //
+// The generated formatter reports errors.ErrUnsupported for a cell with no
+// value and for a cell whose type is not assignable to the function's value
+// parameter, so that a formatter registered for a kind or an interface lets
+// the next formatter try instead of panicking on the cell.
+//
 // Example usage:
 //
 //	// Simple type-safe formatter

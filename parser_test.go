@@ -2,6 +2,8 @@ package retable
 
 import (
 	"math"
+	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -111,6 +113,50 @@ func TestStringParser_ParseFloat(t *testing.T) {
 func TestStringParser_ParseFloatErrorQuotesOriginalString(t *testing.T) {
 	_, err := NewStringParser().ParseFloat("1,234.5.6")
 	require.ErrorContains(t, err, `"1,234.5.6"`)
+
+	// Both readings have to survive into the error. strconv's own error
+	// already quotes the string, so asserting only on that cannot tell
+	// the joined error from the strconv one, and the locale diagnostic
+	// could be dropped again without a test noticing. Only the locale
+	// half mentions a separator.
+	require.ErrorContains(t, err, "separator",
+		"the locale reading has to say what it made of the separators")
+	require.ErrorIs(t, err, strconv.ErrSyntax,
+		"and joining must not break errors.Is against the strconv error")
+}
+
+// TestNilStringParserBehavesLikeTheDefaults covers the nil receiver guards
+// on the StringParser accessors. A nil *StringParser stored in a Parser
+// interface is NOT a nil interface, so the cmp.Or(parser, DefaultParser)
+// in SmartAssign does not substitute DefaultParser for it: the nil
+// receiver reaches the accessors and used to panic there. Reverting any
+// one of the four `p == nil` guards has to fail this test.
+func TestNilStringParserBehavesLikeTheDefaults(t *testing.T) {
+	var parser Parser = (*StringParser)(nil)
+	//nolint:staticcheck // comparing the interface, not the pointer in it
+	require.True(t, parser != nil,
+		"a typed nil is not a nil interface, which is why cmp.Or does not replace it")
+
+	b, err := parser.ParseBool("yes")
+	require.NoError(t, err)
+	require.True(t, b, "the default true strings")
+
+	b, err = parser.ParseBool("no")
+	require.NoError(t, err)
+	require.False(t, b, "the default false strings")
+
+	require.True(t, parser.IsNil("NULL"), "the default nil strings")
+	require.False(t, parser.IsNil("0"))
+
+	tm, err := parser.ParseTime("2024-03-15T14:30:00Z")
+	require.NoError(t, err)
+	require.Equal(t, time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC), tm, "the default time formats")
+
+	// Reached the way a caller actually reaches it
+	var i int
+	err = SmartAssign(reflect.ValueOf(&i).Elem(), reflect.ValueOf("NULL"), nil, parser, nil)
+	require.NoError(t, err)
+	require.Zero(t, i, "a nil string assigns the zero value, it does not panic")
 }
 
 // TestStringParser_ParseFloatSpecialValues documents that the strconv
