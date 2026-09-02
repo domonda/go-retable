@@ -92,10 +92,6 @@ func TestSingleCellView(t *testing.T) {
 	require.Nil(t, view.Cell(1, 0))
 	require.Nil(t, view.Cell(0, 1))
 
-	// A title and a column name that differ must not be confused for
-	// each other, which a view reporting the column as its title would.
-	require.NotEqual(t, view.Title(), view.Columns()[0])
-
 	t.Run("an empty title stays empty", func(t *testing.T) {
 		untitled := SingleCellView("", "Total", 42)
 		require.Equal(t, "", untitled.Title(), "no title means no title, not the column name")

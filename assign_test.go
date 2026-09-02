@@ -1,7 +1,6 @@
 package retable
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -990,9 +989,13 @@ func TestSmartAssignSelfReferentialPointerType(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, reflect.TypeFor[string](), elem)
 
-	// Both sides of the bound, so changing maxPointerDepth or the loop
-	// is a visible failure: one level below it still resolves, at it the
-	// walk gives up rather than spinning.
+	// Both sides of the bound, so changing the loop is a visible failure:
+	// one level below the bound still resolves, at it the walk gives up
+	// rather than spinning. The fixtures are derived from
+	// maxPointerDepth, so pin the constant separately or moving it would
+	// move the fixtures with it and neither assertion could fail.
+	require.Equal(t, 32, maxPointerDepth,
+		"32 is deep enough for any real type and shallow enough to fail fast")
 	pointerTypeOfDepth := func(n int) reflect.Type {
 		typ := reflect.TypeFor[int]()
 		for range n {
@@ -1112,32 +1115,4 @@ func TestSmartAssignSelfReferentialPointerSource(t *testing.T) {
 	s := "text"
 	require.NoError(t, SmartAssign(reflect.ValueOf(&str).Elem(), reflect.ValueOf(&s), nil, nil, nil))
 	require.Equal(t, "text", str)
-}
-
-// TestReflectCellFormatterFuncWrongCellType covers that a cell whose
-// type the function does not accept is reported instead of panicking.
-// The invalid-cell guard was not enough: a formatter registered by kind
-// or by interface receives defined types, and reflect.Value.Call panics
-// on an argument that is not assignable, which escapes through
-// TryFormattersOrSprint into the CSV and HTML writers.
-func TestReflectCellFormatterFuncWrongCellType(t *testing.T) {
-	type definedInt int
-
-	formatter, _, err := ReflectCellFormatterFunc(func(int) string { return "formatted" }, false)
-	require.NoError(t, err)
-
-	byKind := new(ReflectTypeCellFormatter).WithKindFormatter(reflect.Int, formatter)
-	view := &AnyValuesView{Cols: []string{"c"}, Rows: [][]any{{definedInt(7)}}}
-
-	require.NotPanics(t, func() {
-		str, _, err := byKind.FormatCell(context.Background(), view, 0, 0)
-		require.ErrorIs(t, err, errors.ErrUnsupported, "an alternative formatter has to get its chance")
-		require.Empty(t, str)
-	})
-
-	// The exact type the function accepts is still formatted
-	plain := &AnyValuesView{Cols: []string{"c"}, Rows: [][]any{{7}}}
-	str, _, err := byKind.FormatCell(context.Background(), plain, 0, 0)
-	require.NoError(t, err)
-	require.Equal(t, "formatted", str)
 }

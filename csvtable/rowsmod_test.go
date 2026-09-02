@@ -219,15 +219,17 @@ func TestTrimSpaceRows(t *testing.T) {
 // modification count. Some exports letter-space their headings, which
 // makes a column title unmatchable until the spacing is removed.
 func TestCompactSpacedStringsRows(t *testing.T) {
+	// Both spaced fields sit in the SAME row, so the count of 2 can only
+	// come from counting fields. One per row would report 1 and fail.
 	rows := [][]string{
-		{"N a m e", "Betrag"},
-		{"Erik", "B e t r a g"},
+		{"N a m e", "B e t r a g"},
+		{"Erik", "42"},
 	}
 	numModified := CompactSpacedStrings(rows)
-	require.Equal(t, 2, numModified)
+	require.Equal(t, 2, numModified, "the count is per field, not per row")
 	require.Equal(t, [][]string{
 		{"Name", "Betrag"},
-		{"Erik", "Betrag"},
+		{"Erik", "42"},
 	}, rows)
 
 	// Nothing to compact leaves the rows and the count alone

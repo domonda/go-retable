@@ -362,13 +362,31 @@ func TestWriter_WriteAndWriteWithViewer(t *testing.T) {
 		require.Equal(t, "Name;Age\r\nErik;42\r\nAnn;7\r\n", buf.String())
 	})
 
+	// A configured viewer only proves it ran if it produces something
+	// selection would not. Tagged columns do that: selection reads the
+	// col tags, NoTagsStructRowsViewer ignores them, so the header row
+	// says which viewer was used.
+	type Tagged struct {
+		Name string `col:"Vorname"`
+		Age  int    `col:"Alter"`
+	}
+	tagged := []Tagged{{Name: "Erik", Age: 42}}
+
+	t.Run("selection reads the col tags", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter[[]Tagged]().WithHeaderRow(true)
+		require.NoError(t, w.Write(context.Background(), &buf, tagged))
+		require.Equal(t, "Vorname;Alter\r\nErik;42\r\n", buf.String())
+	})
+
 	t.Run("WithTableViewer is used instead of selecting one", func(t *testing.T) {
 		var buf bytes.Buffer
-		w := NewWriter[[]Row]().
+		w := NewWriter[[]Tagged]().
 			WithHeaderRow(true).
-			WithTableViewer(retable.DefaultStructRowsViewer())
-		require.NoError(t, w.Write(context.Background(), &buf, rows))
-		require.Equal(t, "Name;Age\r\nErik;42\r\nAnn;7\r\n", buf.String())
+			WithTableViewer(retable.NoTagsStructRowsViewer())
+		require.NoError(t, w.Write(context.Background(), &buf, tagged))
+		require.Equal(t, "Name;Age\r\nErik;42\r\n", buf.String(),
+			"the field names, not the col tags, so the configured viewer ran")
 	})
 
 	t.Run("WriteWithViewer takes the viewer per call", func(t *testing.T) {
@@ -380,7 +398,10 @@ func TestWriter_WriteAndWriteWithViewer(t *testing.T) {
 
 	t.Run("a viewer error is reported", func(t *testing.T) {
 		var buf bytes.Buffer
-		// An int is not a table, so viewer selection has to fail
+		// Selection itself cannot fail here: retable.SelectViewer
+		// returns &DefaultStructFieldNaming for anything that is not
+		// [][]string. The error comes from NewView, which has no view
+		// to build from an int.
 		w := NewWriter[int]()
 		require.Error(t, w.Write(context.Background(), &buf, 42))
 	})
