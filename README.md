@@ -11,6 +11,7 @@ A powerful Go library for working with tabular data using reflection. `go-retabl
 - **Multiple Format Support**: Read/write CSV, Excel (XLSX), HTML tables, and SQL result sets
 - **Type-Safe Conversions**: Convert between struct slices, string slices, and generic values
 - **Smart Type Conversion**: Intelligent value assignment across different Go types
+- **Configurable Parsing**: Locale number formats, custom time layouts and null-value spellings, with scanners for your own types
 - **Zero-Copy Transformations**: Efficient view wrappers for filtering, mapping, and combining data
 - **Flexible Formatting**: Customizable cell formatters with type-based routing
 - **Struct Tag Support**: Map struct fields to columns using tags
@@ -213,7 +214,7 @@ Transform Views without copying data:
 ```go
 // Filter rows and columns
 filtered := retable.FilteredView{
-    View:          view,
+    Source:        view,
     RowOffset:     10,
     RowLimit:      20,
     ColumnMapping: []int{0, 2, 3}, // Select specific columns
@@ -312,6 +313,92 @@ Supports:
 - Pointer dereferencing
 - Null-like value handling
 - Custom formatters and scanners
+
+### Parsers and Scanners
+
+`SmartAssign`, `ViewToStructSlice` and the `csvtable` read functions all take a
+`Scanner` and a `Parser`. Both are optional: `nil` for either uses the defaults.
+
+A `Parser` converts a string into one of Go's basic types and classifies a string
+that means "no value". A `Scanner` sees the destination type and decides what the
+string means for it, calling the `Parser` for the conversions. Pass a `Parser` to
+change which formats are accepted; pass a `Scanner` to handle a type the package
+does not know.
+
+#### Configuring the parser
+
+`StringParser` is the default implementation, shared as `DefaultParser`. Build
+your own with `NewStringParser` and change what it accepts:
+
+```go
+type Booking struct {
+    Date   time.Time
+    Amount float64
+    Count  int
+}
+
+parser := retable.NewStringParser()
+parser.NilStrings = []string{"", "N/A", "-"}
+parser.TimeFormats = append([]string{"02.01.2006"}, parser.TimeFormats...)
+
+rows, err := retable.ViewToStructSlice[Booking](view, nil, nil, parser, nil, nil)
+```
+
+Leaving a field nil uses that field's defaults, so a parser unmarshalled from a
+config file that only sets `TimeFormats` still parses numbers and booleans. Set a
+field to an empty non-nil slice to really accept nothing. `DefaultParser` is
+package state, so pass your own parser rather than modifying it from a library or
+from concurrent code.
+
+`ParseFloat` reads the number formats other locales write, not only Go's float
+literal syntax:
+
+```go
+retable.DefaultParser.ParseFloat("1,234.56")  // 1234.56
+retable.DefaultParser.ParseFloat("1.234,56")  // 1234.56
+retable.DefaultParser.ParseFloat("1 234")     // 1234
+retable.DefaultParser.ParseFloat("1.234,56-") // -1234.56, trailing minus
+```
+
+Groups before the decimal separator have to be 3 digits long, so a wrongly
+grouped `12.34,56` is rejected rather than read as an arbitrary number. A lone
+`,` or `.` stays the decimal separator, so `1,234` is 1.234 — nothing in the
+string can resolve that ambiguity.
+
+#### Empty cells
+
+`Parser.IsNil` reports whether a string means "no value" — by default `""`,
+`nil`, `<nil>`, `null` and `NULL`. `SmartAssign` assigns the zero value for such
+a string, so an empty CSV cell reads as `0` instead of failing the whole file.
+The cost is that the parsed data can no longer tell an empty cell from a cell
+containing `0`.
+
+Pass the `StrictNilStrings` scanner to make that an error for the types that
+cannot represent an absent value — the numeric types, `bool`, `time.Time` and
+`time.Duration`:
+
+```go
+_, err := retable.ViewToStructSlice[Booking](view, nil, retable.StrictNilStrings, nil, nil, nil)
+// cannot assign "" to int, use a pointer type for an optional column
+```
+
+The fix it asks for is to declare the optional column as a pointer. Pointer
+destinations are left alone and still get `nil`, so the absence stays visible in
+the parsed data and the type states which columns are optional.
+
+#### Combining scanners
+
+`MultiScanner` calls each `Scanner` in order until one handles the destination
+type, so `StrictNilStrings` composes with a scanner of your own:
+
+```go
+scanner := retable.MultiScanner(retable.StrictNilStrings, myScanner)
+rows, err := retable.ViewToStructSlice[Booking](view, nil, scanner, nil, nil, nil)
+```
+
+A `Scanner` returns `errors.ErrUnsupported` for a type it does not handle, which
+lets the chain continue to the next one and finally to `SmartAssign`'s own
+conversions. Any other error stops the chain.
 
 ### SQL Integration
 
@@ -812,11 +899,11 @@ joined := retable.ExtraColsView{salesView, inventoryView}
 withMargin := retable.ExtraColsReflectValueFuncView(
     joined,
     []string{"Margin %"},
-    func(row int) []reflect.Value {
+    func(row, col int) reflect.Value {
         cost := joined.Cell(row, 2).(float64)
         price := joined.Cell(row, 3).(float64)
         margin := ((price - cost) / price) * 100
-        return []reflect.Value{reflect.ValueOf(margin)}
+        return reflect.ValueOf(margin)
     },
 )
 
