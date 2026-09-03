@@ -509,8 +509,19 @@ func (w *Writer[T]) WithNilValue(nilValue template.HTML) *Writer[T] {
 //   - rowTemplate: Template for rendering each row
 //   - footerTemplate: Template for the closing table tag
 //
-// The templates receive TemplateContext and RowTemplateContext respectively.
+// A nil argument leaves that template unchanged, so a single one can be
+// replaced without restating the others. Passing HeaderTemplate, RowTemplate
+// or FooterTemplate restores the package default for that position.
+//
+// tableTemplate and footerTemplate receive a TemplateContext, rowTemplate
+// receives a RowTemplateContext, once per row.
 // See templates.go for the default templates and context structures.
+//
+// Cells reach rowTemplate as template.HTML values in RawCells, already
+// escaped by the writer unless their formatter returned raw output. Where
+// the template puts a cell decides what happens next: html/template emits
+// it verbatim in element content, which is what the default RowTemplate
+// does, and re-escapes it for an attribute or a script context.
 //
 // Example:
 //
@@ -519,11 +530,20 @@ func (w *Writer[T]) WithNilValue(nilValue template.HTML) *Writer[T] {
 //	footerTmpl := template.Must(template.New("footer").Parse("</thead></table>"))
 //	writer := htmltable.NewWriter[[]Data]().
 //	    WithTemplate(headerTmpl, rowTmpl, footerTmpl)
+//
+//	// Replace only the row template:
+//	writer = htmltable.NewWriter[[]Data]().WithTemplate(nil, rowTmpl, nil)
 func (w *Writer[T]) WithTemplate(tableTemplate, rowTemplate, footerTemplate *template.Template) *Writer[T] {
 	mod := w.clone()
-	mod.headerTemplate = tableTemplate
-	mod.rowTemplate = rowTemplate
-	mod.footerTemplate = footerTemplate
+	if tableTemplate != nil {
+		mod.headerTemplate = tableTemplate
+	}
+	if rowTemplate != nil {
+		mod.rowTemplate = rowTemplate
+	}
+	if footerTemplate != nil {
+		mod.footerTemplate = footerTemplate
+	}
 	return mod
 }
 
