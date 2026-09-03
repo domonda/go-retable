@@ -1,8 +1,8 @@
 package retable
 
-var _ View = ExtraRowView(nil)
+var _ View = ExtraRowsView(nil)
 
-// ExtraRowView is a zero-copy decorator that vertically concatenates multiple Views,
+// ExtraRowsView is a zero-copy decorator that vertically concatenates multiple Views,
 // stacking their rows into a single unified View. This is the row equivalent of a
 // SQL UNION operation, allowing you to combine data from different sources with the
 // same column structure.
@@ -23,7 +23,7 @@ var _ View = ExtraRowView(nil)
 //
 // # Column Structure Requirements
 //
-// ExtraRowView uses the column structure from the first view in the slice.
+// ExtraRowsView uses the column structure from the first view in the slice.
 // All subsequent views should have the same column count and compatible types.
 // The implementation does NOT validate column compatibility - it's the caller's
 // responsibility to ensure views have matching structures.
@@ -32,13 +32,13 @@ var _ View = ExtraRowView(nil)
 //
 //	View1: ["Name", "Age"]  <- columns used
 //	View2: ["Name", "Age"]
-//	ExtraRowView columns: ["Name", "Age"]
+//	ExtraRowsView columns: ["Name", "Age"]
 //
 // If views have different columns, cells are accessed by position only:
 //
 //	View1: ["A", "B"]
 //	View2: ["X", "Y"]
-//	ExtraRowView: columns ["A", "B"], but view2.Cell(0, 0) returns "X" data
+//	ExtraRowsView: columns ["A", "B"], but view2.Cell(0, 0) returns "X" data
 //
 // # Row Count Behavior
 //
@@ -47,7 +47,7 @@ var _ View = ExtraRowView(nil)
 //	View1: 10 rows
 //	View2: 5 rows
 //	View3: 15 rows
-//	ExtraRowView: 30 rows total
+//	ExtraRowsView: 30 rows total
 //
 // # Performance Characteristics
 //
@@ -71,7 +71,7 @@ var _ View = ExtraRowView(nil)
 //	}, []string{"Name", "Age"})
 //
 //	// Combine them
-//	all := ExtraRowView{past, recent}
+//	all := ExtraRowsView{past, recent}
 //	// 4 rows total:
 //	// Row 0: ["Alice", "30"]   (from past)
 //	// Row 1: ["Bob", "25"]     (from past)
@@ -84,7 +84,7 @@ var _ View = ExtraRowView(nil)
 //	euData := loadEUCustomers()      // 75 rows
 //	asiaData := loadAsiaCustomers()  // 50 rows
 //
-//	allCustomers := ExtraRowView{usData, euData, asiaData}
+//	allCustomers := ExtraRowsView{usData, euData, asiaData}
 //	// 225 rows total, all with same columns
 //
 // # Example: Appending Summary Rows
@@ -95,10 +95,10 @@ var _ View = ExtraRowView(nil)
 //	summaryData := [][]any{
 //	    {"TOTAL", sumValues(), avgValues()},
 //	}
-//	summary := NewAnyValuesView("", summaryData, dataRows.Columns())
+//	summary := NewAnyValuesView("", summaryData, dataRows.ColumnNames())
 //
 //	// Append summary at the bottom
-//	withSummary := ExtraRowView{dataRows, summary}
+//	withSummary := ExtraRowsView{dataRows, summary}
 //	// Last row contains the totals
 //
 // # Example: Combining Filtered Subsets
@@ -118,7 +118,7 @@ var _ View = ExtraRowView(nil)
 //	}
 //
 //	// Recombine selected rows
-//	selected := ExtraRowView{categoryA, categoryB}
+//	selected := ExtraRowsView{categoryA, categoryB}
 //	// 20 rows: first 10 from categoryA, then 10 from categoryB
 //
 // # Example: Multi-Batch Loading
@@ -127,7 +127,7 @@ var _ View = ExtraRowView(nil)
 //	for batch := range loadIncrementally() {
 //	    batches = append(batches, batch)
 //	}
-//	allData := ExtraRowView(batches)
+//	allData := ExtraRowsView(batches)
 //	// All batches combined into single view
 //
 // # Row Index Translation
@@ -138,7 +138,7 @@ var _ View = ExtraRowView(nil)
 //	view2 has 5 rows (indices 10-14 in combined view)
 //	view3 has 8 rows (indices 15-22 in combined view)
 //
-//	combined := ExtraRowView{view1, view2, view3}
+//	combined := ExtraRowsView{view1, view2, view3}
 //
 //	combined.Cell(5, 0)  -> view1.Cell(5, 0)   // Within view1
 //	combined.Cell(12, 0) -> view2.Cell(2, 0)   // Within view2 (12-10=2)
@@ -146,8 +146,8 @@ var _ View = ExtraRowView(nil)
 //
 // # Edge Cases
 //
-//   - Empty ExtraRowView{} results in 0 rows, 0 columns, empty title
-//   - Single view ExtraRowView{view} behaves identically to view
+//   - Empty ExtraRowsView{} results in 0 rows, 0 columns, empty title
+//   - Single view ExtraRowsView{view} behaves identically to view
 //   - Views with 0 rows contribute nothing to final result
 //   - Negative row/col indices return nil
 //   - Column index beyond first view's column count returns nil
@@ -157,15 +157,15 @@ var _ View = ExtraRowView(nil)
 //
 // If views have different column counts, no error occurs:
 //
-//   - Columns() returns the first view's columns only
+//   - ColumnNames() returns the first view's columns only
 //
 //   - Accessing a column index >= a view's column count returns nil for that view's rows
 //
 //     view1 := NewStringsView("", [][]string{{"A", "B"}}, "Col1", "Col2")
 //     view2 := NewStringsView("", [][]string{{"X"}}, "Col1")
 //
-//     combined := ExtraRowView{view1, view2}
-//     combined.Columns() -> ["Col1", "Col2"]
+//     combined := ExtraRowsView{view1, view2}
+//     combined.ColumnNames() -> ["Col1", "Col2"]
 //     combined.Cell(0, 0) -> "A"
 //     combined.Cell(0, 1) -> "B"
 //     combined.Cell(1, 0) -> "X"
@@ -173,11 +173,11 @@ var _ View = ExtraRowView(nil)
 //
 // # Composition
 //
-// ExtraRowView can be nested and combined with other decorators:
+// ExtraRowsView can be nested and combined with other decorators:
 //
 //	batch1 := loadBatch1()
 //	batch2 := loadBatch2()
-//	combined := ExtraRowView{batch1, batch2}
+//	combined := ExtraRowsView{batch1, batch2}
 //
 //	// Filter the combined result
 //	filtered := &FilteredView{
@@ -192,37 +192,46 @@ var _ View = ExtraRowView(nil)
 //
 // The title is taken from the first view in the slice. If you need a custom
 // title, wrap the result with ViewWithTitle.
-type ExtraRowView []View
+type ExtraRowsView []View
 
 // Title returns the title of the first View in the slice.
 // Returns an empty string if the slice is empty.
 //
 // The title is not a combination of all view titles - only the first is used.
-// To set a custom title, use ViewWithTitle to wrap the ExtraRowView.
-func (e ExtraRowView) Title() string {
+// To set a custom title, use ViewWithTitle to wrap the ExtraRowsView.
+func (e ExtraRowsView) Title() string {
 	if len(e) == 0 {
 		return ""
 	}
 	return e[0].Title()
 }
 
-// Columns returns the column names from the first View in the slice.
+// ColumnNames returns the column names from the first View in the slice.
 // Returns nil if the slice is empty.
 //
-// All views in ExtraRowView should have the same column structure,
+// All views in ExtraRowsView should have the same column structure,
 // but this is not enforced. Only the first view's columns are used
 // to define the structure of the combined view.
 //
 // Example:
 //
-//	view1.Columns() -> ["A", "B", "C"]
-//	view2.Columns() -> ["A", "B", "C"]
-//	ExtraRowView{view1, view2}.Columns() -> ["A", "B", "C"]
-func (e ExtraRowView) Columns() []string {
+//	view1.ColumnNames() -> ["A", "B", "C"]
+//	view2.ColumnNames() -> ["A", "B", "C"]
+//	ExtraRowsView{view1, view2}.ColumnNames() -> ["A", "B", "C"]
+func (e ExtraRowsView) ColumnNames() []string {
 	if len(e) == 0 {
 		return nil
 	}
-	return e[0].Columns()
+	return e[0].ColumnNames()
+}
+
+// NumColumns returns the number of columns of the first View,
+// mirroring ColumnNames. Returns 0 if the ExtraRowsView is empty.
+func (e ExtraRowsView) NumColumns() int {
+	if len(e) == 0 {
+		return 0
+	}
+	return e[0].NumColumns()
 }
 
 // NumRows returns the total row count across all Views.
@@ -230,15 +239,15 @@ func (e ExtraRowView) Columns() []string {
 // The combined view has the sum of row counts from all component Views.
 // Views with 0 rows contribute nothing to the total.
 //
-// Returns 0 if ExtraRowView is empty or all views have 0 rows.
+// Returns 0 if ExtraRowsView is empty or all views have 0 rows.
 //
 // Example:
 //
 //	view1.NumRows() -> 10
 //	view2.NumRows() -> 5
 //	view3.NumRows() -> 15
-//	ExtraRowView{view1, view2, view3}.NumRows() -> 30
-func (e ExtraRowView) NumRows() int {
+//	ExtraRowsView{view1, view2, view3}.NumRows() -> 30
+func (e ExtraRowsView) NumRows() int {
 	numRows := 0
 	for _, view := range e {
 		numRows += view.NumRows()
@@ -264,7 +273,7 @@ func (e ExtraRowView) NumRows() int {
 //	view1 has 2 rows (indices 0-1 in combined view)
 //	view2 has 3 rows (indices 2-4 in combined view)
 //
-//	combined := ExtraRowView{view1, view2}
+//	combined := ExtraRowsView{view1, view2}
 //
 //	combined.Cell(0, 0) -> view1.Cell(0, 0)  // First row of view1
 //	combined.Cell(1, 0) -> view1.Cell(1, 0)  // Second row of view1
@@ -276,8 +285,8 @@ func (e ExtraRowView) NumRows() int {
 // Performance: O(n) where n is the number of views, as it must iterate
 // to find the correct view. For performance-critical code with many views,
 // consider pre-computing row offsets.
-func (e ExtraRowView) Cell(row, col int) any {
-	if row < 0 || col < 0 || col >= len(e.Columns()) {
+func (e ExtraRowsView) Cell(row, col int) any {
+	if row < 0 || col < 0 || col >= e.NumColumns() {
 		return nil
 	}
 	rowTop := 0

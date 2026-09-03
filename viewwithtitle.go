@@ -59,8 +59,9 @@ type viewWithTitle struct {
 // Title returns the wrapped title (not the source's title).
 func (v viewWithTitle) Title() string { return v.title }
 
-// Columns delegates to the source view's Columns method.
-func (v viewWithTitle) Columns() []string { return v.source.Columns() }
+// ColumnNames delegates to the source view's ColumnNames method.
+func (v viewWithTitle) ColumnNames() []string { return v.source.ColumnNames() }
+func (v viewWithTitle) NumColumns() int       { return v.source.NumColumns() }
 
 // NumRows delegates to the source view's NumRows method.
 func (v viewWithTitle) NumRows() int { return v.source.NumRows() }

@@ -31,7 +31,7 @@ func TestExtraColsAnyValueFuncView(t *testing.T) {
 	)
 
 	require.Equal(t, "People", view.Title(), "the title comes from the left view")
-	require.Equal(t, []string{"Name", "Age", "Row", "Doubled"}, view.Columns())
+	require.Equal(t, []string{"Name", "Age", "Row", "Doubled"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows(), "the left view decides the row count")
 
 	t.Run("the left columns are passed through", func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestExtraColsReflectValueFuncView(t *testing.T) {
 		},
 	)
 
-	require.Equal(t, []string{"Name", "Len"}, view.Columns())
+	require.Equal(t, []string{"Name", "Len"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 
 	t.Run("a valid value is unwrapped by Cell", func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestExtraColsFuncViewNoExtraColumns(t *testing.T) {
 		return nil
 	})
 
-	require.Equal(t, []string{"A"}, view.Columns())
+	require.Equal(t, []string{"A"}, view.ColumnNames())
 	require.Equal(t, 1, view.NumRows())
 	require.Equal(t, "a0", view.Cell(0, 0))
 }

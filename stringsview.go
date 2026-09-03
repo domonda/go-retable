@@ -49,8 +49,8 @@ import (
 //	}
 //	fmt.Println(view.Cell(1, 2)) // Output: "" (empty string)
 type StringsView struct {
-	// Tit is the title of this view, returned by the Title() method.
-	Tit string
+	// TableTitle is the title of this view, returned by the Title() method.
+	TableTitle string
 
 	// Cols contains the column names defining both the column headers
 	// and the number of columns in this view.
@@ -130,14 +130,17 @@ func NewStringsView(title string, rows [][]string, cols ...string) *StringsView 
 		}
 		cols = trimmedCols
 	}
-	return &StringsView{Tit: title, Cols: cols, Rows: rows}
+	return &StringsView{TableTitle: title, Cols: cols, Rows: rows}
 }
 
 // Title returns the title of this view.
-func (view *StringsView) Title() string { return view.Tit }
+func (view *StringsView) Title() string { return view.TableTitle }
 
-// Columns returns the column names of this view.
-func (view *StringsView) Columns() []string { return view.Cols }
+// ColumnNames returns the column names of this view.
+func (view *StringsView) ColumnNames() []string { return view.Cols }
+
+// NumColumns returns the number of columns of this view.
+func (view *StringsView) NumColumns() int { return len(view.Cols) }
 
 // NumRows returns the number of data rows in this view.
 func (view *StringsView) NumRows() int { return len(view.Rows) }
@@ -151,7 +154,7 @@ func (view *StringsView) NumRows() int { return len(view.Rows) }
 //
 // Parameters:
 //   - row: Zero-based row index (0 to NumRows()-1)
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumColumns()-1)
 //
 // Returns the cell value as any, which will be either string, "", or nil.
 //
@@ -236,7 +239,7 @@ func NewHeaderView(cols ...string) *HeaderView {
 //	headerOnly := retable.NewHeaderViewFrom(original)
 //	// headerOnly contains just one row with "ID", "Name", "Price" as values
 func NewHeaderViewFrom(source View) *HeaderView {
-	return &HeaderView{Tit: source.Title(), Cols: source.Columns()}
+	return &HeaderView{TableTitle: source.Title(), Cols: source.ColumnNames()}
 }
 
 // HeaderView is a specialized View that contains only a header row.
@@ -257,23 +260,26 @@ func NewHeaderViewFrom(source View) *HeaderView {
 // Example:
 //
 //	view := &retable.HeaderView{
-//	    Tit:  "User Schema",
-//	    Cols: []string{"ID", "Name", "Email", "Active"},
+//	    TableTitle: "User Schema",
+//	    Cols:       []string{"ID", "Name", "Email", "Active"},
 //	}
 //	// Row 0 will contain: "ID", "Name", "Email", "Active"
 type HeaderView struct {
-	// Tit is the title of this view.
-	Tit string
+	// TableTitle is the title of this view.
+	TableTitle string
 
 	// Cols contains the column names, which are also used as the data row.
 	Cols []string
 }
 
 // Title returns the title of this view.
-func (view *HeaderView) Title() string { return view.Tit }
+func (view *HeaderView) Title() string { return view.TableTitle }
 
-// Columns returns the column names of this view.
-func (view *HeaderView) Columns() []string { return view.Cols }
+// ColumnNames returns the column names of this view.
+func (view *HeaderView) ColumnNames() []string { return view.Cols }
+
+// NumColumns returns the number of columns of this view.
+func (view *HeaderView) NumColumns() int { return len(view.Cols) }
 
 // NumRows always returns 1 for HeaderView since it contains only the header row.
 func (view *HeaderView) NumRows() int { return 1 }
@@ -285,7 +291,7 @@ func (view *HeaderView) NumRows() int { return 1 }
 //
 // Parameters:
 //   - row: Must be 0, otherwise nil is returned
-//   - col: Zero-based column index (0 to len(Columns())-1)
+//   - col: Zero-based column index (0 to NumColumns()-1)
 //
 // Returns:
 //   - The column name as any if row is 0 and col is valid

@@ -68,16 +68,16 @@ func TestFilteredViewColumnMapping(t *testing.T) {
 	t.Run("nil mapping passes every column through unchanged", func(t *testing.T) {
 		view := &FilteredView{Source: filteredSource()}
 
-		require.Equal(t, []string{"A", "B", "C"}, view.Columns())
-		require.Equal(t, 3, view.NumCols())
+		require.Equal(t, []string{"A", "B", "C"}, view.ColumnNames())
+		require.Equal(t, 3, view.NumColumns())
 		require.Equal(t, "b0", view.Cell(0, 1))
 	})
 
 	t.Run("a mapping selects a subset", func(t *testing.T) {
 		view := &FilteredView{Source: filteredSource(), ColumnMapping: []int{1}}
 
-		require.Equal(t, []string{"B"}, view.Columns())
-		require.Equal(t, 1, view.NumCols())
+		require.Equal(t, []string{"B"}, view.ColumnNames())
+		require.Equal(t, 1, view.NumColumns())
 		require.Equal(t, "b0", view.Cell(0, 0), "the heading and the value must come from the same source column")
 		require.Nil(t, view.Cell(0, 1), "the unmapped columns are not reachable")
 	})
@@ -85,7 +85,7 @@ func TestFilteredViewColumnMapping(t *testing.T) {
 	t.Run("a mapping reorders", func(t *testing.T) {
 		view := &FilteredView{Source: filteredSource(), ColumnMapping: []int{2, 0}}
 
-		require.Equal(t, []string{"C", "A"}, view.Columns())
+		require.Equal(t, []string{"C", "A"}, view.ColumnNames())
 		require.Equal(t, "c0", view.Cell(0, 0))
 		require.Equal(t, "a0", view.Cell(0, 1))
 	})
@@ -93,7 +93,7 @@ func TestFilteredViewColumnMapping(t *testing.T) {
 	t.Run("a mapping may repeat a column", func(t *testing.T) {
 		view := &FilteredView{Source: filteredSource(), ColumnMapping: []int{1, 1}}
 
-		require.Equal(t, []string{"B", "B"}, view.Columns())
+		require.Equal(t, []string{"B", "B"}, view.ColumnNames())
 		require.Equal(t, "b0", view.Cell(0, 0))
 		require.Equal(t, "b0", view.Cell(0, 1))
 	})
@@ -103,8 +103,8 @@ func TestFilteredViewColumnMapping(t *testing.T) {
 	t.Run("an empty mapping selects nothing", func(t *testing.T) {
 		view := &FilteredView{Source: filteredSource(), ColumnMapping: []int{}}
 
-		require.Empty(t, view.Columns())
-		require.Zero(t, view.NumCols())
+		require.Empty(t, view.ColumnNames())
+		require.Zero(t, view.NumColumns())
 		require.Nil(t, view.Cell(0, 0))
 	})
 }
@@ -119,7 +119,7 @@ func TestFilteredViewRowsAndColumnsTogether(t *testing.T) {
 		ColumnMapping: []int{2, 0},
 	}
 
-	require.Equal(t, []string{"C", "A"}, view.Columns())
+	require.Equal(t, []string{"C", "A"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 	require.Equal(t, "Source", view.Title(), "filtering does not change the title")
 

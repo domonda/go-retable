@@ -23,7 +23,7 @@ import (
 // # Coordinate System
 //
 // Views use zero-based indexing:
-//   - Columns are numbered 0 to len(Columns())-1
+//   - Columns are numbered 0 to NumColumns()-1
 //   - Rows are numbered 0 to NumRows()-1
 //
 // # Cell Values
@@ -62,7 +62,7 @@ import (
 //
 //	// Access data
 //	fmt.Println(view.Title())              // "People"
-//	fmt.Println(view.Columns())            // ["Name", "Age"]
+//	fmt.Println(view.ColumnNames())            // ["Name", "Age"]
 //	fmt.Println(view.NumRows())            // 2
 //	fmt.Println(view.Cell(0, 0))           // "Alice"
 //	fmt.Println(view.Cell(0, 1))           // 30
@@ -74,12 +74,19 @@ type View interface {
 	// Returns an empty string if the table has no title.
 	Title() string
 
-	// Columns returns the names of all columns in this table.
+	// ColumnNames returns the names of all columns in this table.
 	// The length of the returned slice defines the number of columns.
 	// Individual column names may be empty strings if unnamed.
 	// The returned slice should not be modified by callers.
 	// Column names are used as headers when writing to CSV, HTML, etc.
-	Columns() []string
+	ColumnNames() []string
+
+	// NumColumns returns the total number of columns in this table.
+	// It always equals len(ColumnNames()), but implementations can answer it
+	// without building or copying the column name slice, so prefer it
+	// over len(ColumnNames()) when only the count is needed.
+	// Returns 0 for a table without columns.
+	NumColumns() int
 
 	// NumRows returns the total number of data rows in this table.
 	// This does not include any header row - it's purely the count of data rows.
@@ -91,7 +98,7 @@ type View interface {
 	//
 	// Returns nil in these cases:
 	//   - row is negative or >= NumRows()
-	//   - col is negative or >= len(Columns())
+	//   - col is negative or >= NumColumns()
 	//   - the cell actually contains a nil value
 	//
 	// The returned value type depends on the View implementation and

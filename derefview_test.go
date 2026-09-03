@@ -12,14 +12,14 @@ import (
 func TestDerefView(t *testing.T) {
 	a, b := "Erik", "Ann"
 	source := &AnyValuesView{
-		Tit:  "People",
-		Cols: []string{"Name"},
-		Rows: [][]any{{&a}, {&b}},
+		TableTitle: "People",
+		Cols:       []string{"Name"},
+		Rows:       [][]any{{&a}, {&b}},
 	}
 	view := DerefView(source)
 
 	require.Equal(t, "People", view.Title(), "the decorator passes the title through")
-	require.Equal(t, []string{"Name"}, view.Columns())
+	require.Equal(t, []string{"Name"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 
 	require.Equal(t, "Erik", view.Cell(0, 0), "the pointed-to value, not the pointer")

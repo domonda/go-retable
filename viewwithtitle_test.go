@@ -13,7 +13,7 @@ func TestViewWithTitle(t *testing.T) {
 
 	require.Equal(t, "Renamed", renamed.Title())
 	require.Equal(t, "Original", source.Title(), "source view must not be modified")
-	require.Equal(t, []string{"A", "B"}, renamed.Columns())
+	require.Equal(t, []string{"A", "B"}, renamed.ColumnNames())
 	require.Equal(t, 1, renamed.NumRows())
 	require.Equal(t, "1", renamed.Cell(0, 0))
 	require.Equal(t, "2", renamed.Cell(0, 1))
@@ -35,9 +35,9 @@ func TestViewWithTitleReflectCellPassesValuesThrough(t *testing.T) {
 func TestViewWithTitleReflectCellKeepsPointers(t *testing.T) {
 	value := 42
 	source := &AnyValuesView{
-		Tit:  "Original",
-		Cols: []string{"A"},
-		Rows: [][]any{{&value}},
+		TableTitle: "Original",
+		Cols:       []string{"A"},
+		Rows:       [][]any{{&value}},
 	}
 	renamed := ViewWithTitle(source, "Renamed").(ReflectCellView)
 

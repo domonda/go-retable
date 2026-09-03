@@ -270,15 +270,21 @@ func (e *extraColsFuncView) Title() string {
 	return e.left.Title()
 }
 
-// Columns returns all column names: left columns followed by computed columns.
+// ColumnNames returns all column names: left columns followed by computed columns.
 //
 // Example:
 //
-//	left.Columns() -> ["A", "B"]
+//	left.ColumnNames() -> ["A", "B"]
 //	e.columns -> ["C", "D"]
-//	e.Columns() -> ["A", "B", "C", "D"]
-func (e *extraColsFuncView) Columns() []string {
-	return append(e.left.Columns(), e.columns...)
+//	e.ColumnNames() -> ["A", "B", "C", "D"]
+func (e *extraColsFuncView) ColumnNames() []string {
+	return append(e.left.ColumnNames(), e.columns...)
+}
+
+// NumColumns returns the number of left columns plus computed columns,
+// mirroring ColumnNames.
+func (e *extraColsFuncView) NumColumns() int {
+	return e.left.NumColumns() + len(e.columns)
 }
 
 // NumRows returns the row count from the left View.
@@ -307,7 +313,7 @@ func (e *extraColsFuncView) NumRows() int {
 //	e.Cell(0, 3) -> anyValue(0, 0)  // First computed column
 //	e.Cell(0, 4) -> anyValue(0, 1)  // Second computed column
 func (e *extraColsFuncView) Cell(row, col int) any {
-	numLeftCols := len(e.left.Columns())
+	numLeftCols := e.left.NumColumns()
 	if col < numLeftCols {
 		return e.left.Cell(row, col)
 	}
@@ -331,7 +337,7 @@ func (e *extraColsFuncView) Cell(row, col int) any {
 //	e.ReflectCell(0, 3) -> reflectValue(0, 0)  // First computed column
 //	e.ReflectCell(0, 4) -> reflectValue(0, 1)  // Second computed column
 func (e *extraColsFuncView) ReflectCell(row, col int) reflect.Value {
-	numLeftCols := len(e.left.Columns())
+	numLeftCols := e.left.NumColumns()
 	if col < numLeftCols {
 		return e.left.ReflectCell(row, col)
 	}

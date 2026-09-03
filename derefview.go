@@ -108,9 +108,10 @@ type derefView struct {
 // DerefView does not modify the title.
 func (v derefView) Title() string { return v.source.Title() }
 
-// Columns returns the column names from the underlying source View.
+// ColumnNames returns the column names from the underlying source View.
 // DerefView does not modify column names.
-func (v derefView) Columns() []string { return v.source.Columns() }
+func (v derefView) ColumnNames() []string { return v.source.ColumnNames() }
+func (v derefView) NumColumns() int       { return v.source.NumColumns() }
 
 // NumRows returns the row count from the underlying source View.
 // DerefView does not modify the row count.

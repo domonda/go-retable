@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ExtraRowView stacks views on top of each other, which is how a totals
+// ExtraRowsView stacks views on top of each other, which is how a totals
 // or summary row is appended without copying the base table. The row
 // index has to be translated to the view that owns it, and getting that
 // wrong silently shows one view's row in another view's position.
@@ -20,11 +20,11 @@ func TestExtraRowView(t *testing.T) {
 		{"ignored", "columns"},
 		{"Total", "260"},
 	})
-	stacked := ExtraRowView{base, totals}
+	stacked := ExtraRowsView{base, totals}
 
 	t.Run("title and columns come from the first view only", func(t *testing.T) {
 		require.Equal(t, "Sales", stacked.Title())
-		require.Equal(t, []string{"Product", "Amount"}, stacked.Columns(),
+		require.Equal(t, []string{"Product", "Amount"}, stacked.ColumnNames(),
 			"the later views contribute rows, not columns")
 	})
 
@@ -65,9 +65,9 @@ func TestExtraRowViewIgnoresExtraColumnsOfLaterViews(t *testing.T) {
 		{"A", "B"},
 		{"a2", "b2"},
 	})
-	stacked := ExtraRowView{first, wider}
+	stacked := ExtraRowsView{first, wider}
 
-	require.Equal(t, []string{"A"}, stacked.Columns())
+	require.Equal(t, []string{"A"}, stacked.ColumnNames())
 	require.Equal(t, 2, stacked.NumRows())
 	require.Equal(t, "a1", stacked.Cell(0, 0))
 	require.Equal(t, "a2", stacked.Cell(1, 0))
@@ -81,7 +81,7 @@ func TestExtraRowViewWithEmptyView(t *testing.T) {
 	empty := NewStringsView("", [][]string{{"A"}})
 	last := NewStringsView("", [][]string{{"A"}, {"a2"}})
 
-	stacked := ExtraRowView{first, empty, last}
+	stacked := ExtraRowsView{first, empty, last}
 
 	require.Zero(t, empty.NumRows(), "the fixture has a header only")
 	require.Equal(t, 2, stacked.NumRows())
@@ -91,10 +91,10 @@ func TestExtraRowViewWithEmptyView(t *testing.T) {
 
 // The zero value has to behave like an empty table rather than panic.
 func TestExtraRowViewEmpty(t *testing.T) {
-	var empty ExtraRowView
+	var empty ExtraRowsView
 
 	require.Equal(t, "", empty.Title())
-	require.Empty(t, empty.Columns())
+	require.Empty(t, empty.ColumnNames())
 	require.Zero(t, empty.NumRows())
 	require.Nil(t, empty.Cell(0, 0))
 }

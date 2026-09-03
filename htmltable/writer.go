@@ -160,7 +160,7 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 	}
 
 	var (
-		columns   = view.Columns()
+		columns   = view.ColumnNames()
 		numCols   = len(columns)
 		templData = &RowTemplateContext{
 			TemplateContext: TemplateContext{

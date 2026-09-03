@@ -30,7 +30,7 @@ func TestExtraColsView(t *testing.T) {
 	})
 
 	t.Run("columns are concatenated in view order", func(t *testing.T) {
-		require.Equal(t, []string{"Name", "Age", "Adult", "Initial"}, combined.Columns())
+		require.Equal(t, []string{"Name", "Age", "Adult", "Initial"}, combined.ColumnNames())
 	})
 
 	t.Run("every cell comes from the view owning its column", func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestExtraColsViewEmpty(t *testing.T) {
 	var empty ExtraColsView
 
 	require.Equal(t, "", empty.Title())
-	require.Empty(t, empty.Columns())
+	require.Empty(t, empty.ColumnNames())
 	require.Zero(t, empty.NumRows())
 	require.Nil(t, empty.Cell(0, 0))
 }
@@ -97,7 +97,7 @@ func TestExtraColsViewNested(t *testing.T) {
 	nested := ExtraColsView{ExtraColsView{a, b}, c}
 
 	require.Equal(t, "A", nested.Title(), "the title still comes from the innermost first view")
-	require.Equal(t, []string{"A", "B", "C"}, nested.Columns())
+	require.Equal(t, []string{"A", "B", "C"}, nested.ColumnNames())
 	require.Equal(t, "a1", nested.Cell(0, 0))
 	require.Equal(t, "b1", nested.Cell(0, 1))
 	require.Equal(t, "c1", nested.Cell(0, 2))

@@ -1,5 +1,55 @@
 # TODOS
 
+## v1 release
+
+### Tag v1.0.0, or decide not to
+
+**What:** This branch is the v1 API freeze. It renames `View.Columns` to `ColumnNames` and adds `NumColumns`, renames the `Tit` field to `TableTitle` on the five view types that have it, renames `ExtraRowView` to `ExtraRowsView`, drops the unused `io.Writer` parameter from `SprintlnView` and `SprintlnTable`, and removes `github.com/ungerik/go-fs` from the public API by taking an `io.Reader` in the two `csvtable` reader entry points. Nothing after it can change those names without breaking callers.
+
+**Why:** `git ls-remote --tags` returns nothing, and `CHANGELOG.md` states the current model outright: "Not tagged: this repository carries no version tags, so consumers resolve it as a pseudo-version of the `main` commit." A v1 is therefore a change of release model, not the next entry in a sequence. It is also what makes the freeze mean anything: the renames above have been free precisely because no tag has ever promised otherwise.
+
+**Context:** `VERSION` now holds `v1.0.0-beta.1`, so the freeze has a name without committing to the compatibility promise yet. Go treats a prerelease specially: `go get` will not select one unless it is asked for by name, so tagging `v1.0.0-beta.1` publishes this API for opt-in use without upgrading any existing consumer. Whichever version is tagged, tag the root module and the submodule as `exceltable/<version>` in lockstep. Leave the `replace github.com/domonda/go-retable => ..` and the placeholder pseudo-version in `exceltable/go.mod` untouched; that pattern is deliberate and is what lets an external consumer resolve the submodule against its own requirement on the root module. If the answer is no, the rest of this section still applies except the tagging step, and the remaining items below become ordinary quality work rather than release blockers.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** The two naming decisions below
+
+### Two names the API freeze leaves unsettled
+
+**What:** `ReadFileWithFormatToStructSlice` and `ReadFileDetectFormatToStructSlice` take an `io.Reader` and no longer open anything, so `File` in their names describes what they used to do. Separately, `ReplaceNewlineWithSpacefunc` survives as a deprecated alias of `ReplaceNewlineWithSpace`.
+
+**Why:** Both are free to change for exactly as long as no tag exists, and permanent afterwards. The alias is the sharper case: its own doc comment says it "only exists because the misspelled name is part of the published API", but nothing has been published, so the reason it gives for keeping it does not hold yet.
+
+**Context:** `exceltable` already models the alternative naming in this module with `Read(io.Reader)` alongside `ReadLocalFile(filename string)`, so `csvtable` could either rename to match what the functions now take or regain a filename-based entry point. Deciding to keep either name is a valid outcome; what is not is deciding by default at tag time.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
+
+### The breaking API changes are not in the changelog
+
+**What:** `CHANGELOG.md` has one section, `## 2026-09-02`, already marked released, and no mention of `ColumnNames`, `NumColumns`, `TableTitle`, `ExtraRowsView`, the dropped `SprintlnView` parameter or the `go-fs` removal.
+
+**Why:** These are the only changes in the repository's history that break a caller's build. A consumer upgrading across them gets compile errors with nothing in the changelog explaining which name replaced which, which is the one situation the file exists for.
+
+**Context:** Needs a new unreleased section rather than an edit to the released one. Each entry can be short, but has to name both sides of the rename so the fix is mechanical for the reader.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
+
+### CI never tests exceltable and has never run gosec
+
+**What:** `.github/workflows/go.yml` runs `go test ./...` from the root, which resolves to four packages; `exceltable` is a separate module and is not among them. `.github/workflows/gosec.yml` triggers on `master` while the default branch is `main`, so it has no runs at all. `codeql-analysis.yml` pins `github/codeql-action/*@v1`, which is retired, and `setup-go` pins Go 1.23 against a `go.mod` that requires 1.26, passing only because the toolchain directive downloads 1.26.
+
+**Why:** Tagging a v1 whose security scan has never executed, and whose Excel reader is never exercised by CI, states a level of assurance that has not been measured. `./test-workspace.sh` already iterates the workspace modules correctly and is what the workflow should call.
+
+**Context:** No linter runs either, and there is no `-race`. Coverage is uneven rather than low: root 89.5%, `csvtable` 94.5%, `exceltable` 92.5%, against `htmltable` 45.4% and `sqltable` 15.7%, the latter already tracked above.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
+
 ## sqltable
 
 ### Test the virtual database/sql driver

@@ -10,7 +10,7 @@ const (
 	// OptionAddHeaderRow adds a header row containing column titles
 	// as the first row in the formatted output.
 	//
-	// When this option is set, the View's Columns() method is called to get column titles,
+	// When this option is set, the View's ColumnNames() method is called to get column titles,
 	// and these are rendered as the first row before any data rows.
 	//
 	// Example:
