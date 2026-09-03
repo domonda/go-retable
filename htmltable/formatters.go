@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"strings"
 
 	"github.com/domonda/go-retable"
 )
@@ -71,10 +72,25 @@ var (
 //   - json.RawMessage: Used directly
 //   - json.Marshaler: Marshaled via MarshalJSON
 //   - []byte and string: Parsed as JSON
-//   - Other types: Marshaled via json.Marshal
+//   - Other types: Marshaled via json.Encoder
 //
 // Nil values and values that produce empty JSON return "", false, nil.
-// This formatter returns raw HTML (the second return value is true).
+// This formatter returns raw HTML (the second return value is true),
+// so the JSON is HTML-escaped before it's wrapped in the <pre> element.
+// The escaping happens at the HTML level instead of leaving it to the
+// JSON encoder, because json.Compact and json.Indent don't escape and
+// the JSON of every other input type would pass through unescaped.
+// Only the value marshaled here can be encoded without HTML escaping;
+// JSON that arrives already marshaled keeps the escapes it carries.
+// The indentation prefix is escaped along with the JSON, so an indent
+// written as an HTML entity appears literally instead of as the entity.
+//
+// This formatter writes HTML and must only be used with an HTML writer.
+// It returns raw output, which a non-HTML writer such as csvtable emits
+// without its own quoting, so the markup and the entities would corrupt
+// the row structure there.
+//
+// Output example: <pre>{"ok":true}</pre>
 //
 // Usage:
 //
@@ -108,26 +124,54 @@ func (indent JSONCellFormatter) FormatCell(ctx context.Context, view retable.Vie
 	case string:
 		valJSON = []byte(x)
 	default:
-		valJSON, err = json.Marshal(val)
+		// Marshal without HTML escaping because the JSON
+		// is HTML-escaped as a whole further down
+		var marshaled bytes.Buffer
+		encoder := json.NewEncoder(&marshaled)
+		encoder.SetEscapeHTML(false)
+		err = encoder.Encode(val)
 		if err != nil {
 			return "", false, err
 		}
+		valJSON = marshaled.Bytes()
 	}
 	if len(valJSON) == 0 {
 		return "", false, nil
 	}
-	buf := bytes.NewBufferString("<pre>")
+	var buf bytes.Buffer
 	if indent != "" {
-		err = json.Indent(buf, valJSON, "", string(indent))
+		err = json.Indent(&buf, valJSON, "", string(indent))
 	} else {
-		err = json.Compact(buf, valJSON)
+		err = json.Compact(&buf, valJSON)
 	}
 	if err != nil {
 		return "", false, err
 	}
-	buf.WriteString("</pre>")
-	return buf.String(), true, nil
+	// json.Indent copies trailing whitespace from its source while json.Compact
+	// drops it, so trim it here to keep both of them in agreement. Without this
+	// an indented cell ends with the newline json.Encoder.Encode appends, or
+	// with whatever trailing space an already marshaled value carried, and
+	// renders a blank line inside the <pre> element.
+	trimmed := strings.TrimRight(buf.String(), " \t\r\n")
+	return "<pre>" + preTextEscaper.Replace(trimmed) + "</pre>", true, nil
 }
+
+// preTextEscaper escapes the characters that are special in HTML text content.
+// The JSON of JSONCellFormatter ends up inside a <pre> element, so these three
+// are the ones that can end the text node early. template.HTMLEscapeString is
+// deliberately not used here: it also escapes the quotes, which are only
+// special inside an attribute value, and JSON quotes every key and every
+// string value, so it would rewrite `{"ok":true}` to `{&#34;ok&#34;:true}`
+// without making the output any safer.
+//
+// That is why this file escapes with two different functions, which is a
+// deliberate split and not an oversight: anything interpolated into an
+// attribute, like the class of HTMLSpanClassCellFormatter or the id of
+// ValueAsHTMLAnchorCellFormatter, needs template.HTMLEscapeString because a
+// quote ends an attribute value. Text content only needs these three. The
+// other formatters here escape short values where the quotes cost nothing,
+// so they use the stricter escaper for uniformity with their attributes.
+var preTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // HTMLSpanClassCellFormatter wraps cell values in HTML <span> elements with a CSS class.
 // The formatter value (a string) is used as the class attribute.
@@ -150,7 +194,11 @@ type HTMLSpanClassCellFormatter string
 
 // FormatCell implements the retable.CellFormatter interface.
 // It wraps the cell value in a <span> element with the configured CSS class.
+// The class is escaped like the cell value because it's interpolated into a
+// quoted attribute, where template.HTMLEscapeString is the right escaper:
+// unlike the <pre> text of JSONCellFormatter, an attribute value is ended by
+// a quote, so the quotes have to be escaped too.
 func (class HTMLSpanClassCellFormatter) FormatCell(ctx context.Context, view retable.View, row, col int) (str string, raw bool, err error) {
 	text := template.HTMLEscapeString(fmt.Sprint(view.Cell(row, col)))
-	return fmt.Sprintf("<span class='%s'>%s</span>", class, text), true, nil
+	return fmt.Sprintf("<span class='%s'>%s</span>", template.HTMLEscapeString(string(class)), text), true, nil
 }
