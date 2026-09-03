@@ -68,6 +68,21 @@ tags, so consumers resolve it as a pseudo-version of the `main` commit.
   gets JSON-encoded. Only element content is emitted verbatim, which is what the
   default `RowTemplate` does.
 
+- The documentation for the `raw` result describes what it does. It said raw
+  meant the string "can be used directly in the output format without escaping
+  or sanitization", which reads as a claim about the string rather than as the
+  instruction it is: raw switches the *writer's* escaping off, and the formatter
+  inherits the job. That framing is what produced the `JSONCellFormatter` hole
+  fixed above, where returning raw output and leaning on an incidental
+  `json.Marshal` escape looked reasonable.
+
+  Reworded at the definition and at every restatement of it, so the wrong model
+  is not left canonical anywhere: the `CellFormatter` interface doc and its
+  `FormatCell` method doc, `PrintfCellFormatter`, `SprintCellFormatter` and
+  `CellFormatterFromFormatter` in `formatter.go`. The wording is now writer
+  relative rather than HTML relative, because the interface serves `csvtable`
+  too, where raw means skipping RFC 4180 quoting rather than HTML escaping.
+
 - The `PrintfRawCellFormatter` documentation no longer claims its output
   "doesn't need sanitization". It interpolates the cell value into the format
   string without escaping and marks the result raw, so a value containing markup

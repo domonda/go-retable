@@ -89,15 +89,16 @@ func (UnsupportedFormatter) Format(v reflect.Value) (string, error) {
 // This bridge function allows reflection-based value formatters to be used in the
 // table cell formatting system.
 //
-// The rawResult parameter determines whether the formatted strings should be marked
-// as "raw" (true) or requiring sanitization (false) in the table output format.
+// The rawResult parameter determines whether the writer skips its own escaping for
+// these strings (true) or applies it (false). See CellFormatter for what raw means:
+// it switches the writer's escaping off rather than asserting the string is safe.
 //
 // This adapter extracts the reflect.Value from the specified cell position and
 // passes it to the underlying Formatter.
 //
 // Parameters:
 //   - f: The Formatter to adapt
-//   - rawResult: Whether the formatted output is considered raw (doesn't need escaping)
+//   - rawResult: Whether the writer skips its escaping for the formatted output
 //
 // Returns:
 //   - A CellFormatter that delegates to the provided Formatter

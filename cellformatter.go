@@ -16,10 +16,16 @@ import (
 // signal their inability to handle a value by returning errors.ErrUnsupported, which
 // allows the caller to try alternative formatters.
 //
-// The "raw" result concept is crucial for output format optimization: when raw is true,
-// the string can be used directly in the output format without escaping or sanitization
-// (e.g., HTML tags in HTML output, CSV-formatted values in CSV output). When raw is false,
-// the string should be sanitized according to the output format (e.g., HTML-escaped).
+// The "raw" result tells the writer whether to apply its own escaping. When raw is
+// false the writer escapes the string for its format: htmltable HTML-escapes it,
+// csvtable quotes it per RFC 4180. When raw is true the writer emits the string
+// verbatim and applies nothing, so the string has to be valid already for whichever
+// format it is written to (HTML markup in HTML output, a preformatted field in CSV).
+//
+// Raw is not a claim that the string is safe. It switches the writer's escaping off,
+// which moves the responsibility for escaping onto the formatter. A formatter that
+// returns raw output and interpolates a cell value into it has to escape that value
+// itself, for the context the value lands in.
 //
 // Design pattern:
 //
@@ -40,7 +46,7 @@ import (
 //	    // handle error
 //	}
 //	if !raw {
-//	    str = html.EscapeString(str) // sanitize for HTML output
+//	    str = html.EscapeString(str) // the formatter did not escape, so the writer must
 //	}
 type CellFormatter interface {
 	// FormatCell formats the view cell at a row/col position as string.
@@ -49,9 +55,9 @@ type CellFormatter interface {
 	// signaling that alternative formatters should be tried. Other errors indicate
 	// actual formatting failures.
 	//
-	// The raw result indicates whether the returned string is in the raw format of
-	// the target table format and can be used as-is (true), or if it needs to be
-	// sanitized according to the output format (false).
+	// The raw result tells the writer whether to skip its own escaping (true) or
+	// apply it (false). Returning true makes this formatter responsible for the
+	// escaping the writer would otherwise have done.
 	//
 	// Parameters:
 	//   - ctx: Context for cancellation and timeout control
@@ -94,7 +100,7 @@ func (f CellFormatterFunc) FormatCell(ctx context.Context, view View, row, col i
 //
 // This formatter never returns errors.ErrUnsupported - it will format any value type
 // that fmt.Sprintf can handle, which includes all basic Go types. The formatted result
-// is marked as non-raw (raw=false), meaning it should be sanitized for the output format.
+// is marked as non-raw (raw=false), so the writer escapes it for the target format.
 //
 // Example usage:
 //
@@ -110,7 +116,7 @@ func (f CellFormatterFunc) FormatCell(ctx context.Context, view View, row, col i
 type PrintfCellFormatter string
 
 // FormatCell implements CellFormatter using fmt.Sprintf with the format string.
-// The formatted result is always marked as non-raw (requiring sanitization).
+// The formatted result is always marked as non-raw, so the writer escapes it.
 // Never returns an error.
 func (format PrintfCellFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
 	return fmt.Sprintf(string(format), view.Cell(row, col)), false, nil
@@ -152,19 +158,19 @@ func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, 
 // This formatter never returns errors.ErrUnsupported and accepts all value types,
 // making it an ideal fallback formatter at the end of a formatting chain.
 //
-// The rawResult parameter determines whether the formatted output should be marked
-// as raw (true) or requiring sanitization (false). This allows the caller to control
-// the raw flag based on the output format requirements.
+// The rawResult parameter determines whether the writer skips its escaping (true) or
+// applies it (false). Pass true only for values that are already valid for the target
+// format, because fmt.Sprint of a cell value is not.
 //
 // Parameters:
-//   - rawResult: Whether formatted strings should be marked as raw output
+//   - rawResult: Whether the writer skips its escaping for these strings
 //
 // Returns:
 //   - A CellFormatter that uses fmt.Sprint for all values
 //
 // Example usage:
 //
-//	// Non-raw formatter (strings need sanitization)
+//	// Non-raw formatter (the writer escapes the strings)
 //	formatter := SprintCellFormatter(false)
 //	str, raw, _ := formatter.FormatCell(ctx, view, 0, 0)
 //	// str contains fmt.Sprint output, raw == false
