@@ -82,18 +82,6 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 
 ## htmltable
 
-### Writer.WithTemplate silently discards its arguments
-
-**What:** `htmltable/writer.go` `WithTemplate` builds `mod := w.clone()`, assigns all three templates to `mod`, and then returns `w` instead of `mod`. Every custom template passed to it is dropped.
-
-**Why:** It fails silently and in the direction that looks like success: the call chains, the writer works, and the output is simply the default table. A caller who wired up a custom row template has no signal that it never took effect. `w.WithTemplate(...) == w` is `true`, which is not what any other `With*` method on this type does.
-
-**Context:** Found independently by the adversarial and red-team passes during the /ship of the JSON escaping fix, and confirmed by running `NewWriter[[]Row]().WithTemplate(HeaderTemplate, customRowTemplate, FooterTemplate).Write(...)`, which still emitted the default markup, with `w.rowTemplate == RowTemplate`. No test covers `WithTemplate`. The fix is `return mod`, but it is a behavior change for anyone who has been calling it against the current no-op, so it wants its own commit and a test that a custom row template reaches the output. Note it also interacts with escaping: `JSONCellFormatter` documents that its JSON lands in a `<pre>` text node, and today that invariant holds partly because this setter is broken. `html/template` re-escapes `template.HTML` in an attribute context, so fixing it does not open an injection hole, but the reasoning should be rechecked when it lands.
-
-**Effort:** S
-**Priority:** P1
-**Depends on:** None
-
 ### A malformed JSON cell truncates the document after bytes are already flushed
 
 **What:** `JSONCellFormatter` returns a `json.SyntaxError` for a cell that is not valid JSON, `Writer.WriteView` propagates it and returns, but the header, caption and every preceding row are already written to `dest`. The caller gets an unclosed `<table>` with no `</table>`.
@@ -145,3 +133,14 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 **Depends on:** None
 
 ## Completed
+
+### Writer.WithTemplate silently discards its arguments
+
+**What:** `htmltable/writer.go` `WithTemplate` built `mod := w.clone()`, assigned all three templates to `mod`, and returned `w`. Every custom template passed to it was dropped, and `w.WithTemplate(...) == w` was true, which broke the immutability contract every other `With` method on the type follows.
+
+**Why:** It failed silently and in the direction that looks like success: the call chained, the writer worked, and the output was simply the default table.
+
+**Resolution:** `return mod`. Two tests added in `htmltable/writer_test.go`: one asserting custom templates reach the output, one asserting the receiver is unchanged and the returned writer is a distinct value. Both fail against the old code. An audit of every `With` method in `htmltable/writer.go`, `csvtable/writer.go` and `structrowsviewer.go` found no other instance: the four other methods that don't return a clone all delegate to one that does. Verified that fixing it opens no injection hole, because `html/template` re-escapes `template.HTML` contextually in attribute and script contexts.
+
+**Completed:** 2026-09-03
+
