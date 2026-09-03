@@ -9,7 +9,7 @@ import (
 
 // CellFormatter is the primary interface for formatting table cell values as strings.
 // This is the higher-level interface compared to Formatter, as it operates on cells
-// within a table View context and supports format-specific "raw" output.
+// within a table View context and can tell the writer to skip its own escaping.
 //
 // The CellFormatter design supports a sophisticated formatting pipeline where multiple
 // formatters can be tried in sequence until one successfully formats a value. Formatters
@@ -28,10 +28,14 @@ import (
 // is where the default templates put cells.
 //
 // Skipping the writer's escaping is not the same as reaching the output untouched.
-// htmltable hands raw output to html/template as a template.HTML value, and that
-// re-escapes it for any context other than element content, so raw markup placed in
-// an attribute is tag-stripped and quote-escaped and raw markup in a script element
-// is JS-encoded. csvtable does emit raw fields verbatim.
+// htmltable hands raw output to html/template as a template.HTML value, and what
+// happens next depends on where the template puts it. Element content takes it
+// verbatim, and so do a few element types that look like they would not, among
+// them <template>, <noscript> and <script type="text/template">. An attribute
+// tag-strips and quote-escapes it, an executable <script> JS-encodes it, and a CSS
+// context drops it entirely as ZgotmplZ. Do not rely on that second escaping pass
+// to make untrusted markup safe: several contexts don't apply one.
+// csvtable emits raw fields verbatim.
 //
 // Design pattern:
 //
@@ -132,14 +136,14 @@ func (format PrintfCellFormatter) FormatCell(ctx context.Context, view View, row
 // to cell values, similar to PrintfCellFormatter, but marks the result as raw output.
 //
 // The key difference from PrintfCellFormatter is that this formatter marks its output
-// as "raw" (raw=true), so a writer emits it verbatim instead of escaping it. This is
-// useful when the format string contains format-specific markup.
+// as "raw" (raw=true), so the writer skips its own escaping. This is useful when the
+// format string contains format-specific markup.
 //
 // Warning: Only use this for trusted content to avoid XSS vulnerabilities.
 // The cell value is interpolated into the format string without escaping, and raw
-// output bypasses the writer's escaping entirely: htmltable does not HTML-escape it
-// and csvtable does not quote it, so a value carrying markup, a delimiter, a quote
-// or a newline reaches the document as markup or breaks the CSV row structure.
+// output skips the writer's escaping: htmltable does not HTML-escape it and csvtable
+// does not quote it, so a value carrying markup, a delimiter, a quote or a newline
+// reaches the document as markup or breaks the CSV row structure.
 //
 // Example usage:
 //
@@ -275,7 +279,7 @@ func TryFormattersOrSprint(formatters ...CellFormatter) CellFormatter {
 //
 // This formatter is useful for injecting fixed content (like HTML snippets, icons, or
 // format-specific markup) into table cells regardless of the actual cell value. Raw
-// means the writer emits the string verbatim instead of escaping it, so the string
+// means the writer skips its own escaping, so the string
 // has to be valid already for whichever format it's written to. Only the developer
 // supplied constant reaches the output here, never the cell value.
 //
@@ -363,8 +367,8 @@ func (f StringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (
 // RawStringIfTrue formats boolean cells by returning a specified string for true values
 // and an empty string for false values, with the output marked as raw.
 //
-// This is similar to StringIfTrue, but marks the output as raw: the writer emits the
-// string verbatim instead of escaping it, so the string has to be valid already for
+// This is similar to StringIfTrue, but marks the output as raw: the writer skips its
+// own escaping, so the string has to be valid already for
 // whichever format it's written to. Only the developer supplied constant reaches the
 // output, never the cell value. It panics if the cell value is not a bool.
 //

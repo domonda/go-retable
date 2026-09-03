@@ -514,7 +514,8 @@ func (w *Writer[T]) WithNilValue(nilValue template.HTML) *Writer[T] {
 // or FooterTemplate restores the package default for that position.
 //
 // tableTemplate and footerTemplate receive a TemplateContext, rowTemplate
-// receives a RowTemplateContext, once per row.
+// receives a RowTemplateContext, once per row and once more for the header
+// row when WithHeaderRow is set.
 // See templates.go for the default templates and context structures.
 //
 // Cells reach rowTemplate as template.HTML values in RawCells, already
