@@ -52,6 +52,22 @@ tags, so consumers resolve it as a pseudo-version of the `main` commit.
 
 ### Fixed
 
+- `htmltable.Writer.WithTemplate` applies the templates it's given. It cloned the
+  writer, assigned all three templates to the clone and then returned the
+  receiver, so every custom template was silently discarded and the writer kept
+  rendering the default table. It also broke the immutability contract the other
+  `With` methods follow, because `w.WithTemplate(...) == w` was true. It was the
+  only method in the repository with this defect; the four others that don't
+  return a clone delegate to one that does.
+
+  Custom templates are now reachable for the first time, so it's worth stating
+  what that does and doesn't change for escaping: cells arrive as
+  `template.HTML` values in `RawCells`, and `html/template` still applies its
+  own contextual escaping to them. A cell placed in an attribute by a custom
+  template gets its quotes escaped, and one placed inside a `<script>` element
+  gets JSON-encoded. Only element content is emitted verbatim, which is what the
+  default `RowTemplate` does.
+
 - The `PrintfRawCellFormatter` documentation no longer claims its output
   "doesn't need sanitization". It interpolates the cell value into the format
   string without escaping and marks the result raw, so a value containing markup

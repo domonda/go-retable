@@ -524,7 +524,7 @@ func (w *Writer[T]) WithTemplate(tableTemplate, rowTemplate, footerTemplate *tem
 	mod.headerTemplate = tableTemplate
 	mod.rowTemplate = rowTemplate
 	mod.footerTemplate = footerTemplate
-	return w
+	return mod
 }
 
 // TableClass returns the CSS class configured for the table element.
