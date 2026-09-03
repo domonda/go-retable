@@ -4,6 +4,62 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 2026-09-03
+
+Released by merging to `main`. Not tagged: this repository carries no version
+tags, so consumers resolve it as a pseudo-version of the `main` commit.
+
+### Security
+
+- `htmltable.JSONCellFormatter` HTML-escapes its JSON for every input type. The
+  formatter returns raw HTML, so its output goes into the document verbatim, but
+  only the `default` branch was escaped, and only as a side effect of
+  `json.Marshal` escaping `&`, `<` and `>` by itself. `json.Compact` and
+  `json.Indent` do not escape, so a cell arriving as `json.RawMessage`, `string`,
+  `[]byte` or a `json.Marshaler` that does not escape passed straight through: a
+  value containing `</pre><script>` closed the `<pre>` element early and the rest
+  of it ran as markup. `json.RawMessage` is the type the package's own example
+  formats, so the documented usage was the vulnerable one.
+
+  The escaping now happens on the finished JSON, so it covers every input type
+  instead of whichever one happened to route through `json.Marshal`.
+
+- `htmltable.HTMLSpanClassCellFormatter` escapes its class. The class is
+  interpolated into a quoted attribute and only the cell value was escaped, so a
+  class containing a quote could end the attribute and add another one: a class
+  of `x' onmouseover='alert(1)` produced a live event handler. The class comes
+  from calling code rather than from the table data, so this was not reachable
+  from cell values, but nothing pinned that.
+
+### Changed
+
+- Marshaling inside `htmltable.JSONCellFormatter` uses a `json.Encoder` with
+  `SetEscapeHTML(false)`, because escaping twice would be wrong. For a value the
+  formatter marshals itself, `&`, `<` and `>` are now readable: a browser renders
+  `{"name":"Meier & Co"}` where it previously showed `{"name":"Meier \u0026 Co"}`.
+  JSON that arrives already marshaled keeps whatever escapes it literally
+  carries. A `MarshalJSON` built on `json.Marshal` escapes on its own, so that
+  branch still renders `\u0026`; a `json.RawMessage`, `string` or `[]byte` holding
+  hand written or database sourced JSON never went through such a marshaler and
+  renders the `&` it actually contains.
+
+  The escaping is scoped to the `<pre>` text context, where only `&`, `<` and `>`
+  can end the text node, rather than using `template.HTMLEscapeString`, which
+  also escapes the quotes that JSON puts around every key and every string value.
+  **Output bytes are therefore unchanged for JSON containing none of `&`, `<` and
+  `>`** and a fixture asserting `<pre>{"ok":true}</pre>` keeps passing. Where
+  those three do appear the output changes, which is the point of the fix.
+
+### Fixed
+
+- The `PrintfRawCellFormatter` documentation no longer claims its output
+  "doesn't need sanitization". It interpolates the cell value into the format
+  string without escaping and marks the result raw, so a value containing markup
+  reaches the document as markup. It now carries the same "only use this for
+  trusted content" warning as `Writer.WithRawColumn` and
+  `WithTypeFormatterReflectRawFunc`. Behavior is unchanged: this is a deliberate
+  escape hatch, and the documentation was the part that was wrong.
+
 ## 2026-09-02
 
 Released by merging to `main`. Not tagged: this repository carries no version

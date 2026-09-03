@@ -80,6 +80,56 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 **Priority:** P2
 **Depends on:** None
 
+## htmltable
+
+### Writer.WithTemplate silently discards its arguments
+
+**What:** `htmltable/writer.go` `WithTemplate` builds `mod := w.clone()`, assigns all three templates to `mod`, and then returns `w` instead of `mod`. Every custom template passed to it is dropped.
+
+**Why:** It fails silently and in the direction that looks like success: the call chains, the writer works, and the output is simply the default table. A caller who wired up a custom row template has no signal that it never took effect. `w.WithTemplate(...) == w` is `true`, which is not what any other `With*` method on this type does.
+
+**Context:** Found independently by the adversarial and red-team passes during the /ship of the JSON escaping fix, and confirmed by running `NewWriter[[]Row]().WithTemplate(HeaderTemplate, customRowTemplate, FooterTemplate).Write(...)`, which still emitted the default markup, with `w.rowTemplate == RowTemplate`. No test covers `WithTemplate`. The fix is `return mod`, but it is a behavior change for anyone who has been calling it against the current no-op, so it wants its own commit and a test that a custom row template reaches the output. Note it also interacts with escaping: `JSONCellFormatter` documents that its JSON lands in a `<pre>` text node, and today that invariant holds partly because this setter is broken. `html/template` re-escapes `template.HTML` in an attribute context, so fixing it does not open an injection hole, but the reasoning should be rechecked when it lands.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
+
+### A malformed JSON cell truncates the document after bytes are already flushed
+
+**What:** `JSONCellFormatter` returns a `json.SyntaxError` for a cell that is not valid JSON, `Writer.WriteView` propagates it and returns, but the header, caption and every preceding row are already written to `dest`. The caller gets an unclosed `<table>` with no `</table>`.
+
+**Why:** The trigger is trivial and comes straight from the data: any non-JSON `string`, `[]byte` or `json.RawMessage` cell, including `"hello world"` or even `"   "`. On an `http.ResponseWriter` those bytes are already gone when the error surfaces, so a caller that logs the error and moves on has emitted a broken fragment that swallows or foster-parents whatever the surrounding page writes next.
+
+**Context:** Pre-existing, found by the adversarial pass during the /ship of the JSON escaping fix. Verified with four rows where row three is malformed: output stops after two complete `<tr>` elements. `TestJSONCellFormatter_MalformedJSONAbortsWrite` now pins the truncation so a change to it is visible, but pinning is not deciding. Two coherent resolutions: buffer the document and write only on success, or have the formatter fall back to escaping the raw text instead of failing. The first changes memory behavior for large tables, the second changes what a malformed cell means, so this needs a call rather than a patch.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** None
+
+### json.Indent amplifies deeply nested JSON about 10000x
+
+**What:** With a non-empty indent, `JSONCellFormatter` passes the cell through `json.Indent`, which indents every nesting level. Go's scanner allows nesting up to 10000, so a small deeply nested value expands enormously.
+
+**Why:** One cell can exhaust memory and stall the request. Measured with `JSONCellFormatter("  ")` and a `json.RawMessage` of `[[[[...]]]]` at depth 9999: 19,998 bytes in, 199,960,013 bytes out, about 11 seconds of CPU. Escaping does not help, because the expansion happens before it.
+
+**Context:** Pre-existing, found by the adversarial pass during the /ship of the JSON escaping fix. Only reachable when the formatter is configured with a non-empty indent, so the compact default is unaffected. Wants a nesting-depth or output-size cap before indenting, with a defined error when the cap is hit.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+### Invalid UTF-8 in pre-marshaled JSON reaches the document verbatim
+
+**What:** `json.Compact` and `json.Indent` do not validate UTF-8 and `preTextEscaper` works byte-wise, so invalid UTF-8 inside a `json.RawMessage`, `string` or `[]byte` cell is emitted unchanged. The `default` branch does not have this problem: Go's encoder substitutes U+FFFD.
+
+**Why:** Not an injection on any current browser, which decodes overlong sequences to U+FFFD before tokenizing rather than to `<`. It is an output-integrity defect: the document is not well-formed UTF-8, which breaks XHTML and XML serialization and hands something to normalize to any downstream sanitizer or proxy. It is also the one remaining respect in which the escaping does not behave the same on all input branches.
+
+**Context:** Pre-existing, found by the adversarial and red-team passes during the /ship of the JSON escaping fix. Verified with `json.RawMessage("{\"a\":\"\xc0\xbcscript\xc0\xbe\"}")`, whose overlong `<` and `>` bytes pass through untouched. `strings.ToValidUTF8` on the pre-marshaled branches would close it. Same family: the encoder escapes U+2028 and U+2029 even with `SetEscapeHTML(false)` while `Compact` and `Indent` pass them through raw, which only matters if the fragment is later embedded in a JS string.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
 ## retable
 
 ### Passing any Scanner silently discards a configured DefaultParser
