@@ -84,11 +84,11 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 
 ### A malformed JSON cell truncates the document after bytes are already flushed
 
-**What:** `JSONCellFormatter` returns a `json.SyntaxError` for a cell that is not valid JSON, `Writer.WriteView` propagates it and returns, but the header, caption and every preceding row are already written to `dest`. The caller gets an unclosed `<table>` with no `</table>`.
+**What:** `JSONCellFormatter` returns a `json.SyntaxError` for a cell that is not valid JSON, `Writer.WriteView` propagates it and returns, but the header, caption and every preceding row are already written to `dest`. The caller gets an unclosed `<table>` with no `</table>`. The same shape now has a second trigger: a custom template that fails at `Execute` truncates the document the same way, with no formatter involved.
 
 **Why:** The trigger is trivial and comes straight from the data: any non-JSON `string`, `[]byte` or `json.RawMessage` cell, including `"hello world"` or even `"   "`. On an `http.ResponseWriter` those bytes are already gone when the error surfaces, so a caller that logs the error and moves on has emitted a broken fragment that swallows or foster-parents whatever the surrounding page writes next.
 
-**Context:** Pre-existing, found by the adversarial pass during the /ship of the JSON escaping fix. Verified with four rows where row three is malformed: output stops after two complete `<tr>` elements. `TestJSONCellFormatter_MalformedJSONAbortsWrite` now pins the truncation so a change to it is visible, but pinning is not deciding. Two coherent resolutions: buffer the document and write only on success, or have the formatter fall back to escaping the raw text instead of failing. The first changes memory behavior for large tables, the second changes what a malformed cell means, so this needs a call rather than a patch.
+**Context:** Pre-existing, found by the adversarial pass during the /ship of the JSON escaping fix. Verified with four rows where row three is malformed: output stops after two complete `<tr>` elements. `TestJSONCellFormatter_MalformedJSONAbortsWrite` now pins the truncation so a change to it is visible, but pinning is not deciding. Two coherent resolutions: buffer the document and write only on success, or have the formatter fall back to escaping the raw text instead of failing. Only the first covers the template-execution trigger as well, which is worth weighing before implementing the narrow formatter-side fix. The first changes memory behavior for large tables, the second changes what a malformed cell means, so this needs a call rather than a patch.
 
 **Effort:** M
 **Priority:** P2
@@ -140,7 +140,7 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 
 **Why:** It failed silently and in the direction that looks like success: the call chained, the writer worked, and the output was simply the default table.
 
-**Resolution:** `return mod`. Two tests added in `htmltable/writer_test.go`: one asserting custom templates reach the output, one asserting the receiver is unchanged and the returned writer is a distinct value. Both fail against the old code. An audit of every `With` method in `htmltable/writer.go`, `csvtable/writer.go` and `structrowsviewer.go` found no other instance: the four other methods that don't return a clone all delegate to one that does. Verified that fixing it opens no injection hole, because `html/template` re-escapes `template.HTML` contextually in attribute and script contexts.
+**Resolution:** `return mod`, plus a nil argument now leaves that template unchanged rather than being stored, which would have turned a previously harmless `WithTemplate(nil, rowTmpl, nil)` into a nil dereference after rows were already flushed. Two tests added in `htmltable/writer_test.go`: one asserting custom templates reach the output, one asserting the receiver is unchanged and the returned writer is a distinct value. Both fail against the old code. An audit of every `With` method in `htmltable/writer.go`, `csvtable/writer.go` and `structrowsviewer.go` found no other instance: every other method that doesn't return a clone delegates to one that does. Verified that fixing it opens no injection hole, because `html/template` re-escapes `template.HTML` contextually in attribute and script contexts.
 
 **Completed:** 2026-09-03
 

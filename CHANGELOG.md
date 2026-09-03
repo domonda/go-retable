@@ -56,17 +56,35 @@ tags, so consumers resolve it as a pseudo-version of the `main` commit.
   writer, assigned all three templates to the clone and then returned the
   receiver, so every custom template was silently discarded and the writer kept
   rendering the default table. It also broke the immutability contract the other
-  `With` methods follow, because `w.WithTemplate(...) == w` was true. It was the
-  only method in the repository with this defect; the four others that don't
-  return a clone delegate to one that does.
+  `With` methods follow, because `w.WithTemplate(...) == w` was true. An audit of
+  `htmltable/writer.go`, `csvtable/writer.go` and `structrowsviewer.go` found no
+  other instance: every other `With` method that doesn't return a clone delegates
+  to one that does.
 
-  Custom templates are now reachable for the first time, so it's worth stating
-  what that does and doesn't change for escaping: cells arrive as
-  `template.HTML` values in `RawCells`, and `html/template` still applies its
-  own contextual escaping to them. A cell placed in an attribute by a custom
-  template gets its quotes escaped, and one placed inside a `<script>` element
-  gets JSON-encoded. Only element content is emitted verbatim, which is what the
-  default `RowTemplate` does.
+  **A consumer already calling `WithTemplate` will see its HTML change**, because
+  the templates it passed now take effect where before they were ignored.
+
+  A nil argument leaves that template unchanged instead of being stored, which is
+  new. Before this fix nil was harmless, since the clone holding it was thrown
+  away; storing it would have turned `WithTemplate(nil, rowTmpl, nil)`, a
+  reasonable way to replace one template, into a nil dereference inside
+  `Execute` after the rows had already been written. Nil keeps rather than
+  resets, because `HeaderTemplate`, `RowTemplate` and `FooterTemplate` are
+  exported: resetting stays expressible by passing them, keeping would not be
+  expressible at all.
+
+  Custom templates are reachable for the first time, so it's worth being precise
+  about what that does and doesn't change for escaping. Cells arrive as
+  `template.HTML` values in `RawCells`, already escaped by the writer unless
+  their formatter returned raw output, and `html/template` then applies its own
+  contextual escaping on top. It re-escapes for attribute contexts and for
+  executable script contexts, so a cell placed in `title='...'` has its quotes
+  escaped and one placed in `<script>` is JS-encoded. It does not re-escape in
+  ordinary element content, nor in `<template>`, `<noscript>` or
+  `<script type="text/template">`, where content is emitted verbatim. That only
+  matters for a formatter that returned raw output, which is the documented
+  trusted-content escape hatch; a non-raw cell was already escaped by the writer
+  and stays inert everywhere.
 
 - The documentation for the `raw` result describes what it does. It said raw
   meant the string "can be used directly in the output format without escaping
