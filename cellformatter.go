@@ -120,22 +120,27 @@ func (format PrintfCellFormatter) FormatCell(ctx context.Context, view View, row
 // to cell values, similar to PrintfCellFormatter, but marks the result as raw output.
 //
 // The key difference from PrintfCellFormatter is that this formatter marks its output
-// as "raw" (raw=true), indicating the formatted string is already in the correct format
-// for the target output and doesn't need sanitization. This is useful when the format
-// string produces output that's already escaped or contains format-specific markup.
+// as "raw" (raw=true), so a writer emits it verbatim instead of escaping it. This is
+// useful when the format string contains format-specific markup.
+//
+// Warning: Only use this for trusted content to avoid XSS vulnerabilities.
+// The cell value is interpolated into the format string without escaping, and raw
+// output bypasses the writer's escaping entirely: htmltable does not HTML-escape it
+// and csvtable does not quote it, so a value carrying markup, a delimiter, a quote
+// or a newline reaches the document as markup or breaks the CSV row structure.
 //
 // Example usage:
 //
-//	// Format as HTML with embedded tags (already properly escaped)
+//	// Format as HTML with embedded tags
 //	formatter := PrintfRawCellFormatter("<b>%s</b>")
 //	str, raw, _ := formatter.FormatCell(ctx, view, 0, 0)
 //	// For value "Title", str == "<b>Title</b>", raw == true
-//	// The raw=true signals that no further HTML escaping is needed
+//	// The raw=true signals that no further HTML escaping is applied
 type PrintfRawCellFormatter string
 
 // FormatCell implements CellFormatter using fmt.Sprintf with the format string.
-// The formatted result is always marked as raw (not requiring sanitization).
-// Never returns an error.
+// The formatted result is always marked as raw, so neither the format string nor
+// the cell value is escaped. Never returns an error.
 func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error) {
 	return fmt.Sprintf(string(format), view.Cell(row, col)), true, nil
 }
@@ -257,8 +262,10 @@ func TryFormattersOrSprint(formatters ...CellFormatter) CellFormatter {
 // and always returns its own string value, marked as raw output.
 //
 // This formatter is useful for injecting fixed content (like HTML snippets, icons, or
-// format-specific markup) into table cells regardless of the actual cell value. Since
-// the output is marked as raw, it won't be sanitized by the output format.
+// format-specific markup) into table cells regardless of the actual cell value. Raw
+// means the writer emits the string verbatim instead of escaping it, so the string
+// has to be valid already for whichever format it's written to. Only the developer
+// supplied constant reaches the output here, never the cell value.
 //
 // Example usage:
 //
@@ -344,9 +351,10 @@ func (f StringIfTrue) FormatCell(ctx context.Context, view View, row, col int) (
 // RawStringIfTrue formats boolean cells by returning a specified string for true values
 // and an empty string for false values, with the output marked as raw.
 //
-// This is similar to StringIfTrue, but marks the output as raw, indicating it doesn't
-// need sanitization. This is useful when the string contains format-specific markup
-// like HTML tags or pre-escaped content. It panics if the cell value is not a bool.
+// This is similar to StringIfTrue, but marks the output as raw: the writer emits the
+// string verbatim instead of escaping it, so the string has to be valid already for
+// whichever format it's written to. Only the developer supplied constant reaches the
+// output, never the cell value. It panics if the cell value is not a bool.
 //
 // Example usage:
 //
