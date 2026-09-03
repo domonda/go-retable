@@ -18,14 +18,20 @@ import (
 //
 // The "raw" result tells the writer whether to apply its own escaping. When raw is
 // false the writer escapes the string for its format: htmltable HTML-escapes it,
-// csvtable quotes it per RFC 4180. When raw is true the writer emits the string
-// verbatim and applies nothing, so the string has to be valid already for whichever
-// format it is written to (HTML markup in HTML output, a preformatted field in CSV).
+// csvtable quotes it for CSV. When raw is true the writer skips that step, so the
+// string has to be valid already for the format it is written to (HTML markup in
+// HTML output, a preformatted field in CSV).
 //
-// Raw is not a claim that the string is safe. It switches the writer's escaping off,
-// which moves the responsibility for escaping onto the formatter. A formatter that
-// returns raw output and interpolates a cell value into it has to escape that value
-// itself, for the context the value lands in.
+// Raw is not a claim that the string is safe. It switches the writer's own escaping
+// off, which moves that job onto the formatter: a formatter returning raw output
+// has to escape whatever it interpolates into it, for HTML element content, which
+// is where the default templates put cells.
+//
+// Skipping the writer's escaping is not the same as reaching the output untouched.
+// htmltable hands raw output to html/template as a template.HTML value, and that
+// re-escapes it for any context other than element content, so raw markup placed in
+// an attribute is tag-stripped and quote-escaped and raw markup in a script element
+// is JS-encoded. csvtable does emit raw fields verbatim.
 //
 // Design pattern:
 //
@@ -67,7 +73,7 @@ type CellFormatter interface {
 	//
 	// Returns:
 	//   - str: The formatted string representation
-	//   - raw: Whether the string is format-specific raw output
+	//   - raw: Whether the writer skips its own escaping for str
 	//   - err: Error if formatting failed, or errors.ErrUnsupported if unsupported
 	FormatCell(ctx context.Context, view View, row, col int) (str string, raw bool, err error)
 }
@@ -159,8 +165,8 @@ func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, 
 // making it an ideal fallback formatter at the end of a formatting chain.
 //
 // The rawResult parameter determines whether the writer skips its escaping (true) or
-// applies it (false). Pass true only for values that are already valid for the target
-// format, because fmt.Sprint of a cell value is not.
+// applies it (false). Only use true for trusted content: fmt.Sprint of a cell value
+// is not escaped for any format, so an untrusted value passes through as markup.
 //
 // Parameters:
 //   - rawResult: Whether the writer skips its escaping for these strings
@@ -175,7 +181,7 @@ func (format PrintfRawCellFormatter) FormatCell(ctx context.Context, view View, 
 //	str, raw, _ := formatter.FormatCell(ctx, view, 0, 0)
 //	// str contains fmt.Sprint output, raw == false
 //
-//	// Raw formatter (strings are pre-formatted)
+//	// Raw formatter (the writer skips its escaping)
 //	rawFormatter := SprintCellFormatter(true)
 //	str, raw, _ := rawFormatter.FormatCell(ctx, view, 0, 0)
 //	// str contains fmt.Sprint output, raw == true
@@ -400,10 +406,12 @@ func (f RawStringIfTrue) FormatCell(ctx context.Context, view View, row, col int
 //   - Optional second result: Must be error (formatting error)
 //
 // The rawResult parameter determines the raw flag returned by the generated formatter.
+// See CellFormatter for what raw means: it switches the writer's own escaping off
+// rather than asserting the string is safe.
 //
 // Parameters:
 //   - function: The function to convert (validated via reflection)
-//   - rawResult: Whether the formatter should mark output as raw
+//   - rawResult: Whether the writer skips its escaping for the formatted output
 //
 // Returns:
 //   - formatter: The generated CellFormatterFunc

@@ -157,8 +157,11 @@ func (indent JSONCellFormatter) FormatCell(ctx context.Context, view retable.Vie
 }
 
 // preTextEscaper escapes the characters that are special in HTML text content.
-// The JSON of JSONCellFormatter ends up inside a <pre> element, so these three
-// are the ones that can end the text node early. template.HTMLEscapeString is
+// JSONCellFormatter emits the <pre> element itself, so HTML text content is where
+// its JSON is meant to land, and these three are the ones that can end the text
+// node early. A custom row template can put the value somewhere else, and there
+// html/template re-escapes it contextually, which is what covers the quotes this
+// escaper leaves alone. template.HTMLEscapeString is
 // deliberately not used here: it also escapes the quotes, which are only
 // special inside an attribute value, and JSON quotes every key and every
 // string value, so it would rewrite `{"ok":true}` to `{&#34;ok&#34;:true}`
