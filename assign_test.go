@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1273,5 +1274,81 @@ func TestSmartAssignNumericConversionBoundaries(t *testing.T) {
 
 		var n int
 		require.ErrorIs(t, assign(t, &n, 1234.56), strconv.ErrSyntax, "a fraction is malformed, not out of range")
+	})
+}
+
+// TestSmartAssignReportsWhyAStringWasRejected covers the parse reason
+// carried into the unsupported operation error.
+//
+// Every Parser call in SmartAssign is a strategy that continues to the
+// next one on failure, so none of them can return its error. Without
+// carrying the reason, a malformed cell and a struct field wired to the
+// wrong column type are the same error: "unsupported operation:
+// assigning string X to T", and errors.Is cannot separate them either.
+// The two need opposite fixes, one is a bad row and the other is a bad
+// struct, so the caller has to be able to tell them apart.
+func TestSmartAssignReportsWhyAStringWasRejected(t *testing.T) {
+	assignErr := func(dstPtr any, str string, parser Parser) error {
+		return SmartAssign(reflect.ValueOf(dstPtr).Elem(), reflect.ValueOf(str), nil, parser, nil)
+	}
+
+	t.Run("names the parse failure", func(t *testing.T) {
+		var i int64
+		err := assignErr(&i, "abc", nil)
+		require.ErrorIs(t, err, errors.ErrUnsupported,
+			"the strategies of SmartAssign continue on this, so it has to stay in the chain")
+		require.ErrorIs(t, err, strconv.ErrSyntax,
+			"and the reason has to be in the chain next to it")
+		require.ErrorContains(t, err, "int64")
+		require.ErrorContains(t, err, "invalid syntax")
+
+		var b bool
+		require.ErrorContains(t, assignErr(&b, "maybe", nil), `cannot parse "maybe" as bool`)
+
+		var tm time.Time
+		require.ErrorContains(t, assignErr(&tm, "not a date", nil), `cannot parse "not a date" as time`)
+
+		var f float64
+		err = assignErr(&f, "1.234,56", &StringParser{StdlibFloatsOnly: true})
+		require.ErrorIs(t, err, strconv.ErrSyntax,
+			"a cell rejected by a parser without the locale fallback says so")
+	})
+
+	t.Run("names the declared type for a pointer destination", func(t *testing.T) {
+		// The parse happens in the recursion of the pointer allocation
+		// strategy, which reports the pointed-to type, so the reason has
+		// to be lifted out of that error rather than nested into this
+		// one. An optional column is declared as a pointer, so this is
+		// the path an import takes for the columns it expects to be
+		// empty sometimes.
+		var pf *float64
+		err := assignErr(&pf, "1.234,56", &StringParser{StdlibFloatsOnly: true})
+		require.ErrorIs(t, err, strconv.ErrSyntax)
+		require.ErrorContains(t, err, "*float64", "the type the caller declared")
+		require.Equal(t, 1, strings.Count(err.Error(), "unsupported operation"),
+			"the recursion must not repeat the clause naming the source string")
+	})
+
+	t.Run("a type mismatch carries no reason", func(t *testing.T) {
+		// The discrimination this whole test exists for: nothing parsed
+		// a string into a channel, so there is no parse reason to give,
+		// and the error stays exactly what it was before.
+		var ch chan int
+		err := assignErr(&ch, "abc", nil)
+		require.ErrorIs(t, err, errors.ErrUnsupported)
+		require.NotErrorIs(t, err, strconv.ErrSyntax)
+		require.EqualError(t, err, `unsupported operation: assigning string "abc" to chan int`)
+	})
+
+	t.Run("a failed parse still falls through to the next strategy", func(t *testing.T) {
+		// The reason the reason is joined rather than returned.
+		// ParseDuration rejects a number without a unit, and the integer
+		// parsing further down is what makes "90" 90 nanoseconds. If a
+		// failed Parser call returned its error, this would fail
+		// instead, and so would every other strategy that continues on
+		// errors.ErrUnsupported.
+		var d time.Duration
+		require.NoError(t, assignErr(&d, "90", nil))
+		require.Equal(t, time.Duration(90), d)
 	})
 }

@@ -192,7 +192,7 @@ func TestStrictNilStringsUsesParserIsNil(t *testing.T) {
 	// Spelled out rather than ranged over the parser's own field:
 	// deriving the cases from the code under test means shrinking the
 	// defaults silently shrinks this test instead of failing it.
-	wantNilStrings := []string{"", "nil", "<nil>", "null", "NULL"}
+	wantNilStrings := []string{"", "nil", "<nil>", "null", "NULL", "None", "N/A", "n/a", "NA"}
 	require.Equal(t, wantNilStrings, NewStringParser().NilStrings,
 		"the cases below have to stay in step with the documented defaults")
 
