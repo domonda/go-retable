@@ -85,7 +85,8 @@ type Parser interface {
 //   - Configurable boolean string representations (e.g., "yes"/"no", "1"/"0")
 //   - Configurable nil/null string representations
 //   - Multiple time format attempts for flexible time parsing
-//   - Locale-aware float parsing (e.g., handling comma decimal separators)
+//   - Locale-aware float parsing (e.g., handling comma decimal separators),
+//     which StdlibFloatsOnly turns off
 //
 // The StringParser uses standard Go parsing functions (strconv, time.Parse) internally,
 // but adds flexibility through configuration and fallback strategies.
@@ -107,17 +108,21 @@ type Parser interface {
 //	t, _ := parser.ParseTime("03/15/2024") // uses custom format
 type StringParser struct {
 	// TrueStrings lists all strings that should be parsed as boolean true.
-	// Default includes: "true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"
+	// Default includes: "true", "yes", "on", "y", "1", "t" with their case
+	// variants, which is wider than strconv.ParseBool on purpose.
 	// A nil slice uses the default, an empty non-nil slice accepts nothing.
 	TrueStrings []string `json:"trueStrings"`
 
 	// FalseStrings lists all strings that should be parsed as boolean false.
-	// Default includes: "false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"
+	// Default includes: "false", "no", "off", "n", "0", "f" with their case
+	// variants, which is wider than strconv.ParseBool on purpose.
 	// A nil slice uses the default, an empty non-nil slice accepts nothing.
 	FalseStrings []string `json:"falseStrings"`
 
 	// NilStrings lists all strings that represent nil/null values.
-	// Default includes: "", "nil", "<nil>", "null", "NULL"
+	// Default includes: "", "nil", "<nil>", "null", "NULL", "None",
+	// "N/A", "n/a" and "NA", the absent value of Go, SQL, JSON, Python
+	// and a spreadsheet.
 	// They are reported by IsNil, which SmartAssign asks before it parses a
 	// string source and which StrictNilStrings uses to reject one.
 	NilStrings []string `json:"nilStrings"`
@@ -126,6 +131,28 @@ type StringParser struct {
 	// Formats are tried in order until one succeeds.
 	// Default includes RFC3339, ISO dates, and several common formats.
 	TimeFormats []string `json:"timeFormats"`
+
+	// StdlibFloatsOnly makes strconv.ParseFloat the only reading of a
+	// float, disabling the locale-aware fallback that reads "1.234,56"
+	// and "1,234.56" as 1234.56. strconv is tried first either way, so
+	// this decides what happens when it rejects the string, not whether
+	// it is used.
+	//
+	// Set it for a source whose numbers are machine written in one known
+	// format, where a decimal comma is a corrupt cell rather than a
+	// German number: the fallback guesses a value for such a cell
+	// instead of failing the row, and the guess can be off by a factor
+	// of a thousand, reading "1,234" as 1.234 where 1234 was meant.
+	//
+	// It is the standard library's parsing and not a validating one, so
+	// what strconv accepts is accepted: "NaN", "inf", "1_000.5" and
+	// "0x1p-2" parse, a padded " 3.14" does not because strconv does not
+	// trim, and a "1.234" that meant 1234 still reads as 1.234 because
+	// strconv accepts it and the fallback never runs for it.
+	//
+	// The zero value keeps the fallback, so unlike the fields above this
+	// one is an opt-in and not a default that a nil value falls back to.
+	StdlibFloatsOnly bool `json:"stdlibFloatsOnly"`
 }
 
 // Ensure StringParser implements Parser
@@ -141,10 +168,11 @@ var DefaultParser Parser = NewStringParser()
 // NewStringParser creates a new StringParser with sensible default configurations.
 //
 // Default configurations:
-//   - TrueStrings: "true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"
-//   - FalseStrings: "false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"
-//   - NilStrings: "", "nil", "<nil>", "null", "NULL"
+//   - TrueStrings: "true", "yes", "on", "y", "1", "t" and case variants
+//   - FalseStrings: "false", "no", "off", "n", "0", "f" and case variants
+//   - NilStrings: "", "nil", "<nil>", "null", "NULL", "None", "N/A", "n/a", "NA"
 //   - TimeFormats: Comprehensive list of common formats (RFC3339, ISO, etc.)
+//   - StdlibFloatsOnly: false, so ParseFloat keeps its locale-aware fallback
 //
 // The returned parser can be used as-is or customized by modifying its fields.
 // It owns its slices, so configuring it never affects DefaultParser or any
@@ -277,6 +305,8 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 //     ("123,45" -> 123.45, "1,234.56" and "1.234,56" -> 1234.56)
 //
 // This flexibility is important for parsing numbers from different locales or user input.
+// Set StdlibFloatsOnly to skip the second strategy, leaving strconv as
+// the only reading.
 //
 // Two properties of the separator detection are worth knowing:
 //   - A lone comma or dot is always the decimal separator, so "1,234" is
@@ -302,9 +332,20 @@ func (p *StringParser) ParseUint(str string) (uint64, error) {
 //	f, _ := parser.ParseFloat("1.234,56")  // 1234.56 (dot thousands separator)
 //	f, _ := parser.ParseFloat("1'234.56")  // 1234.56 (apostrophe thousands separator)
 //	f, _ := parser.ParseFloat("1.234,56-") // -1234.56 (trailing minus)
+//
+//	stdlib := &StringParser{StdlibFloatsOnly: true}
+//	f, _ := stdlib.ParseFloat("3.14")      // 3.14
+//	_, err := stdlib.ParseFloat("3,14")    // error, the fallback is off
 func (p *StringParser) ParseFloat(str string) (float64, error) {
 	f, err := strconv.ParseFloat(str, 64)
 	if err != nil {
+		// The receiver is read here, so the nil receiver that reaches
+		// the accessors above reaches this too and must not panic.
+		// A nil parser has no field set and parses like the defaults,
+		// which include the fallback.
+		if p != nil && p.StdlibFloatsOnly {
+			return 0, err
+		}
 		f, e := parseFloat(str)
 		if e != nil {
 			// Both readings failed. The strconv error names the string
@@ -475,18 +516,32 @@ func ParseTime(str string) (t time.Time, format string, err error) {
 // the rest, instead of silently accepting nothing. Set a field to an
 // empty non-nil slice to really accept nothing.
 //
+// They are as wide as a spelling can be without becoming a guess: every
+// one of them has a single possible reading in the destination it is
+// parsed into, so accepting it cannot read a cell wrong, and a caller
+// whose source means something else by it configures the field.
+//
 // The boolean strings include the single letter "t" and "f" that
 // strconv.ParseBool accepts, because that is what PostgreSQL writes
-// for booleans in CSV exports.
+// for booleans in CSV exports, and "on"/"off" and "y"/"n", which
+// settings tables and questionnaire exports write.
+//
+// The nil strings cover the four ecosystems whose absent value ends up
+// in a table: Go's own "nil" and the "<nil>" fmt prints for it, the
+// "null" and "NULL" of SQL and JSON, Python's "None", and the "N/A" a
+// spreadsheet writes. A lone "-" is deliberately not among them: in a
+// numeric column it is as likely to be a malformed number as a
+// placeholder, and reading it as nil would assign 0 to a cell nobody
+// checked. Neither is "NaN", which is a float value strconv parses.
 //
 // These must never be modified. NewStringParser clones them so that a
 // configured parser cannot write through to them, and the nil-field
 // fallbacks return them directly, but only into the parse methods of
 // this file, which read them and never let them escape to a caller.
 var (
-	defaultTrueStrings  = []string{"true", "True", "TRUE", "yes", "Yes", "YES", "1", "t", "T"}
-	defaultFalseStrings = []string{"false", "False", "FALSE", "no", "No", "NO", "0", "f", "F"}
-	defaultNilStrings   = []string{"", "nil", "<nil>", "null", "NULL"}
+	defaultTrueStrings  = []string{"true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON", "y", "Y", "1", "t", "T"}
+	defaultFalseStrings = []string{"false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF", "n", "N", "0", "f", "F"}
+	defaultNilStrings   = []string{"", "nil", "<nil>", "null", "NULL", "None", "N/A", "n/a", "NA"}
 
 	// defaultTimeFormats is the default list of time layout strings tried when parsing time values.
 	// The formats are ordered from most specific/common to less common, with ISO/RFC formats
@@ -504,6 +559,7 @@ var (
 	defaultTimeFormats = []string{
 		time.RFC3339Nano,       // "2006-01-02T15:04:05.999999999Z07:00" - ISO 8601 with nanoseconds
 		time.RFC3339,           // "2006-01-02T15:04:05Z07:00" - ISO 8601, most common API format
+		formatDateTimeISO,      // "2006-01-02T15:04:05" - ISO 8601 without a zone, as JSON without one writes it
 		formatBrowserLocalTime, // "2006-01-02T15:04" - HTML5 datetime-local input format
 		time.RFC1123Z,          // "Mon, 02 Jan 2006 15:04:05 -0700" - HTTP date format
 		time.RFC850,            // "Monday, 02-Jan-06 15:04:05 MST" - Old HTTP format
@@ -518,6 +574,8 @@ var (
 		time.StampMilli,        // "Jan _2 15:04:05.000" - Timestamp with milliseconds
 		time.Stamp,             // "Jan _2 15:04:05" - Unix timestamp format
 		formatTimeString,       // "2006-01-02 15:04:05.999999999 -0700 MST" - Complete time string
+		formatDateTimeZoneSQL,  // "2006-01-02 15:04:05-07:00" - PostgreSQL timestamptz
+		formatDateTimeZoneHour, // "2006-01-02 15:04:05-07" - PostgreSQL timestamptz, hour only offset
 		time.DateTime,          // "2006-01-02 15:04:05" - SQL datetime format
 		formatDateTimeMinute,   // "2006-01-02 15:04" - DateTime without seconds
 		time.DateOnly,          // "2006-01-02" - ISO date only, SQL date format
@@ -528,6 +586,9 @@ var (
 
 // Custom time format constants for common patterns not included in the time package.
 const (
+	formatDateTimeISO      = "2006-01-02T15:04:05"                     // ISO 8601 without a zone
+	formatDateTimeZoneSQL  = "2006-01-02 15:04:05-07:00"               // PostgreSQL timestamptz
+	formatDateTimeZoneHour = "2006-01-02 15:04:05-07"                  // PostgreSQL timestamptz, hour only offset
 	formatDateTimeMinute   = "2006-01-02 15:04"                        // SQL datetime without seconds
 	formatDateTimeGerman   = "02.01.2006 15:04:05"                     // German datetime (DD.MM.YYYY HH:MM:SS)
 	formatDateGerman       = "02.01.2006"                              // German date (DD.MM.YYYY)

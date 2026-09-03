@@ -111,7 +111,12 @@ import (
 // Returns:
 //   - error: nil on success, or an error describing why the assignment failed.
 //     Returns errors.ErrUnsupported if no conversion strategy could handle
-//     the type combination.
+//     the type combination. When a strategy did handle it but the Parser
+//     rejected the source string, that reason is joined into the same
+//     error, so errors.Is reports both: errors.ErrUnsupported, because
+//     the strategies above continue on it, and the parse error, which
+//     is what distinguishes a malformed cell from a destination type
+//     that no strategy fits.
 //
 // Example:
 //
@@ -149,6 +154,16 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 		return errors.New("src value is invalid")
 	}
 	parser = cmp.Or(parser, DefaultParser)
+	// parseErr collects the reason every Parser call below rejected the
+	// source string. Each of those calls is a strategy that continues
+	// to the next one on failure, so none of them can return its error,
+	// and the final unsupported operation error used to be the only
+	// thing a caller saw: a malformed cell and a struct field wired to
+	// the wrong column type were reported identically. It is joined
+	// into that error at the end, which keeps errors.Is(err,
+	// errors.ErrUnsupported) true for the strategies of this function
+	// that recurse and continue on it.
+	var parseErr error
 	var (
 		srcType = src.Type()
 		srcKind = srcType.Kind()
@@ -287,20 +302,24 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 
 	// Try converting string to time.Time
 	if srcKind == reflect.String && (timeType(dstType) || dstKind == reflect.Pointer && timeType(dstType.Elem())) {
-		if t, err := parser.ParseTime(src.String()); err == nil {
+		t, e := parser.ParseTime(src.String())
+		if e == nil {
 			setParsed(dst, reflect.ValueOf(t))
 			return nil
 		}
+		parseErr = errors.Join(parseErr, e)
 	}
 
 	// Try converting string to time.Duration.
 	// Without this the underlying int64 kind of time.Duration
 	// would only accept a plain number of nanoseconds.
 	if srcKind == reflect.String && (durationType(dstType) || dstKind == reflect.Pointer && durationType(dstType.Elem())) {
-		if d, err := parser.ParseDuration(src.String()); err == nil {
+		d, e := parser.ParseDuration(src.String())
+		if e == nil {
 			setParsed(dst, reflect.ValueOf(d))
 			return nil
 		}
+		parseErr = errors.Join(parseErr, e)
 		// Continue to the integer parsing further down
 		// for a plain number without a unit
 	}
@@ -371,11 +390,12 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 			dst.SetBool(src.Float() != 0)
 			return nil
 		case reflect.String:
-			b, err := parser.ParseBool(src.String())
-			if err == nil {
+			b, e := parser.ParseBool(src.String())
+			if e == nil {
 				dst.SetBool(b)
 				return nil
 			}
+			parseErr = errors.Join(parseErr, e)
 		}
 
 	// Convert string to integers.
@@ -385,30 +405,35 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// different number: "300" into an int8 would be 44.
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if srcKind == reflect.String {
-			if i, e := parser.ParseInt(src.String()); e == nil {
+			i, e := parser.ParseInt(src.String())
+			if e == nil {
 				if dst.OverflowInt(i) {
 					return fmt.Errorf("%d overflows %s: %w", i, dstType, strconv.ErrRange)
 				}
 				dst.SetInt(i)
 				return nil
 			}
+			parseErr = errors.Join(parseErr, e)
 		}
 
 	// Convert string to unsigned integers, see the overflow note above
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		if srcKind == reflect.String {
-			if i, e := parser.ParseUint(src.String()); e == nil {
+			i, e := parser.ParseUint(src.String())
+			if e == nil {
 				if dst.OverflowUint(i) {
 					return fmt.Errorf("%d overflows %s: %w", i, dstType, strconv.ErrRange)
 				}
 				dst.SetUint(i)
 				return nil
 			}
+			parseErr = errors.Join(parseErr, e)
 		}
 
 	case reflect.Float32, reflect.Float64:
 		if srcKind == reflect.String {
-			if f, e := parser.ParseFloat(src.String()); e == nil {
+			f, e := parser.ParseFloat(src.String())
+			if e == nil {
 				// A finite value that does not fit becomes an infinity,
 				// which is a different number, so it is reported.
 				// An infinity that was parsed as such is assigned,
@@ -419,6 +444,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 				dst.SetFloat(f)
 				return nil
 			}
+			parseErr = errors.Join(parseErr, e)
 		}
 
 	// Convert any type to string with fmt.Sprint
@@ -445,11 +471,41 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 			dst.Set(newDest)
 			return nil
 		}
-		// Continue after errors.ErrUnsupported
+		// Continue after errors.ErrUnsupported, carrying its reason:
+		// the parse that rejected the string happened in the recursion,
+		// so this frame has no parseErr of its own and an optional
+		// column declared as a pointer would lose it.
+		parseErr = errors.Join(parseErr, parseReasonOf(err))
 
 	}
 
+	if parseErr != nil {
+		return fmt.Errorf("%w: assigning %s %#v to %s: %w", errors.ErrUnsupported, srcType, src, dstType, parseErr)
+	}
 	return fmt.Errorf("%w: assigning %s %#v to %s", errors.ErrUnsupported, srcType, src, dstType)
+}
+
+// parseReasonOf returns the parse reason of an unsupported operation
+// error built by SmartAssign, without the "assigning ... to ..." clause
+// that names the destination.
+//
+// The pointer allocation strategy needs it because it reports the
+// pointer type while its recursion reported the pointed-to type, and
+// nesting the whole error would repeat the source string and the words
+// "unsupported operation" in one message. Returns nil for an error that
+// carries no reason, which is the type mismatch case.
+func parseReasonOf(err error) error {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return nil
+	}
+	var reason error
+	for _, e := range joined.Unwrap() {
+		if !errors.Is(e, errors.ErrUnsupported) {
+			reason = errors.Join(reason, e)
+		}
+	}
+	return reason
 }
 
 // maxPointerDepth bounds how far a pointer type is followed to the

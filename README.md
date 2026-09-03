@@ -400,10 +400,28 @@ grouped `12.34,56` is rejected rather than read as an arbitrary number. A lone
 `,` or `.` stays the decimal separator, so `1,234` is 1.234 — nothing in the
 string can resolve that ambiguity.
 
+Set `StdlibFloatsOnly` for a source that writes Go float literals, where a
+decimal comma means the cell is corrupt rather than German. Otherwise the fallback
+guesses a value for that cell instead of failing the row, and the guess can be
+off by a factor of a thousand: `1,234` reads as 1.234 where 1234 was meant.
+
+```go
+parser := &retable.StringParser{StdlibFloatsOnly: true}
+parser.ParseFloat("3.14")  // 3.14
+parser.ParseFloat("3,14")  // error
+parser.ParseFloat(" 3.14") // error, strconv does not trim
+parser.ParseFloat("NaN")   // NaN, strconv parses more than Go literals
+```
+
+It is the standard library's parsing, not a validating one, and it removes only
+the second reading: a `1.234` that meant 1234 still reads as 1.234, because
+`strconv` accepts it and the fallback never runs.
+
 #### Empty cells
 
 `Parser.IsNil` reports whether a string means "no value" — by default `""`,
-`nil`, `<nil>`, `null` and `NULL`. `SmartAssign` assigns the zero value for such
+`nil`, `<nil>`, `null`, `NULL`, `None`, `N/A`, `n/a` and `NA`: the absent value
+of Go, SQL, JSON, Python and a spreadsheet. `SmartAssign` assigns the zero value for such
 a string, so an empty CSV cell reads as `0` instead of failing the whole file.
 The cost is that the parsed data can no longer tell an empty cell from a cell
 containing `0`.

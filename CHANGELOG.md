@@ -9,6 +9,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Released by merging to `main`. Not tagged: this repository carries no version
 tags, so consumers resolve it as a pseudo-version of the `main` commit.
 
+### Added
+
+- The defaults accept more of what a table source actually writes, without
+  dropping anything they accepted before. A spelling belongs in a default when
+  it has a single possible reading in the destination it is parsed into, so
+  accepting it cannot read a cell wrong; a source that means something else by
+  one of them says so on the field.
+
+  - Booleans gain `on`, `off` and `y`, `n` with their case variants, which
+    settings tables and questionnaire exports write.
+  - Nil strings gain `None`, `N/A`, `n/a` and `NA`, so the absent value of Go,
+    SQL, JSON, Python and a spreadsheet all read as nil. A lone `-` is
+    deliberately not among them: in a numeric column it is as likely to be a
+    malformed number as a placeholder, and reading it as nil would assign `0` to
+    a cell nobody checked. Neither is `NaN`, which is a float value `strconv`
+    parses.
+  - Time formats gain `2006-01-02T15:04:05`, the ISO layout without a zone that
+    JSON without one writes, and `2006-01-02 15:04:05-07:00` and
+    `2006-01-02 15:04:05-07`, which is how PostgreSQL writes a `timestamptz`.
+
+- `retable.StringParser.StdlibFloatsOnly` parses floats with `strconv.ParseFloat`
+  alone, skipping the locale-aware fallback
+  that reads `"1.234,56"` and `"1,234.56"` as `1234.56`. The zero value keeps
+  the fallback, so nothing changes for a parser that does not set it.
+
+  It exists for a source that writes its numbers in one known machine format,
+  where a decimal comma means the cell is corrupt rather than German. The
+  fallback guesses a value for such a cell instead of failing the row, and the
+  guess can be off by a factor of a thousand: `1,234` reads as 1.234 where 1234
+  was meant. Opting out of it previously required embedding `*StringParser` in
+  an own type and overriding the method, which a parser unmarshalled from a
+  configuration file cannot do — the field carries a `json:"stdlibFloatsOnly"` tag
+  like every other field of the struct.
+
+  It is the standard library's parsing and not a validating one, so what
+  `strconv` accepts is accepted: `NaN`, `inf`, `1_000.5` and `0x1p-2` parse, and
+  a cell padded to `" 3.14"` by its export is rejected because `strconv` does
+  not trim while the fallback does.
+
 ### Security
 
 - `htmltable.JSONCellFormatter` HTML-escapes its JSON for every input type. The
@@ -51,6 +90,23 @@ tags, so consumers resolve it as a pseudo-version of the `main` commit.
   those three do appear the output changes, which is the point of the fix.
 
 ### Fixed
+
+- A string that no `Parser` could convert is reported with the reason it was
+  rejected. The string to int, uint, float, bool, time and duration cases of
+  `SmartAssign` discarded the parse error, so a malformed cell and a struct
+  field wired to the wrong column type both failed with
+  `unsupported operation: assigning string "" to int64` and `errors.Is` could
+  not separate them, although they need opposite fixes. The reason is now
+  joined into that error, so `errors.Is(err, strconv.ErrSyntax)` works and the
+  message names it, while `errors.Is(err, errors.ErrUnsupported)` stays true.
+
+  That last part is why it is joined rather than returned: the conversion
+  strategies of `SmartAssign` recurse and continue on
+  `errors.ErrUnsupported`, and one of them depends on a failed parse falling
+  through — `ParseDuration` rejects `"90"` for having no unit and the integer
+  parsing below is what makes it 90 nanoseconds. A pointer destination reports
+  the type the caller declared rather than the pointed-to type of its
+  recursion.
 
 - `htmltable.Writer.WithTemplate` applies the templates it's given. It cloned the
   writer, assigned all three templates to the clone and then returned the

@@ -134,6 +134,34 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 
 ## Completed
 
+### A failed string to number parse is reported as an unsupported operation
+
+**What:** The string to int, uint, float, bool, time and duration cases of
+`SmartAssign` called the `Parser` as `if i, e := parser.ParseInt(str); e == nil`,
+so a parse error was discarded and the row failed with
+`unsupported operation: assigning string "" to int64`, which is also what a
+struct field wired to the wrong column type produces.
+
+**Why:** The two need opposite fixes, one is a bad row and the other is a bad
+struct, and `errors.Is(err, errors.ErrUnsupported)` was true for both, so a
+caller could not separate them either.
+
+**Resolution:** The reason is collected in a `parseErr` local and joined into
+the final error with a second `%w`, so `errors.Is(err, errors.ErrUnsupported)`
+stays true and every strategy that recurses and continues on it is unchanged,
+while `errors.Is(err, strconv.ErrSyntax)` now works and the message names the
+cell. Returning the parse error where it happens would have broken the
+fall-through the strategies depend on, which the `"90"` to `time.Duration` case
+proves: `ParseDuration` rejects a number without a unit and the integer parsing
+below is what assigns it. The pointer allocation strategy lifts the reason out
+of its recursion's error rather than nesting it, so an optional column declared
+as a pointer reports the type the caller declared and the message says
+`unsupported operation` once. Four subtests in
+`TestSmartAssignReportsWhyAStringWasRejected`, including that a genuine type
+mismatch still carries no reason.
+
+**Completed:** 2026-09-03
+
 ### Writer.WithTemplate silently discards its arguments
 
 **What:** `htmltable/writer.go` `WithTemplate` built `mod := w.clone()`, assigned all three templates to `mod`, and returned `w`. Every custom template passed to it was dropped, and `w.WithTemplate(...) == w` was true, which broke the immutability contract every other `With` method on the type follows.
