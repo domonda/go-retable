@@ -136,14 +136,17 @@ writer := htmltable.NewWriter[[]Person]().
 
 err := writer.Write(context.Background(), os.Stdout, people, "People")
 // Outputs:
-// <table class="table table-striped">
-//   <thead><tr><th>Full Name</th><th>Age</th><th>City</th></tr></thead>
-//   <tbody>
-//     <tr><td>Alice Smith</td><td>30</td><td>New York</td></tr>
-//     ...
-//   </tbody>
+// <table class='table table-striped'>
+//   <caption>People</caption>
+//   <tr><th>Full Name</th><th>Age</th><th>City</th></tr>
+//   <tr><td>Alice Smith</td><td>30</td><td>New York</td></tr>
+//   ...
 // </table>
 ```
+
+The default templates emit the rows directly inside `<table>`, without `<thead>`
+or `<tbody>`. Pass your own templates to `WithTemplate` for a different
+structure; a nil argument keeps the current template for that position.
 
 ### Converting Between Types
 

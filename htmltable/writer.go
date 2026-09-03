@@ -48,7 +48,10 @@ import (
 //
 // HTML Escaping:
 // By default, all cell values are HTML-escaped for safety.
-// Formatters can return raw HTML by setting the raw return value to true.
+// A formatter returning raw switches that escaping off for its cell and
+// takes over the job. See retable.CellFormatter for what raw makes the
+// formatter responsible for, and for what html/template still does to the
+// result depending on where the row template puts it.
 type Writer[T any] struct {
 	tableClass       string
 	viewer           retable.Viewer
