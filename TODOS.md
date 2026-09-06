@@ -54,8 +54,9 @@
 
 Findings of the API surface review of 2026-09-06. Each item below is an open
 architecture question whose deliverable is a decision, recorded here, before
-`v1.0.0` is tagged. The recommendation in each item is the reviewer's, not a
-decision that has been made. The verified defects the same review found are
+`v1.0.0` is tagged. Unless an item says "Decisions, made <date>", the
+recommendation in it is the reviewer's, not a decision that has been made; the
+SmartAssign item is the only fully decided one so far, and it also settles the `Formatter` half of the raw output item. The verified defects the same review found are
 listed under "retable" further down; they need fixing whichever way the
 decisions go.
 
@@ -95,7 +96,7 @@ Surface counts at the time of the review:
 
 ### Decide how raw output is expressed, and whether Formatter survives
 
-**What:** `CellFormatter.FormatCell` returns `(str string, raw bool, err error)`. The `raw` flag is an HTML escaping concern living in the format-neutral core interface; its doc comment needs forty lines, and it means "do not quote" in `csvtable` and "do not escape" in `htmltable`. It doubles the surface everywhere it touches: `PrintfCellFormatter` and `PrintfRawCellFormatter`, `StringIfTrue` and `RawStringIfTrue`, `SprintCellFormatter(rawResult bool)`, `CellFormatterFromFormatter(f, rawResult)`, `ReflectCellFormatterFunc(fn, rawResult)`, and `WithTypeFormatterReflectFunc` beside `WithTypeFormatterReflectRawFunc` on both writers. Separately, `Formatter` (`Format(reflect.Value) (string, error)`) exists beside `CellFormatter` with two bridge functions between them, and is only consumed by `SmartAssign`'s `srcFormatter` parameter.
+**What:** The `Formatter` half of this item is decided (2026-09-06, see the SmartAssign item): the interface and its bridges are removed. What remains open is the raw flag. `CellFormatter.FormatCell` returns `(str string, raw bool, err error)`. The `raw` flag is an HTML escaping concern living in the format-neutral core interface; its doc comment needs forty lines, and it means "do not quote" in `csvtable` and "do not escape" in `htmltable`. It doubles the surface everywhere it touches: `PrintfCellFormatter` and `PrintfRawCellFormatter`, `StringIfTrue` and `RawStringIfTrue`, `SprintCellFormatter(rawResult bool)`, `CellFormatterFromFormatter(f, rawResult)`, `ReflectCellFormatterFunc(fn, rawResult)`, and `WithTypeFormatterReflectFunc` beside `WithTypeFormatterReflectRawFunc` on both writers. Separately, `Formatter` (`Format(reflect.Value) (string, error)`) exists beside `CellFormatter` with two bridge functions between them, and is only consumed by `SmartAssign`'s `srcFormatter` parameter.
 
 **Why:** Every new formatter has to be written twice or take a bool, and every writer has to interpret the bool for its own format. One `Raw(CellFormatter) CellFormatter` wrapper, or a typed result such as `type RawString string` that the writer type-switches on, collapses all of the twins into single definitions. Removing `Formatter` removes two bridge functions and one of the five `SmartAssign` parameters.
 
@@ -105,39 +106,85 @@ Surface counts at the time of the review:
 **Priority:** P1
 **Depends on:** None
 
-### Decide SmartAssign's name, contract and configuration before freezing it
+### Replace SmartAssign with an injectable Converter and a documented null contract
 
 **What:** `SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcFormatter Formatter)` runs fifteen ordered strategies, turns panics into errors with a `recover()`, and has behavior that depends entirely on strategy order. Every CSV import in every consumer depends on those accidental details; the doc comment needs a paragraph to explain why `"NULL"` assigned to a `*string` yields a pointer to `"NULL"` rather than `nil` (verified).
 
-**Why:** Tagging v1 with the current function freezes the heuristics, not a contract. Any reordering to fix a bug becomes a breaking change, and there is no table a caller can consult to know what will happen to a given source and destination type pair.
+**Why:** Tagging v1 with the current function freezes the heuristics, not a contract. Any reordering to fix a bug becomes a breaking change, and there is no table a caller can consult to know what will happen to a given source and destination type pair. The defaults are also the unsafe ones: a `NULL` in a numeric column imports as `0`, and every consumer import overrides that.
 
 **Context:** Usage, checked 2026-09-06. Inside the module the only non-recursive caller is `ViewToStructSlice`. In the consumers there are two direct calls; everything else goes through `ViewToStructSlice` or the `csvtable` readers. The three collaborators `dstScanner`, `parser` and `srcFormatter` always travel together as a triple, through `ViewToStructSlice`, into `SmartAssign` and through its four recursive calls; `Scanner.ScanString` additionally receives the `Parser`. In every consumer call site read, `srcFormatter` is `nil`. `domonda-service/pkg/accounting/importparser.go` is a hundred-line comment plus two `StringParser` vars that exists only to explain how `Parser.IsNil`, the `StrictNilStrings` scanner and the zero-value strategy interact, and every import there overrides the default nil policy because `NULL` in a numeric column importing as `0` stored wrong account numbers. The "Passing any Scanner silently discards a configured DefaultParser" item below is the same triple assembled inconsistently.
 
-Name: the function converts a source value of any type into a destination of any type, parsing strings on the way. "Smart" names nothing. `database/sql` has the exact same shape and heuristic list as the unexported `convertAssign`, so `ConvertAssign` has precedent; if the function becomes a method, the type name carries the meaning and the method is `Assign`.
+**Decisions, made 2026-09-06.** These are decided, not proposals; the rest of the section still carries recommendations only.
 
-Configuration and injection: yes, but of the inputs, never of the strategy order. Proposed shape:
+1. **Name.** The function converts a source value of any type into a destination of any type, parsing strings on the way; "Smart" names nothing. It becomes the `Assign` method of a `Converter` type, and the five-parameter reflect-level function is unexported. (`database/sql` has the same shape and heuristic list as its unexported `convertAssign`, so `ConvertAssign` would be the name if it had to stay a function.)
 
-```go
-// A nil *Converter is valid and uses the defaults.
-type Converter struct {
-	Parser    Parser    // nil selects the default StringParser
-	Scanner   Scanner   // nil means no custom scanning
-	Formatter Formatter // nil means no custom formatting
-	StrictNil bool      // a nil string into a type that cannot hold absence is an error
-}
+2. **Injection.** The scanner and parser plus the null policy become one value, and everything that took the old triple takes one `Assigner`. The `Formatter` interface is deleted (decided 2026-09-06): on the assign side it only answered how to render a source value into a string field, which `encoding.TextMarshaler`, `fmt.Stringer` and the `fmt.Sprint` fallback already answer, and no consumer call site ever passed one; on the writer side `CellFormatter` is the only interface needed. With it go the `srcFormatter` parameter, the strategy that used it, and the two bridges `CellFormatterFromFormatter` and `FormatterFromCellFormatter`. Adding a field later is backward compatible, so leaving it out at v1 is the safe direction.
 
-func (c *Converter) Assign(dst, src reflect.Value) error
+   ```go
+   // A nil *Converter is valid and uses the defaults.
+   type Converter struct {
+   	Parser  Parser  // nil selects the default StringParser
+   	Scanner Scanner // nil means no custom scanning
+   	// NullToZero assigns the zero value of the destination when the source
+   	// carries no meaningful value and the destination cannot hold absence.
+   	// The default reports an error instead; declare an optional column as
+   	// a pointer to keep the absence visible.
+   	NullToZero bool
+   }
 
-type Assigner interface{ Assign(dst, src reflect.Value) error }
-```
+   func (c *Converter) Assign(dst, src reflect.Value) error
 
-`ViewToStructSlice` and the readers take one `Assigner` (inside the options struct of the reader entry point item) instead of three positional parameters, so a consumer names its cell policy once, as `accounting.CSVImportConverter`, and injects a wholly different implementation if it wants to. `StrictNilStrings` becomes the `StrictNil` field, because it is a policy and not a scanner; given that every consumer import turns it on, it should probably be the v1 default, with `StrictNil: false` as the opt-in for the lenient behavior. Strategy order stays fixed and becomes the documented conversion table, source kind by destination kind, which is what tests pin.
+   type Assigner interface{ Assign(dst, src reflect.Value) error }
+   ```
 
-Options: (a) the conversion table as contract, implementation free to change; (b) unexport the reflect-level function and expose only the `Converter` method; (c) keep as is. Recommendation: (a) plus the `Converter` above, with the function itself unexported, because nothing outside the module needs a five-parameter reflect function once the method exists.
+   `ViewToStructSlice` and the readers take one `Assigner`, inside the options struct of the reader entry point item, instead of three positional parameters. A consumer names its cell policy once, as `accounting.CSVImportConverter`, and can inject a wholly different implementation. Configuration is of the inputs only; the strategy order is never configurable.
+
+3. **Terminology: null, not nil.** The concept is a cell that carries no meaningful value. For a string source that is whatever the parser classifies, and `""` is one spelling beside `NULL`, `N/A` and `None`; none of them is nil in Go and `NULL` is not the zero value of `string`, so neither "nil" nor "zero to zero" describes it. The package currently uses three names for it, `Parser.IsNil`, `StringParser.NilStrings` and `StrictNilStrings`, plus `IsNullLike` for the same concept on a `reflect.Value`. Null matches the cell domain, matches `IsNullLike`, and does not collide with Go's `nil`. Renames: `Parser.IsNil` to `IsNull`, `StringParser.NilStrings` to `NullStrings`, `StrictNilStrings` is deleted and replaced by the `NullToZero` field, which is a policy and was never a scanner.
+
+4. **What a null source is.** One predicate for absence in the whole package (decided 2026-09-06): a source is null when `IsNullLike` reports it so, or when it is a string that `Parser.IsNull` classifies. `IsNullLike` is what the CSV and HTML writers already use to render a cell as the nil value, so the read side now agrees with the write side. That covers the four cases SmartAssign gated separately, an `IsNull()` that is true, a nil pointer, a `struct{}` value and the null string, and additionally nil slices, maps, channels and funcs, a `driver.Valuer` that returns `nil`, and any value whose `IsZero()` is true, which includes a zero `time.Time`. A zero time is in practical terms never a meaningful value, so it is treated as null like every other zero that says so about itself. The flag's meaning is: there is no meaningful source, so the destination gets its zero value. The zero value of `Converter` is the strict behavior, because that is what every consumer import configures today and what a reader expects; turning absence into `0` across types is the "too smart" part and has to be asked for.
+
+5. **The null source rule.** One strategy in the conversion table, three rows:
+
+   | Destination                          | `NullToZero: false` (default) | `NullToZero: true`   |
+   | ------------------------------------ | ----------------------------- | -------------------- |
+   | directly convertible from the source | the source, converted as is   | the same             |
+   | zero value is itself null-like       | its zero value                | its zero value       |
+   | anything else                        | error                         | zero value           |
+
+   Before any row, a configured `Scanner` sees a string source first, as today, so a type can define for itself what `""` means.
+
+   The first row is Go's own conversion and runs before the null check, as the direct conversion step does today. It is what keeps a same-type copy working: a zero `time.Time` into a `time.Time` field stays a zero time, and `""` or `"NULL"` into a `string`, a type defined as string, `[]byte` or `[]rune` is assigned verbatim, because those destinations can hold any string and the parser's classification never applies to them. A null source that is not convertible follows the other rows: a nil `*int` into a `string` is an error by default, because `""` is a value and not absence.
+
+   The second row is "the destination can hold absence", tested as `IsNullLike(reflect.Zero(dstType))`: the type's own zero value reports itself as null. That is every pointer, every nil-able kind, every `IsNull()` type such as a nullable ID, and every `IsZero()` type such as `time.Time`. For those a null source is their zero value and no flag is involved, because the destination is explicit about being zeroable: by implementing `IsZero()` or `IsNull()`, or by being a pointer or nil-able kind, the type declares that its zero value means "no value", so assigning it loses nothing and the field afterwards says "null" the same way the source did. An `int` or `float64` makes no such declaration; `0` has no special meaning and no interface says otherwise, so in strict mode an empty string cannot become one. A pointer is never allocated for a null source, so `""` into `*string` is `nil` and a zero `time.Time` into `*time.Time` is `nil`, not a pointer to the zero time. A `""` date cell into a plain `time.Time` field is the zero time, which is that type's null.
+
+   The third row is the destinations whose zero value is a real value, `0`, `false`, `""` for a non-string source, a plain struct. Only here does `NullToZero` decide between an error and the zero value, because only here would the zero value pretend to be data.
+
+6. **The conversion table is the contract.** Strategy order stays fixed and is written out as a table, source kind by destination kind, and that table is what the tests pin. The implementation is free to change as long as the table holds.
+
+7. **Round trip stability** (decided 2026-09-06). Reading a table into structs, writing those structs with a writer, and reading the output again yields equal structs. This is the property the null rule above is derived from: the writers render every `IsNullLike` cell as their nil value, `""` by default, and `""` reads back as null, so every field that can hold absence has to accept a null source without a flag, which is what the second row guarantees. Under the earlier "pointer only" row a struct with a plain `time.Time` field holding a zero time wrote `""` and then failed to read, so that row was wrong by this principle.
+
+   What the principle requires of the rest of the package:
+   - The writer's nil value and the parser's null strings are one contract: the reader must classify whatever the writer emits for null. The defaults agree (`""` is in `NullStrings`), and `Writer.WithNilValue` has to document that a value outside the parser's `NullStrings` breaks the round trip.
+   - The default `fmt.Sprint` rendering of each supported type must be one the parser accepts: `time.Time` prints in the layout the parser lists as `formatTimeString`, `time.Duration` prints what `ParseDuration` reads, floats print the shortest representation that parses back exactly, bools print `true` and `false`. A type-specific formatter that changes the text has to keep it parseable by the matching scanner, which is the caller's responsibility and is documented as such.
+   - The equality is of values, not of text. A null cell read with `NullToZero: true` into an `int` becomes `0`, writes as `0`, and reads as `0`; the struct is stable, the text is not, and that is fine.
+   - One inherent exception, to be documented rather than fixed: a `*string` holding a pointer to `""` or to `"NULL"` writes as that text and reads back as `nil`, because a text format cannot distinguish absence from the spelling of absence.
+   - The contract is pinned by a round trip test over one struct with every supported field kind in value and pointer form, through `csvtable` and `htmltable` where a reader exists, and through `ViewToStructSlice` from a `StringsView` for the general case.
+
+**Behavior changes to record in the changelog when this lands:**
+
+- A null source into a number, bool or `time.Duration` destination, or any other destination whose zero value is a real value, is an error by default; today it is the zero value. Callers that want the old behavior set `NullToZero: true`. A `time.Time` destination is not affected, because its zero value is null-like and a null source becomes the zero time with or without the flag, as today. In the local consumers the only such caller is the Excel path in `domonda-service`, whose `ExcelImportParser` documents that it wants `""` to mean `0` for the conthaus special rows.
+- A nil pointer, `IsNull()` or `struct{}` source into a non-pointer destination is an error by default; today it is the zero value.
+- A null string into `*string` (and any pointer to a string kind) is `nil`; today it is a pointer to the string, and the `SmartAssign` doc comment documents that outcome.
+- A source whose `IsZero()` is true, a zero `time.Time` above all, is null: into a pointer destination it becomes `nil` where today it becomes a pointer to the zero value; into a non-convertible destination such as a `string` field it is an error by default where today `fmt.Stringer` produces `0001-01-01 00:00:00 +0000 UTC`. A same-type or convertible destination is unaffected. The same applies to nil slices, maps, channels and funcs and to a `driver.Valuer` returning `nil`.
+- A null source into a non-pointer destination that can hold absence, such as a nullable ID type with `IsNull()`, becomes its zero value where today it is an error, because the null string strategy only covered numbers, bools, times and durations.
+- `StrictNilStrings` is removed; `Parser.IsNil` and `StringParser.NilStrings` are renamed. The two `StringParser` vars and the `StrictNilStrings` argument in `domonda-service/pkg/accounting` become two `Converter` values.
+- The `Formatter` interface, `FormatterFunc`, `SprintFormatter`, `UnsupportedFormatter`, `CellFormatterFromFormatter` and `FormatterFromCellFormatter` are removed, and `SmartAssign`'s `srcFormatter` parameter with them.
+
+Nothing in this item is still open.
 
 **Effort:** M
 **Priority:** P1
-**Depends on:** The raw output decision, because it decides whether `Formatter` stays a field
+**Depends on:** None
 
 ### Decide the reader entry point shape: options struct, one function per package
 
