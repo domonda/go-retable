@@ -12,7 +12,7 @@
 
 **Effort:** S
 **Priority:** P1
-**Depends on:** The two naming decisions below
+**Depends on:** The two naming decisions below, and every decision in the "v1 API design" section. The API review of 2026-09-06 found that the three consumer repositories in the local GOPATH pin three different pseudo-versions (2024-10, 2026-03, 2026-09) and still call `htmltable.Render`, `htmltable.NewRenderer`, `retable.NewTypeFormatters` and `retable.NewComputedView`, none of which exist any more. Every consumer therefore already faces a breaking upgrade, so a redesign before the tag costs them about the same as the freeze would, and a tag now protects nobody who is currently on an old commit.
 
 ### Two names the API freeze leaves unsettled
 
@@ -49,6 +49,167 @@
 **Effort:** S
 **Priority:** P1
 **Depends on:** None
+
+## v1 API design
+
+Findings of the API surface review of 2026-09-06. Each item below is an open
+architecture question whose deliverable is a decision, recorded here, before
+`v1.0.0` is tagged. The recommendation in each item is the reviewer's, not a
+decision that has been made. The verified defects the same review found are
+listed under "retable" further down; they need fixing whichever way the
+decisions go.
+
+Surface counts at the time of the review:
+
+| Package    | Exported symbols | Notes                                       |
+| ---------- | ---------------- | ------------------------------------------- |
+| retable    | 63               | plus 32 methods on `csvtable.Writer`        |
+| csvtable   | 20               | 5 `Read*ToStructSlice` variants, 8 params   |
+| htmltable  | 9                | plus 22 methods on `Writer`                 |
+| exceltable | 6                | 2x2 matrix of reader functions              |
+| sqltable   | 4                | 15% coverage, 3 consumer call sites         |
+
+### Decide whether ReflectCell is part of View or not
+
+**What:** `View` has `Cell(row, col) any` and `ReflectCellView` adds `ReflectCell(row, col) reflect.Value`. Every view type and every wrapper implements both, and `AsReflectCellView` appears 56 times in consumer code, so the "optional optimization" is knowledge every caller needs. The halfway state is the worst option: two access paths to maintain, and consumers still have to know which one they hold.
+
+**Why:** This is the one decision that shapes every other type in the root package. If `ReflectCell` is in `View`, `AsReflectCellView` and `wrapAsReflectCellView` go away and every wrapper loses a method. If it is out, `ReflectValuesView`, `SingleReflectValueView`, `NewSingleReflectValueView` and `ExtraColsReflectValueFuncView` go away, and `reflect.Value` stops being part of the public data model. Either way the surface shrinks; only the current state keeps both.
+
+**Context:** Of the 14 view types, all but `AnyValuesView`, `ExtraColsView`, `ExtraRowsView`, `FilteredView` and `HeaderView` already implement `ReflectCell`. The cost `ReflectCellView` avoids is the interface boxing of `reflect.Value.Interface()` on `StructRowsView`, which is real for large struct slices but has never been measured. Recommendation: fold `ReflectCell` into `View`, because the package is named for reflection and every non-trivial view already pays for the method; measure the boxing cost first so the decision is backed by a number rather than a guess.
+
+**Effort:** S to decide, M to implement
+**Priority:** P1
+**Depends on:** None
+
+### Decide the Viewer model: generic or untyped, and one struct viewer type
+
+**What:** `Viewer.NewView(title string, table any) (View, error)` is untyped, so the type parameter of `csvtable.Writer[T]` and `htmltable.Writer[T]` buys nothing: `Write(ctx, dest, table T)` forwards `table` to `any`. Separately, `StructFieldNaming` and `StructRowsViewer` both implement `Viewer`, and `StructRowsViewer` embeds `StructFieldNaming`, so there are two types for the concept "make a View from a struct slice". `SelectViewer` is a mutable package-level function var that dispatches between `StringsViewer` and `&DefaultStructFieldNaming`.
+
+**Why:** A generic writer over an untyped viewer is a half-generic API that will confuse every reader of the signature. Two viewer types for structs doubles the `With*` methods and the docs. A mutable dispatch var means library code can change what every `PrintlnTable` in the process does; verified by setting `DefaultStructFieldNaming.Untagged` and watching `SelectViewer` produce a view with no columns.
+
+**Context:** Options: (a) drop the type parameter from both writers and keep `Viewer` untyped; (b) make the viewer generic, `func ViewOf[T any](title string, rows []T) (View, error)`, and keep `Writer[T]`; (c) keep everything. Recommendation: (a), because the writers never use `T` for anything, and a generic viewer cannot express `[][]string` and `[]Struct` through one interface without falling back to `any` anyway. Fold `StructFieldNaming`'s `NewView` into `StructRowsViewer` so only one type is a `Viewer`, and turn `SelectViewer` into either a parameter of the four `*Table` print functions or a registry with an explicit `Register` call.
+
+**Effort:** S to decide, M to implement
+**Priority:** P1
+**Depends on:** None
+
+### Decide how raw output is expressed, and whether Formatter survives
+
+**What:** `CellFormatter.FormatCell` returns `(str string, raw bool, err error)`. The `raw` flag is an HTML escaping concern living in the format-neutral core interface; its doc comment needs forty lines, and it means "do not quote" in `csvtable` and "do not escape" in `htmltable`. It doubles the surface everywhere it touches: `PrintfCellFormatter` and `PrintfRawCellFormatter`, `StringIfTrue` and `RawStringIfTrue`, `SprintCellFormatter(rawResult bool)`, `CellFormatterFromFormatter(f, rawResult)`, `ReflectCellFormatterFunc(fn, rawResult)`, and `WithTypeFormatterReflectFunc` beside `WithTypeFormatterReflectRawFunc` on both writers. Separately, `Formatter` (`Format(reflect.Value) (string, error)`) exists beside `CellFormatter` with two bridge functions between them, and is only consumed by `SmartAssign`'s `srcFormatter` parameter.
+
+**Why:** Every new formatter has to be written twice or take a bool, and every writer has to interpret the bool for its own format. One `Raw(CellFormatter) CellFormatter` wrapper, or a typed result such as `type RawString string` that the writer type-switches on, collapses all of the twins into single definitions. Removing `Formatter` removes two bridge functions and one of the five `SmartAssign` parameters.
+
+**Context:** The chain convention is also inconsistent and should be fixed in the same pass: `errors.ErrUnsupported` means "try the next formatter", but `LayoutFormatter` returns a hard error on a type mismatch and `StringIfTrue` panics on a non-bool cell (verified). Recommendation: keep the bool in the interface only if the alternative measurably complicates `TryFormattersOrSprint`; otherwise a `Raw` wrapper, one formatter per behavior, and a rule that a formatter which cannot handle the cell's type returns `ErrUnsupported`, never panics, never returns a hard error.
+
+**Effort:** S to decide, M to implement
+**Priority:** P1
+**Depends on:** None
+
+### Decide SmartAssign's name, contract and configuration before freezing it
+
+**What:** `SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcFormatter Formatter)` runs fifteen ordered strategies, turns panics into errors with a `recover()`, and has behavior that depends entirely on strategy order. Every CSV import in every consumer depends on those accidental details; the doc comment needs a paragraph to explain why `"NULL"` assigned to a `*string` yields a pointer to `"NULL"` rather than `nil` (verified).
+
+**Why:** Tagging v1 with the current function freezes the heuristics, not a contract. Any reordering to fix a bug becomes a breaking change, and there is no table a caller can consult to know what will happen to a given source and destination type pair.
+
+**Context:** Usage, checked 2026-09-06. Inside the module the only non-recursive caller is `ViewToStructSlice`. In the consumers there are two direct calls; everything else goes through `ViewToStructSlice` or the `csvtable` readers. The three collaborators `dstScanner`, `parser` and `srcFormatter` always travel together as a triple, through `ViewToStructSlice`, into `SmartAssign` and through its four recursive calls; `Scanner.ScanString` additionally receives the `Parser`. In every consumer call site read, `srcFormatter` is `nil`. `domonda-service/pkg/accounting/importparser.go` is a hundred-line comment plus two `StringParser` vars that exists only to explain how `Parser.IsNil`, the `StrictNilStrings` scanner and the zero-value strategy interact, and every import there overrides the default nil policy because `NULL` in a numeric column importing as `0` stored wrong account numbers. The "Passing any Scanner silently discards a configured DefaultParser" item below is the same triple assembled inconsistently.
+
+Name: the function converts a source value of any type into a destination of any type, parsing strings on the way. "Smart" names nothing. `database/sql` has the exact same shape and heuristic list as the unexported `convertAssign`, so `ConvertAssign` has precedent; if the function becomes a method, the type name carries the meaning and the method is `Assign`.
+
+Configuration and injection: yes, but of the inputs, never of the strategy order. Proposed shape:
+
+```go
+// A nil *Converter is valid and uses the defaults.
+type Converter struct {
+	Parser    Parser    // nil selects the default StringParser
+	Scanner   Scanner   // nil means no custom scanning
+	Formatter Formatter // nil means no custom formatting
+	StrictNil bool      // a nil string into a type that cannot hold absence is an error
+}
+
+func (c *Converter) Assign(dst, src reflect.Value) error
+
+type Assigner interface{ Assign(dst, src reflect.Value) error }
+```
+
+`ViewToStructSlice` and the readers take one `Assigner` (inside the options struct of the reader entry point item) instead of three positional parameters, so a consumer names its cell policy once, as `accounting.CSVImportConverter`, and injects a wholly different implementation if it wants to. `StrictNilStrings` becomes the `StrictNil` field, because it is a policy and not a scanner; given that every consumer import turns it on, it should probably be the v1 default, with `StrictNil: false` as the opt-in for the lenient behavior. Strategy order stays fixed and becomes the documented conversion table, source kind by destination kind, which is what tests pin.
+
+Options: (a) the conversion table as contract, implementation free to change; (b) unexport the reflect-level function and expose only the `Converter` method; (c) keep as is. Recommendation: (a) plus the `Converter` above, with the function itself unexported, because nothing outside the module needs a five-parameter reflect function once the method exists.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** The raw output decision, because it decides whether `Formatter` stays a field
+
+### Decide the reader entry point shape: options struct, one function per package
+
+**What:** `ViewToStructSlice[T]` takes six positional parameters plus a variadic; the README example passes five `nil` values in a row. `csvtable` has five `Read*ToStructSlice` functions (`Strings`, `Bytes`, `File`, times `WithFormat` and `DetectFormat`) with eight parameters each. `exceltable` has four functions, reader or filename times all sheets or first sheet, each with a bare `bool`.
+
+**Why:** Positional `nil` parameters cannot be extended without breaking every caller, and the combinatorial naming means each new input source or format mode multiplies the function count. This is the change that most reduces the exported symbol count and the one that is impossible after the tag.
+
+**Context:** Proposed shape: `type ReadOptions struct { Naming *StructFieldNaming; Scanner Scanner; Parser Parser; Validate func(reflect.Value) error; RequiredColumns []string }` in the root package, `ViewToStructSlice[T](view View, opts *ReadOptions)`, and in `csvtable` one `Read[T](r io.Reader, format *Format, opts *ReadOptions)` where a nil `format` means detect. That also settles the "File in the name" item above by removing the names. `exceltable` becomes `Read(r io.Reader, opts *ReadOptions) ([]View, error)` with `RawCellStrings` and `FirstSheetOnly` as fields, and the filename variants go, because `os.Open` is one line for the caller. Recommendation: do it; the sixteen consumer call sites of `ReadFileDetectFormatToStructSlice` are a mechanical rewrite.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** The SmartAssign decision, which fixes which fields the options struct has
+
+### Extract one formatting pipeline for both writers, and drop the Func and Raw twins
+
+**What:** `csvtable.Writer` (32 methods) and `htmltable.Writer` (22 methods) duplicate the viewer, column formatter, type formatter and nil fallback logic verbatim, including `cellString`, and have drifted: CSV `Write` takes no title while HTML `Write` takes `caption ...string` joined with a space; CSV has getters for seven fields but not `Padding` or `HeaderRow`; HTML `WithTemplate` names its first parameter `tableTemplate` but sets `headerTemplate`; CSV's `headerWriter` drops column formatters but keeps type formatters, so a `string` kind formatter is applied to header names. Every `WithXFormatter` has a `WithXFormatterFunc` twin that only saves the caller a type conversion, and the `WithTypeFormatterReflectFunc` variants panic on a bad function signature in the middle of a builder chain.
+
+**Why:** Two copies of the same pipeline means every formatter fix lands twice or once, and the drift above shows it has already landed once. The twins are roughly a third of the writer surface and carry no behavior.
+
+**Context:** Proposed: a `retable.CellPipeline` (name open) holding column formatters, a `ReflectTypeCellFormatter` and the nil value, with `FormatCell` returning the final string and raw flag, embedded by both writers. Both writers keep their format-specific `With*` methods only. Delete the `Func` twins and let callers write `retable.CellFormatterFunc(f)`. Replace the two `ReflectFunc` methods with one that returns an error, or keep the panic and document that it is a programming error like `template.Must`.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** The raw output decision
+
+### Finish the column naming rename and give the wrappers one construction style
+
+**What:** The interface says `ColumnNames()` and `NumColumns()`, but the fields are still `Cols` on `StringsView`, `AnyValuesView`, `ReflectValuesView`, `HeaderView` and `StringsViewer`, `Col` on `SingleReflectValueView`, the parameter is `columns` on `NewStructRowsView`, the method is `StructFieldNaming.Columns`, the parameter is `requiredCols` on `ViewToStructSlice`, and the types are `ExtraColsView`, `SingleColView` and `ExtraColsAnyValueFuncView`. The wrappers have no consistent shape: `FilteredView`, `ExtraColsView` and `ExtraRowsView` are exported structs or slices built as literals; `DerefView`, `ViewWithTitle`, `ExtraColsAnyValueFuncView` and `SingleColView` are constructor functions returning `View` or `ReflectCellView`, inconsistently. `SingleColView`, `SingleCellView` and `SingleReflectValueView` are three types for one column, and the generic one has a runtime special case for `T == reflect.Value`. `FilteredView` has no predicate; it does offset, limit and column projection. `HeaderView` models the header as a one-row view so formatters can run on it, which is an internal trick that is exported.
+
+**Why:** A rename that stops at the interface leaves the package speaking two vocabularies, and it is only free before the tag. The wrapper inconsistency means a reader cannot tell from a name whether they get a value they can mutate or an opaque interface.
+
+**Context:** Recommendation: `Columns` everywhere (field, parameter, type name) to match the method; constructor functions for every wrapper, returning the concrete pointer type, with the struct fields unexported; rename `FilteredView` to `SliceView` or `ProjectionView`; keep one generic single-column type and drop the `reflect.Value` special case once the `ReflectCell` decision is made; unexport `HeaderView` or rename it to say what it is for.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** The ReflectCell decision
+
+### Decide the fate of the mutable package globals
+
+**What:** `SelectViewer`, `DefaultParser`, `DefaultStructFieldNaming`, `DefaultStructFieldNamingIgnoreUntagged`, `htmltable.HeaderTemplate`, `RowTemplate` and `FooterTemplate`, and the `htmltable` formatter `var`s of func type (`HTMLPreCellFormatter`, `HTMLPreCodeCellFormatter`, `ValueAsHTMLAnchorCellFormatter`) are all mutable package state.
+
+**Why:** Every one of them is a data race the moment a library and an application both touch it, and the "Passing any Scanner silently discards a configured DefaultParser" item below is the first bug of that class already on the list. `DefaultStructFieldNaming` is the address `SelectViewer` returns, so mutating the var changes every default view in the process (verified).
+
+**Context:** Options per global: make it a function returning a fresh value (`DefaultParser()`), make it a constant-like unexported value with an exported accessor, or make it a parameter. The templates are the hardest case because `WithTemplate` already exists as the per-writer override, so the globals can become unexported defaults. The formatter vars can be funcs. Recommendation: no exported mutable var in the root package at v1.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** The Viewer decision, which settles `SelectViewer`
+
+### Decide the fate of sqltable and the subpackage asymmetry
+
+**What:** `sqltable` is a regexp `SELECT` parser whose `parseQuery` returns `offset` and `limit` that are always zero, has 15% coverage, and three consumer call sites. Across the subpackages: CSV reads and writes, HTML only writes, Excel only reads and returns every cell as a string even with `rawCellStrings=false`, and compacts empty rows and columns so indices no longer match the sheet. `exceltable` exports `type ErrSheetNotExist = excelize.ErrSheetNotExist`, leaking the dependency's type into the API. `csvtable.Encoder` is a bespoke `Bytes([]byte) ([]byte, error)` interface where `golang.org/x/text/transform.Transformer` already exists. `csvtable.Writer` defaults to `;` and `\r\n`, a German Excel convention rather than RFC 4180. `csvtable.Format.Encoding` and `FormatDetectionConfig.Encodings` are stringly typed.
+
+**Why:** A v1 promises each of these as they are. `sqltable` in particular is the least tested code in the module and the only subpackage whose defects surface inside `database/sql` where the caller cannot step in.
+
+**Context:** Recommendation: move `sqltable` into its own module like `exceltable`, which lets it version separately and keeps the root module free of it, or drop it if the three call sites can use `ScanRowsAsView` alone. Drop the `ErrSheetNotExist` alias and wrap the excelize error. Keep the `;` default only if the decision is recorded as deliberate; otherwise default to `,` and `\n`. Replace `Encoder` with `transform.Transformer`. Turn the encoding names into a typed enum with the five supported values.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** None
+
+### Trim the utility grab-bag in the root package
+
+**What:** `Option` is a bit-flag enum with exactly one value, `OptionAddHeaderRow`, plus a `HasOption` helper, used by one function. `SpacePascalCase` turns `HTTPServer` into `H T T P Server` by documented design and is the default `Untagged` function, while `SpaceGoCase` handles acronyms correctly. There are three empty-row removers with three semantics: `retable.RemoveEmptyStringRows` mutates in place, `csvtable.RemoveEmptyRows` allocates, `csvtable.SetEmptyRowsNil` nils the rows. `csvtable` also exports `CompactSpacedStrings`, `ReplaceNewlineWithSpace`, its typo alias `ReplaceNewlineWithSpacefunc`, `TrimSpace` and `SetRowsWithNonUniformColumnsNil` as ad hoc `[][]string` cleanups. The struct reflection helpers `StructFieldTypes`, `StructFieldReflectValues`, `IndexedStructFieldReflectValues`, `StructFieldAnyValues`, `IndexedStructFieldAnyValues` and `StructFieldIndex` are internals of `StructRowsView`; only `MustStructFieldIndex` is load-bearing, with twenty consumer uses for `WithIgnoreField`.
+
+**Why:** Each of these is a name the tag makes permanent. The `Option` type in particular will look like the start of a system that never came.
+
+**Context:** Recommendation: `OptionAddHeaderRow` becomes a `bool` parameter or the header handling moves into the pipeline; `SpaceGoCase` becomes the default and `SpacePascalCase` is either fixed or removed; one row cleanup family in one package, non-mutating, or as `View` wrappers; unexport the struct reflection helpers except `StructFieldIndex` and `MustStructFieldIndex`.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** The reader entry point decision, which owns the row cleanup functions
 
 ## sqltable
 
@@ -180,6 +341,66 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 
 **Effort:** S
 **Priority:** P2
+**Depends on:** None
+
+### StructRowsViewer rejects arrays that its error message says it accepts
+
+**What:** `StructRowsViewer.NewView` checks `rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array`, which is true for every array, so `[2]struct{...}` is rejected with "table must be slice or array kind".
+
+**Why:** The doc comment, the error message and `NewStructRowsView`, which accepts arrays, all say arrays work. Reproduced during the API review of 2026-09-06.
+
+**Context:** One-character fix at `structrowsviewer.go:141`: `&&` instead of `||`. Add a test with an array so the message and the check agree.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+### Wrappers panic where View promises nil
+
+**What:** `View.Cell` documents that out-of-bounds access returns `nil`. At the time of the review, `DerefView.Cell` panicked for an out-of-bounds coordinate ("call of reflect.Value.Elem on zero Value") and for a nil pointer cell ("call of reflect.Value.Interface on zero Value"), `FilteredView.ColumnNames` and `Cell` panicked with an index out of range when `ColumnMapping` held an index the source does not have, and `StringIfTrue` and `RawStringIfTrue` panicked on any non-bool cell. All four reproduced.
+
+**Why:** The `nil`-for-out-of-bounds contract is the reason `View` has no error returns; a wrapper that panics instead breaks that contract for every consumer that wraps a view it did not build. `DerefView`'s own doc lists the panics, which documents the defect rather than fixing it.
+
+**Context:** The out-of-bounds cases of `DerefView` and the `ColumnMapping` case of `FilteredView` are being fixed in the working tree as of 2026-09-06 (see the "Unreleased" section of `CHANGELOG.md`); that change keeps the nil pointer panic in `DerefView.Cell` on purpose, as a defect of the cell rather than of the position. Still open after it: whether a nil pointer read through `DerefView.Cell` should be `nil` too, since a `View` consumer cannot know the cell is a pointer, and the two `StringIfTrue` formatters, which should return `errors.ErrUnsupported` as the raw output decision above sets as the rule. `FilteredView` should additionally validate `ColumnMapping` once, in a constructor, which the "one construction style" item above proposes anyway.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** None for the fixes; the constructor and formatter rules above for the shape
+
+### NewHeaderView trims the caller's slice in place
+
+**What:** `NewHeaderView(cols ...string)` writes `strings.TrimSpace(col)` back into `cols[i]`, so a caller that passes a slice with `...` has its slice modified. Reproduced: `[" a ", " b "]` becomes `["a", "b"]` in the caller.
+
+**Why:** A constructor with a hidden side effect on its argument. `NewStringsView` copies before trimming; this one does not.
+
+**Context:** Copy first, as `NewStringsView` does.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### RemoveEmptyStringRows corrupts the input's backing array
+
+**What:** `RemoveEmptyStringRows` removes rows with `append(rows[:i], rows[i+1:]...)` and returns the shortened slice, leaving the caller's original slice with a duplicated tail. Reproduced: input `[[a] [] [b]]` returns `[[a] [b]]` and leaves the original as `[[a] [b] [b]]`.
+
+**Why:** In-place slice deletion that the caller cannot see. `exceltable.readSheet` relies on it, so an Excel read leaves `excelize`'s row slice in that state, which is harmless there only because nothing reads it again.
+
+**Context:** Either document the in-place semantics and the aliasing, or allocate. The "utility grab-bag" item above proposes one non-mutating row cleanup family, which would resolve this by deletion.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### StringsViewer documents default column names it never produces
+
+**What:** The `StringsViewer` doc says that when `Cols` has fewer entries than the data has columns, "remaining columns will use default names". `NewStringsView` sets the column count to `len(cols)`, so the extra data columns are unreachable: `Cell(0, 1)` returns `nil` for a view with one name over three-column rows. Reproduced.
+
+**Why:** A caller reading the doc will build a partial header and lose data silently.
+
+**Context:** Either generate names for the extra columns, or reject the mismatch with an error from `NewView`, or fix the doc to say the columns are dropped. The third is the smallest and the least useful.
+
+**Effort:** S
+**Priority:** P3
 **Depends on:** None
 
 ## Completed
