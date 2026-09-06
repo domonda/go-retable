@@ -81,7 +81,8 @@ var _ View = new(FilteredView)
 //   - Negative RowOffset is treated as 0
 //   - RowOffset beyond source length results in 0 rows
 //   - Out-of-bounds cell access returns nil
-//   - Invalid column mapping indices will panic on Cell() access
+//   - A column mapping index outside the Source columns is an empty column
+//     name and a nil cell, not a panic
 //
 // # Composition
 //
@@ -136,8 +137,11 @@ type FilteredView struct {
 	//   ColumnMapping: []int{2,0} -> [2, 0] (columns 2 and 0, reordered)
 	//   ColumnMapping: []int{1,1} -> [1, 1] (column 1 duplicated)
 	//
-	// WARNING: Invalid indices (negative or >= Source.NumColumns()) will cause
-	// panics when accessing cells or column names.
+	// An index outside the Source columns (negative or >= Source.NumColumns())
+	// selects no source column: ColumnNames reports it as an empty name and
+	// Cell as nil, the same as a position outside the view. The column still
+	// counts towards NumColumns, so a mistyped index shows an empty column
+	// rather than shifting the ones after it.
 	ColumnMapping []int
 }
 
@@ -151,6 +155,9 @@ func (view *FilteredView) Title() string {
 //
 // If ColumnMapping is nil, returns all columns from Source in their original order.
 // If ColumnMapping is set, returns only the mapped columns in the specified order.
+//
+// A mapping index outside the source columns yields an empty name instead of
+// panicking, mirroring Cell, which yields nil for the same column.
 //
 // The returned slice is newly allocated and safe to modify.
 //
@@ -166,6 +173,9 @@ func (view *FilteredView) ColumnNames() []string {
 	}
 	mappedCols := make([]string, len(view.ColumnMapping))
 	for i, iSource := range view.ColumnMapping {
+		if iSource < 0 || iSource >= len(sourceCols) {
+			continue
+		}
 		mappedCols[i] = sourceCols[iSource]
 	}
 	return mappedCols
@@ -222,6 +232,7 @@ func (view *FilteredView) NumRows() int {
 //   - row or col are negative
 //   - row >= NumRows()
 //   - col >= NumColumns()
+//   - col maps to a column outside the Source
 //   - The underlying Source cell is nil
 //
 // The method translates coordinates before accessing Source:
@@ -257,6 +268,11 @@ func (view *FilteredView) Cell(row, col int) any {
 	row += max(view.RowOffset, 0)
 	if view.ColumnMapping != nil {
 		col = view.ColumnMapping[col]
+		if col < 0 || col >= view.Source.NumColumns() {
+			// A mapping index outside the source selects no column,
+			// which has no value, like a position outside the view
+			return nil
+		}
 	}
 	return view.Source.Cell(row, col)
 }

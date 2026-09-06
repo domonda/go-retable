@@ -32,6 +32,10 @@ import "reflect"
 //   - A cell contains a nil pointer and you try to access it
 //   - The reflect.Value.Elem() operation is invalid for the value type
 //
+// All three are about what a cell contains. A position outside the source is
+// not one of them: it has no cell to dereference and is reported as no value,
+// like every other View reports it.
+//
 // # Example: Dereferencing Pointer Structs
 //
 //	type Person struct {
@@ -124,7 +128,10 @@ func (v derefView) NumRows() int { return v.source.NumRows() }
 //  2. Calls .Elem() to dereference it
 //  3. Calls .Interface() to extract the concrete value
 //
-// Returns nil if the source cell is out of bounds.
+// Returns nil if the source has no value at the position, which is the case
+// for an out of bounds row or col and for a cell holding a nil interface.
+// There is nothing to dereference in either case, and the View contract
+// reports both as nil.
 //
 // PANICS if:
 //   - The cell value cannot be dereferenced (not a pointer/interface)
@@ -135,7 +142,11 @@ func (v derefView) NumRows() int { return v.source.NumRows() }
 //	source.Cell(0, 0) -> &Person{Name: "Alice"}
 //	deref.Cell(0, 0)  -> Person{Name: "Alice"}
 func (v derefView) Cell(row, col int) any {
-	return v.source.ReflectCell(row, col).Elem().Interface()
+	cell := v.source.ReflectCell(row, col)
+	if !cell.IsValid() {
+		return nil
+	}
+	return cell.Elem().Interface()
 }
 
 // ReflectCell returns the dereferenced reflect.Value at the specified position.
@@ -148,6 +159,10 @@ func (v derefView) Cell(row, col int) any {
 //  2. Calls .Elem() to dereference the value
 //  3. Returns the dereferenced reflect.Value
 //
+// Returns the invalid zero reflect.Value if the source has no value at the
+// position, which is the case for an out of bounds row or col and for a cell
+// holding a nil interface.
+//
 // PANICS if:
 //   - The cell value cannot be dereferenced
 //   - The cell contains a nil pointer
@@ -159,5 +174,9 @@ func (v derefView) Cell(row, col int) any {
 //	    // Safe to use
 //	}
 func (v derefView) ReflectCell(row, col int) reflect.Value {
-	return v.source.ReflectCell(row, col).Elem()
+	cell := v.source.ReflectCell(row, col)
+	if !cell.IsValid() {
+		return reflect.Value{}
+	}
+	return cell.Elem()
 }

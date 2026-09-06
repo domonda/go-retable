@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Fixed
+
+- A position outside a view is nil in the two decorators that panicked for it,
+  which is what `View.Cell` and `ReflectCellView.ReflectCell` document for every
+  implementation. A caller cannot tell a decorated view from an undecorated one
+  through the interface, so the two had to be reachable the same way.
+
+  - `DerefView` called `reflect.Value.Elem` on whatever the source returned, and
+    the source returns the invalid zero `reflect.Value` for a position it does
+    not have, which made `Cell` and `ReflectCell` panic with "call of
+    reflect.Value.Elem on zero Value" instead of returning nil. A cell holding a
+    nil interface arrives as that same invalid value and is now nil as well. The
+    panics the decorator documents are unchanged: a cell that is not a pointer or
+    interface, and a nil pointer read through `Cell`, both still panic, because
+    they are about what a cell contains rather than about whether it exists.
+  - `FilteredView.ColumnNames` indexed the source column names with each
+    `ColumnMapping` entry unchecked, so an index outside the source panicked with
+    a runtime index error while `Cell` returned nil for the same column. An index
+    outside the source is now an empty column name and a nil cell. It keeps its
+    place in the mapping, so a mistyped index shows one empty column instead of
+    shifting every column after it, and `Cell` no longer passes an index it knows
+    is out of range down to the source.
+
 ## 2026-09-03
 
 Released by merging to `main`. Not tagged: this repository carries no version

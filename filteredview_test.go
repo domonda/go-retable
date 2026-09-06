@@ -129,6 +129,22 @@ func TestFilteredViewRowsAndColumnsTogether(t *testing.T) {
 	require.Equal(t, "a2", view.Cell(1, 1))
 }
 
+// A mapping index that is not a source column is a caller mistake, but
+// the View contract has no way to report one, so it must not be a panic:
+// ColumnNames is read before the rows are written, so panicking there
+// takes down the whole table for one mistyped index instead of showing
+// the column empty.
+func TestFilteredViewColumnMappingOutOfRange(t *testing.T) {
+	for _, index := range []int{3, 99, -1} {
+		view := &FilteredView{Source: filteredSource(), ColumnMapping: []int{1, index}}
+
+		require.Equalf(t, []string{"B", ""}, view.ColumnNames(), "mapping index %d", index)
+		require.Equalf(t, 2, view.NumColumns(), "mapping index %d keeps its place", index)
+		require.Equalf(t, "b0", view.Cell(0, 0), "mapping index %d must not shift the valid column", index)
+		require.Nilf(t, view.Cell(0, 1), "mapping index %d", index)
+	}
+}
+
 func TestFilteredViewOutOfRange(t *testing.T) {
 	view := &FilteredView{Source: filteredSource(), RowOffset: 1, RowLimit: 2}
 
