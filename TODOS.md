@@ -452,6 +452,32 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 **Priority:** P3
 **Depends on:** None
 
+## Future adapters
+
+### Add JSON and JSON Lines table readers
+
+**What:** Add a `jsontable` adapter for a normal JSON document containing an array of row objects, and for JSON Lines (`.jsonl`/`.ndjson`) containing one row object per line. Both forms become an in-memory `retable.View`; JSON `null` remains a nil cell, while scalar values retain their JSON types so the `Converter` controls the destination assignment.
+
+**Why:** JSON is a common tabular interchange format, but decoding it directly into a struct slice bypasses the package's header validation, column selection, null handling and error reporting. JSON Lines is especially useful for exports and logs because it can be decoded incrementally even though the final `View` is materialized in memory.
+
+**Context:** Give the reader one options value with a format selector or auto-detection, a maximum input/row limit, and an explicit column policy. Object keys do not provide a schema: with no configured columns, gather keys in first-seen order across the input; with configured columns, preserve that order and either ignore or reject unknown keys. Reject non-object rows and nested arrays/objects by default rather than stringify them implicitly; a deliberate `json.RawMessage` or JSON-text option can add that behavior later. Include fixtures for missing versus null fields, ragged objects, numbers, escapes, duplicate keys, invalid JSON, invalid JSONL line numbers and a final line without a newline.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** The `ReadOptions`/single-reader entry-point decision above
+
+### Add Google Sheets and Microsoft Graph Excel readers
+
+**What:** Add separate, optional cloud adapters that fetch a bounded online spreadsheet range once and return an in-memory `retable.View`: `googlesheettable` for the Google Sheets API and `graphtable` for the Microsoft Graph Excel workbook API. Neither adapter owns OAuth, stores refresh tokens or makes a request from `View.Cell`; callers supply an authenticated HTTP client, spreadsheet/workbook identifier and explicit A1 range(s).
+
+**Why:** The core `View` contract is synchronous, error-free and in-memory after construction. A remote-cell implementation would violate that contract with hidden latency, retry and authentication failures. Materializing selected ranges gives Google Sheets and Excel Online the same import path as CSV and XLSX while keeping cloud SDK and OAuth dependencies out of the root module.
+
+**Context:** Google reads should use `spreadsheets.values.batchGet`, with a documented choice between formatted, unformatted and formula values; writes, if added, use `batchUpdate`. Authentication is either user OAuth or a service account shared on the target spreadsheet. Microsoft Graph reads and writes worksheet ranges directly in a OneDrive for Business or SharePoint `.xlsx` workbook using delegated OAuth; its workbook endpoints do not support application-only permissions and do not support `.xls`. For unattended Microsoft imports, use the Graph Drive API to download the file under application permissions and pass it to the file-format adapter instead. Test both adapters against a local HTTP server for pagination, range names with escaping, short rows, rate limits, cancellation and provider error mapping; use separate live smoke tests with non-secret fixtures.
+
+**Effort:** L
+**Priority:** P2
+**Depends on:** The `ReadOptions`/single-reader entry-point decision above
+
 ## Completed
 
 ### A failed string to number parse is reported as an unsupported operation
@@ -482,6 +508,7 @@ mismatch still carries no reason.
 
 **Completed:** 2026-09-03
 
+
 ### Writer.WithTemplate silently discards its arguments
 
 **What:** `htmltable/writer.go` `WithTemplate` built `mod := w.clone()`, assigned all three templates to `mod`, and returned `w`. Every custom template passed to it was dropped, and `w.WithTemplate(...) == w` was true, which broke the immutability contract every other `With` method on the type follows.
@@ -491,4 +518,3 @@ mismatch still carries no reason.
 **Resolution:** `return mod`, plus a nil argument now leaves that template unchanged rather than being stored, which would have turned a previously harmless `WithTemplate(nil, rowTmpl, nil)` into a nil dereference after rows were already flushed. Two tests added in `htmltable/writer_test.go`: one asserting custom templates reach the output, one asserting the receiver is unchanged and the returned writer is a distinct value. Both fail against the old code. An audit of every `With` method in `htmltable/writer.go`, `csvtable/writer.go` and `structrowsviewer.go` found no other instance: every other method that doesn't return a clone delegates to one that does. Verified that fixing it opens no injection hole, because `html/template` re-escapes `template.HTML` contextually in attribute and script contexts.
 
 **Completed:** 2026-09-03
-
