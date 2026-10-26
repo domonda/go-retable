@@ -85,7 +85,7 @@ type StringsViewer struct {
 //	}
 //
 //	fmt.Println(view.Title())    // "Inventory"
-//	fmt.Println(view.Columns())  // ["Product", "Price", "Stock"]
+//	fmt.Println(view.ColumnNames())  // ["Product", "Price", "Stock"]
 //	fmt.Println(view.NumRows())  // 3
 //
 //	// Access data through the View interface

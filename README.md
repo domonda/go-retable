@@ -116,7 +116,7 @@ for _, sheet := range sheets {
     fmt.Printf("Sheet: %s (%d rows, %d cols)\n",
         sheet.Title(),
         sheet.NumRows(),
-        len(sheet.Columns()))
+        sheet.NumColumns())
 }
 
 // Read first sheet only
@@ -177,9 +177,10 @@ The `View` interface is the heart of go-retable. It represents any tabular data 
 
 ```go
 type View interface {
-    Title() string      // Table name/title
-    Columns() []string  // Column names
-    NumRows() int       // Number of data rows
+    Title() string         // Table name/title
+    ColumnNames() []string // Column names
+    NumColumns() int       // Number of columns
+    NumRows() int          // Number of data rows
     Cell(row, col int) any // Get cell value
 }
 ```
@@ -241,7 +242,7 @@ withTotal := retable.ExtraColsReflectValueFuncView(
 joined := retable.ExtraColsView{view1, view2, view3}
 
 // Concatenate views vertically (like SQL UNION)
-combined := retable.ExtraRowView{viewA, viewB, viewC}
+combined := retable.ExtraRowsView{viewA, viewB, viewC}
 ```
 
 ### Cell Formatters

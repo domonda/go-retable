@@ -12,14 +12,14 @@ import (
 func TestDerefView(t *testing.T) {
 	a, b := "Erik", "Ann"
 	source := &AnyValuesView{
-		Tit:  "People",
-		Cols: []string{"Name"},
-		Rows: [][]any{{&a}, {&b}},
+		TableTitle: "People",
+		Cols:       []string{"Name"},
+		Rows:       [][]any{{&a}, {&b}},
 	}
 	view := DerefView(source)
 
 	require.Equal(t, "People", view.Title(), "the decorator passes the title through")
-	require.Equal(t, []string{"Name"}, view.Columns())
+	require.Equal(t, []string{"Name"}, view.ColumnNames())
 	require.Equal(t, 2, view.NumRows())
 
 	require.Equal(t, "Erik", view.Cell(0, 0), "the pointed-to value, not the pointer")
@@ -68,10 +68,32 @@ func TestDerefViewDocumentedPanics(t *testing.T) {
 		// but reading it as any has no value to unwrap
 		require.Panics(t, func() { view.Cell(0, 0) })
 	})
+}
 
-	t.Run("a position outside the source has no cell", func(t *testing.T) {
-		view := DerefView(NewStringsView("", [][]string{{"A"}, {"plain"}}))
-		require.Panics(t, func() { view.Cell(5, 0) })
-		require.Panics(t, func() { view.Cell(0, 5) })
-	})
+// A position outside the source is not one of the documented panics: it
+// has no cell to dereference, and View.Cell promises nil for it, which a
+// writer iterating a wrapped view relies on the same way it does for the
+// undecorated one.
+func TestDerefViewOutOfRange(t *testing.T) {
+	view := DerefView(NewStringsView("", [][]string{{"A"}, {"plain"}}))
+
+	for _, pos := range [][2]int{{-1, 0}, {0, -1}, {5, 0}, {0, 5}} {
+		row, col := pos[0], pos[1]
+		require.Nilf(t, view.Cell(row, col), "Cell(%d, %d)", row, col)
+		require.Falsef(t, view.ReflectCell(row, col).IsValid(), "ReflectCell(%d, %d)", row, col)
+	}
+}
+
+// A cell holding a nil interface has no value either, so it is reported
+// like an out of range position rather than dereferenced. This is the
+// same case as out of range for the decorator, because both reach it as
+// an invalid reflect.Value from the source.
+func TestDerefViewOfNilInterfaceCell(t *testing.T) {
+	source := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{nil}}}
+	require.False(t, AsReflectCellView(source).ReflectCell(0, 0).IsValid(),
+		"the fixture needs a cell without a value")
+
+	view := DerefView(source)
+	require.Nil(t, view.Cell(0, 0))
+	require.False(t, view.ReflectCell(0, 0).IsValid())
 }

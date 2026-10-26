@@ -81,7 +81,8 @@ var _ View = new(FilteredView)
 //   - Negative RowOffset is treated as 0
 //   - RowOffset beyond source length results in 0 rows
 //   - Out-of-bounds cell access returns nil
-//   - Invalid column mapping indices will panic on Cell() access
+//   - A column mapping index outside the Source columns is an empty column
+//     name and a nil cell, not a panic
 //
 // # Composition
 //
@@ -122,11 +123,11 @@ type FilteredView struct {
 	// If nil:
 	//   - All columns from Source are included
 	//   - Columns appear in their original order
-	//   - NumCols() returns len(Source.Columns())
+	//   - NumColumns() returns len(Source.ColumnNames())
 	//
 	// If not nil:
 	//   - Only mapped columns are included
-	//   - len(ColumnMapping) determines NumCols()
+	//   - len(ColumnMapping) determines NumColumns()
 	//   - Each element is an index into Source's columns
 	//   - Columns can be reordered or duplicated
 	//
@@ -136,8 +137,11 @@ type FilteredView struct {
 	//   ColumnMapping: []int{2,0} -> [2, 0] (columns 2 and 0, reordered)
 	//   ColumnMapping: []int{1,1} -> [1, 1] (column 1 duplicated)
 	//
-	// WARNING: Invalid indices (negative or >= Source.NumCols()) will cause
-	// panics when accessing cells or column names.
+	// An index outside the Source columns (negative or >= Source.NumColumns())
+	// selects no source column: ColumnNames reports it as an empty name and
+	// Cell as nil, the same as a position outside the view. The column still
+	// counts towards NumColumns, so a mistyped index shows an empty column
+	// rather than shifting the ones after it.
 	ColumnMapping []int
 }
 
@@ -147,42 +151,48 @@ func (view *FilteredView) Title() string {
 	return view.Source.Title()
 }
 
-// Columns returns the column names for this filtered view.
+// ColumnNames returns the column names for this filtered view.
 //
 // If ColumnMapping is nil, returns all columns from Source in their original order.
 // If ColumnMapping is set, returns only the mapped columns in the specified order.
+//
+// A mapping index outside the source columns yields an empty name instead of
+// panicking, mirroring Cell, which yields nil for the same column.
 //
 // The returned slice is newly allocated and safe to modify.
 //
 // Example:
 //
-//	source.Columns() -> ["A", "B", "C", "D"]
+//	source.ColumnNames() -> ["A", "B", "C", "D"]
 //	view := &FilteredView{Source: source, ColumnMapping: []int{3, 1}}
-//	view.Columns() -> ["D", "B"]
-func (view *FilteredView) Columns() []string {
-	sourceCols := view.Source.Columns()
+//	view.ColumnNames() -> ["D", "B"]
+func (view *FilteredView) ColumnNames() []string {
+	sourceCols := view.Source.ColumnNames()
 	if view.ColumnMapping == nil {
 		return sourceCols
 	}
 	mappedCols := make([]string, len(view.ColumnMapping))
 	for i, iSource := range view.ColumnMapping {
+		if iSource < 0 || iSource >= len(sourceCols) {
+			continue
+		}
 		mappedCols[i] = sourceCols[iSource]
 	}
 	return mappedCols
 }
 
-// NumCols returns the number of columns in this filtered view.
+// NumColumns returns the number of columns in this filtered view.
 //
 // If ColumnMapping is nil, returns the number of columns in Source.
 // If ColumnMapping is set, returns len(ColumnMapping).
 //
-// This method is more efficient than len(view.Columns()) as it avoids
+// This method is more efficient than len(view.ColumnNames()) as it avoids
 // allocating the column name slice.
-func (view *FilteredView) NumCols() int {
+func (view *FilteredView) NumColumns() int {
 	if view.ColumnMapping != nil {
 		return len(view.ColumnMapping)
 	}
-	return len(view.Source.Columns())
+	return view.Source.NumColumns()
 }
 
 // NumRows returns the number of rows visible in this filtered view after
@@ -221,7 +231,8 @@ func (view *FilteredView) NumRows() int {
 // Returns nil if:
 //   - row or col are negative
 //   - row >= NumRows()
-//   - col >= NumCols()
+//   - col >= NumColumns()
+//   - col maps to a column outside the Source
 //   - The underlying Source cell is nil
 //
 // The method translates coordinates before accessing Source:
@@ -250,13 +261,18 @@ func (view *FilteredView) NumRows() int {
 //	filtered.Cell(2, 0) -> nil   (row 2 is out of bounds in filtered view)
 func (view *FilteredView) Cell(row, col int) any {
 	numRows := view.NumRows()
-	numCols := view.NumCols()
+	numCols := view.NumColumns()
 	if row < 0 || col < 0 || row >= numRows || col >= numCols {
 		return nil
 	}
 	row += max(view.RowOffset, 0)
 	if view.ColumnMapping != nil {
 		col = view.ColumnMapping[col]
+		if col < 0 || col >= view.Source.NumColumns() {
+			// A mapping index outside the source selects no column,
+			// which has no value, like a position outside the view
+			return nil
+		}
 	}
 	return view.Source.Cell(row, col)
 }

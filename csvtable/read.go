@@ -1,10 +1,10 @@
 package csvtable
 
 import (
+	"io"
 	"reflect"
 
 	"github.com/domonda/go-retable"
-	"github.com/ungerik/go-fs"
 )
 
 // ReadStringsToStructSlice converts parsed CSV rows into a slice of structs.
@@ -42,8 +42,8 @@ func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, nam
 	return ReadStringsToStructSlice[T](rows, naming, dstScanner, parser, srcFormatter, validate, requiredCols...)
 }
 
-func ReadFileWithFormatToStructSlice[T any](csvFile fs.FileReader, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
-	data, err := csvFile.ReadAll()
+func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
+	data, err := io.ReadAll(csvReader)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +59,8 @@ func ReadBytesDetectFormatToStructSlice[T any](csvData []byte, detectConfig *For
 	return slice, format, err
 }
 
-func ReadFileDetectFormatToStructSlice[T any](csvFile fs.FileReader, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, *Format, error) {
-	data, err := csvFile.ReadAll()
+func ReadFileDetectFormatToStructSlice[T any](csvReader io.Reader, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, *Format, error) {
+	data, err := io.ReadAll(csvReader)
 	if err != nil {
 		return nil, nil, err
 	}

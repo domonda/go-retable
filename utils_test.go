@@ -312,8 +312,8 @@ func equalStringRows(a, b [][]string) bool {
 
 func ExamplePrintlnView() {
 	PrintlnView(&StringsView{
-		Tit:  "ExamplePrintlnView",
-		Cols: []string{"A", "B", "C"},
+		TableTitle: "ExamplePrintlnView",
+		Cols:       []string{"A", "B", "C"},
 		Rows: [][]string{
 			{"1", "2222222222", "3"},
 			{"", "", "3333"},
@@ -412,6 +412,6 @@ func TestNoTagsStructRowsViewer(t *testing.T) {
 	}
 	view, err := NoTagsStructRowsViewer().NewView("", []Person{{Name: "Erik", Age: 42}})
 	require.NoError(t, err)
-	require.Equal(t, []string{"Name", "Age"}, view.Columns(), "the col tags must be ignored")
+	require.Equal(t, []string{"Name", "Age"}, view.ColumnNames(), "the col tags must be ignored")
 	require.Equal(t, 1, view.NumRows())
 }
