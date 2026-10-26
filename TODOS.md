@@ -26,18 +26,6 @@
 **Priority:** P1
 **Depends on:** None
 
-### The breaking API changes are not in the changelog
-
-**What:** `CHANGELOG.md` has one section, `## 2026-09-02`, already marked released, and no mention of `ColumnNames`, `NumColumns`, `TableTitle`, `ExtraRowsView`, the dropped `SprintlnView` parameter or the `go-fs` removal.
-
-**Why:** These are the only changes in the repository's history that break a caller's build. A consumer upgrading across them gets compile errors with nothing in the changelog explaining which name replaced which, which is the one situation the file exists for.
-
-**Context:** Needs a new unreleased section rather than an edit to the released one. Each entry can be short, but has to name both sides of the rename so the fix is mechanical for the reader.
-
-**Effort:** S
-**Priority:** P1
-**Depends on:** None
-
 ### CI never tests exceltable and has never run gosec
 
 **What:** `.github/workflows/go.yml` runs `go test ./...` from the root, which resolves to four packages; `exceltable` is a separate module and is not among them. `.github/workflows/gosec.yml` triggers on `master` while the default branch is `main`, so it has no runs at all. `codeql-analysis.yml` pins `github/codeql-action/*@v1`, which is retired, and `setup-go` pins Go 1.23 against a `go.mod` that requires 1.26, passing only because the toolchain directive downloads 1.26.

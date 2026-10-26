@@ -4,7 +4,64 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [1.0.0-beta.1] - 2026-10-26
+
+The first tagged release, as `v1.0.0-beta.1` for the root module and
+`exceltable/v1.0.0-beta.1` for the submodule. Every release before it was a
+merge to `main` that consumers resolved as a pseudo-version. `go get` selects a
+prerelease only when it is asked for by name, so nobody on a pseudo-version is
+moved onto it:
+
+```sh
+go get github.com/domonda/go-retable@v1.0.0-beta.1
+```
+
+It settles the exported names that v1.0.0 will make permanent. A later beta can
+still change names, because the decisions listed under "v1 release" and "v1 API
+design" in `TODOS.md` are open.
+
+### Changed
+
+- **Breaking:** `View.Columns()` is now `View.ColumnNames()`, and `View` gains
+  `NumColumns() int`. The old name read as if it returned the columns rather
+  than their names, and without a count in the interface every caller wrote
+  `len(view.Columns())`, which made composite views such as `ExtraColsView`
+  concatenate a slice of names just to count it.
+
+  Every view in the module implements both methods. A `View` implemented
+  outside the module has to rename `Columns` and add `NumColumns`.
+  `FilteredView.NumCols()` is renamed `NumColumns()` to match. Methods named
+  `Columns` that are not part of `View` keep their name:
+  `StructFieldNaming.Columns`, and `sqltable.Rows.Columns`, which mirrors
+  `*sql.Rows`.
+
+- **Breaking:** The `Tit` field of `StringsView`, `HeaderView`, `AnyValuesView`,
+  `ReflectValuesView` and `SingleReflectValueView` is now `TableTitle`. It
+  cannot be `Title`, because that is the name of the `View` method returning it.
+
+- **Breaking:** `ExtraRowView` is now `ExtraRowsView`, matching `ExtraColsView`
+  and the documentation of `View`, which already called it that.
+
+- **Breaking:** `csvtable.ReadFileWithFormatToStructSlice` and
+  `csvtable.ReadFileDetectFormatToStructSlice` take an `io.Reader` instead of an
+  `fs.FileReader` from `github.com/ungerik/go-fs`. Both read their input to the
+  end before parsing, so an open `*os.File` or any other reader works. A caller
+  holding an `fs.FileReader` can pass the result of its `ReadAll` to
+  `ReadBytesWithFormatToStructSlice` or `ReadBytesDetectFormatToStructSlice`.
+  The names still say `File`; whether that changes is one of the open decisions
+  in `TODOS.md`.
+
+- Dependencies updated: `golang.org/x/text` v0.41.0 to v0.43.0, and the indirect
+  `golang.org/x/crypto`, `golang.org/x/net`, `mscfb` and `efp` requirements of
+  `exceltable`.
+
+### Removed
+
+- The dependency on `github.com/ungerik/go-fs`. Its only use was the
+  `fs.FileReader` parameter of the two `csvtable` functions above, and it is
+  itself untagged, so a change to it could have broken a tagged retable.
+  `fsnotify`, `pkg/xattr` and `golang.org/x/sys` go with it, because only go-fs
+  required them.
 
 ### Fixed
 
