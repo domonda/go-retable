@@ -398,6 +398,10 @@ func setStreamRow(stream *excelize.StreamWriter, rowNum int, values []any) error
 
 // excelizeValue converts cell into a value for excelize.StreamWriter.SetRow.
 func (w *Writer[T]) excelizeValue(wb *Workbook, cell Cell) (any, error) {
+	value := cell.value
+	if f, ok := value.(float64); ok {
+		value = roundToExcelPrecision(f)
+	}
 	// Only number and date/time cells have a format;
 	// an empty number format is Excel's General format
 	format := cell.format
@@ -405,13 +409,13 @@ func (w *Writer[T]) excelizeValue(wb *Workbook, cell Cell) (any, error) {
 		format = w.timeFormat
 	}
 	if format == "" {
-		return cell.value, nil
+		return value, nil
 	}
 	style, err := wb.style(styleKey{numFmt: format})
 	if err != nil {
 		return nil, err
 	}
-	return excelize.Cell{StyleID: style, Value: cell.value}, nil
+	return excelize.Cell{StyleID: style, Value: value}, nil
 }
 
 // cell converts the view cell at row/col into a Cell,

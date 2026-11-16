@@ -3,6 +3,8 @@ package exceltable
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +55,8 @@ func StringCell(s string) Cell {
 // "#,##0.00 [$EUR];-#,##0.00 [$EUR]". The code is written as given.
 // An empty format uses Excel's General format.
 //
+// The number is stored rounded to 15 significant digits,
+// the precision of Excel numbers.
 // NaN and ±Inf cannot be stored as Excel numbers and are written as
 // the strings "NaN", "+Inf" and "-Inf".
 func NumberCell(n float64, format string) Cell {
@@ -103,8 +107,10 @@ func DateTimeCell(t time.Time, format string) Cell {
 const outOfRangeTimeFormat = "2006-01-02T15:04:05.999999999"
 
 // Constants of the date serial arithmetic, equal to the ones of
-// github.com/tealeg/xlsx/v3 that go-structtable used, so that the serials
-// written by this package are bit-identical to the files it produced.
+// github.com/tealeg/xlsx/v3 that go-structtable used. The serials are
+// stored with Excel's 15 significant digits (see roundToExcelPrecision),
+// so they equal the ones in the files go-structtable produced to that
+// precision, which is below a microsecond for dates after 1900.
 const (
 	secondsPerDay = float64(24 * time.Hour / time.Second)
 	nanosPerDay   = float64(24 * time.Hour / time.Nanosecond)
@@ -210,4 +216,26 @@ func StringCellFormatter(f retable.CellFormatter) CellFormatter {
 		}
 		return StringCell(str), nil
 	})
+}
+
+// excelSignificantDigits is the precision of Excel numbers.
+const excelSignificantDigits = 15
+
+// roundToExcelPrecision rounds n to the 15 significant digits Excel holds.
+// excelize (since v2.11.1) writes floats with at most 15 significant
+// digits by cutting off the rest, which would store one hour, 1/24 of a
+// day, as 0.0416666666666666, slightly less than an hour, so that Excel
+// functions like HOUR see 0:59:59. Rounding first stores the nearest
+// 15-digit value, which excelize then writes unchanged, because every
+// decimal of 15 significant digits round-trips through a float64.
+func roundToExcelPrecision(n float64) float64 {
+	if n == 0 || math.IsNaN(n) || math.IsInf(n, 0) {
+		return n
+	}
+	rounded, err := strconv.ParseFloat(strconv.FormatFloat(n, 'g', excelSignificantDigits, 64), 64)
+	if err != nil {
+		// Rounding up overflowed beyond math.MaxFloat64
+		return n
+	}
+	return rounded
 }

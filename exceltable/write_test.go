@@ -284,7 +284,8 @@ func (n builtinNullable) IsNull() bool     { return n.s == "" }
 func TestWriter_BuiltinCells(t *testing.T) {
 	vienna := mustLoadLocation(t, "Europe/Vienna")
 	someTime := time.Date(2026, 11, 16, 19, 1, 35, 0, vienna)
-	someSerial := strconv.FormatFloat(timeSerial(someTime), 'f', -1, 64)
+	// timeSerial is 46342.792766203704, stored with Excel's 15 significant digits
+	someSerial := "46342.7927662037"
 	var (
 		nilTimePtr *time.Time
 		nilIntPtr  *int
@@ -385,9 +386,11 @@ func TestWriter_TimeAndDurationFormats(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, writer.WriteView(context.Background(), &buf, view))
 	f := openWritten(t, buf.Bytes())
-	serial := strconv.FormatFloat(timeSerial(someTime), 'f', -1, 64)
+	serial := "46342" // midnight UTC
 	require.Equal(t, numCell(serial, "yyyy-mm-dd"), readCell(t, f, "", 1, 1))
-	require.Equal(t, numCell(strconv.FormatFloat(1.0/24, 'f', -1, 64), "[mm]:ss"), readCell(t, f, "", 2, 1))
+	// One hour is 1/24 = 0.041666666666666664, rounded to 15 significant
+	// digits, not cut off to 0.0416666666666666 which is less than an hour
+	require.Equal(t, numCell("0.0416666666666667", "[mm]:ss"), readCell(t, f, "", 2, 1))
 	require.Equal(t, numCell(serial, "yyyy-mm-dd"), readCell(t, f, "", 3, 1))
 }
 
@@ -771,4 +774,36 @@ func TestWriter_DurationPrecision(t *testing.T) {
 	}
 	require.Equal(t, []row{{2 * time.Second}, {time.Second}}, readBack(NewWriter[[]row]()))
 	require.Equal(t, rows, readBack(NewWriter[[]row]().WithDurationFormat("[h]:mm:ss.000")))
+}
+
+// TestWriter_FloatPrecision: numbers are stored rounded to Excel's
+// 15 significant digits. excelize cuts off the digits beyond 15, so
+// without rounding first a value could be stored just below where it
+// belongs.
+func TestWriter_FloatPrecision(t *testing.T) {
+	cases := []struct {
+		value float64
+		want  string
+	}{
+		{1.0 / 3, "0.333333333333333"},
+		{2.0 / 3, "0.666666666666667"},             // cut off: 0.666666666666666
+		{0.1 + 0.2, "0.3"},                         // 0.30000000000000004
+		{123456789012345678, "123456789012346000"}, // cut off: 123456789012345000
+		{-1.0 / 24, "-0.0416666666666667"},
+		{1234.5, "1234.5"},
+		{math.MaxFloat64, strconv.FormatFloat(math.MaxFloat64, 'f', -1, 64)},
+	}
+	row := make([]any, len(cases))
+	cols := make([]string, len(cases))
+	for i, tc := range cases {
+		row[i] = tc.value
+		cols[i] = strconv.Itoa(i)
+	}
+	var buf bytes.Buffer
+	view := &retable.AnyValuesView{Cols: cols, Rows: [][]any{row}}
+	require.NoError(t, NewWriter[any]().WriteView(context.Background(), &buf, view))
+	f := openWritten(t, buf.Bytes())
+	for i, tc := range cases {
+		require.Equal(t, numCell(tc.want, ""), readCell(t, f, "", i+1, 1), "value %v", tc.value)
+	}
 }

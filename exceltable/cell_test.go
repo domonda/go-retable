@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -23,8 +24,9 @@ func mustLoadLocation(t *testing.T, name string) *time.Location {
 // produced through github.com/tealeg/xlsx/v3 v3.3.13
 // (Cell.SetDateWithOptions with the time's own location).
 // They were generated once outside this module and are hardcoded,
-// because the files customers already have must keep their dates
-// bit for bit.
+// because the files customers already have must keep their dates.
+// The arithmetic is identical; the writer then stores the serial with
+// Excel's 15 significant digits, see TestRoundToExcelPrecision.
 func TestTimeSerial(t *testing.T) {
 	vienna := mustLoadLocation(t, "Europe/Vienna")
 	kiritimati := mustLoadLocation(t, "Pacific/Kiritimati")
@@ -140,4 +142,27 @@ func TestStringCellFormatter(t *testing.T) {
 	})
 	_, err = StringCellFormatter(failing).FormatCell(ctx, view, 0, 0)
 	require.EqualError(t, err, "boom")
+}
+
+func TestRoundToExcelPrecision(t *testing.T) {
+	cases := []struct {
+		value float64
+		want  float64
+	}{
+		{0, 0},
+		{1.0 / 24, 0.0416666666666667},
+		{46342.792766203704, 46342.7927662037},
+		{-2.0 / 3, -0.666666666666667},
+		{1234.5, 1234.5},
+		{123456789012345678, 123456789012346000},
+		{1e-300 / 3, 3.33333333333333e-301},
+		{math.MaxFloat64, math.MaxFloat64}, // rounding up would overflow
+	}
+	for _, tc := range cases {
+		t.Run(strconv.FormatFloat(tc.value, 'g', -1, 64), func(t *testing.T) {
+			require.Equal(t, tc.want, roundToExcelPrecision(tc.value))
+		})
+	}
+	require.True(t, math.IsNaN(roundToExcelPrecision(math.NaN())))
+	require.Equal(t, math.Inf(-1), roundToExcelPrecision(math.Inf(-1)))
 }

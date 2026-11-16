@@ -35,7 +35,10 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
     collides with an existing sheet, ignoring case, returns
     `exceltable.ErrDuplicateSheetName` instead of merging the rows into it.
   - Date serials use the 1900 date system and the same arithmetic as
-    `github.com/tealeg/xlsx/v3`, so they equal the ones go-structtable wrote.
+    `github.com/tealeg/xlsx/v3`, so they equal the ones go-structtable wrote
+    to Excel's 15 significant digits, a difference below a microsecond.
+    Every number is stored rounded to those 15 digits; excelize v2.11.1
+    would otherwise cut off the rest and store one hour as slightly less.
     A time is written as its wall clock in its own location; a zero time is
     an empty cell. A duration is a fraction of a day. Unlike tealeg/xlsx,
     dates before 1900-03-01 get Excel's serials (1900-01-01 is 1), and what
@@ -89,6 +92,10 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
   panic, and `WithInterfaceTypeFormatter` panics at once for a type that is not
   an interface.
 - CI runs the tests of every workspace module, including `exceltable`.
+- Dependencies updated: `golang.org/x/text` v0.43.0 to v0.44.0,
+  `github.com/xuri/excelize/v2` v2.11.0 to v2.11.1, and the indirect
+  `go.yaml.in/yaml/v3`, `golang.org/x/crypto`, `golang.org/x/net` and
+  `github.com/xuri/efp` requirements of `exceltable`.
 
 ### Removed
 
