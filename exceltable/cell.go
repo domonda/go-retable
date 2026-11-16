@@ -85,7 +85,12 @@ func BoolCell(b bool) Cell {
 // built-in date formats, which Excel would display per the reader's locale.
 //
 // The serial represents the wall clock time of t in t's own location,
-// because Excel date/time values have no time zone.
+// because Excel date/time values have no time zone, truncated to whole
+// milliseconds, the resolution of Excel times. The truncation keeps a
+// time just before midnight on its day, which a float64 serial of the
+// year 9999 could not hold at nanosecond precision. Excel still rounds
+// the displayed time to the precision of the format, so 23:59:59.999
+// shows as the next day with a format that has no fraction of a second.
 // An empty format uses the writer's time format, see Writer.WithTimeFormat.
 // A zero t returns an empty Cell.
 //
@@ -100,7 +105,7 @@ func DateTimeCell(t time.Time, format string) Cell {
 	if year := t.Year(); year < 1900 || year > 9999 {
 		return StringCell(t.Format(outOfRangeTimeFormat))
 	}
-	return Cell{kind: cellDateTime, value: timeSerial(t), format: format}
+	return Cell{kind: cellDateTime, value: timeSerial(t.Truncate(time.Millisecond)), format: format}
 }
 
 // outOfRangeTimeFormat is the text form of a time that Excel cannot store as a date.
@@ -110,7 +115,8 @@ const outOfRangeTimeFormat = "2006-01-02T15:04:05.999999999"
 // github.com/tealeg/xlsx/v3 that go-structtable used. The serials are
 // stored with Excel's 15 significant digits (see roundToExcelPrecision),
 // so they equal the ones in the files go-structtable produced to that
-// precision, which is below a microsecond for dates after 1900.
+// precision: about 9 microseconds for current dates (10 decimal places
+// of a 5-digit serial), finer before 1927.
 const (
 	secondsPerDay = float64(24 * time.Hour / time.Second)
 	nanosPerDay   = float64(24 * time.Hour / time.Nanosecond)

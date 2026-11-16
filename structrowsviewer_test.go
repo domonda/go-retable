@@ -235,6 +235,9 @@ func TestStructRowsViewer_NewView_Array(t *testing.T) {
 			require.Equal(t, 2, view.NumRows())
 			require.Equal(t, "a", view.Cell(0, 0))
 			require.Equal(t, "b", view.Cell(1, 0))
+			// Cells are addressable like the elements of a slice, so methods
+			// with pointer receivers (String, IsNull) apply to them
+			require.True(t, AsReflectCellView(view).ReflectCell(0, 0).CanAddr())
 		})
 	}
 }

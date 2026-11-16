@@ -829,3 +829,156 @@ func TestWriter_NilRowAndArray(t *testing.T) {
 		require.Equal(t, numCell("2", ""), readCell(t, f, "S", 2, 3))
 	})
 }
+
+// TestWriter_DateSerialKeepsDay: the stored serial of a time just before
+// midnight stays on its day: rounding to 15 significant digits must not
+// carry it into the next day, and the last instant of 9999-12-31 must not
+// become 2958466, past Excel's last date. (Excel and excelize still round
+// the displayed time to the format's precision; that is display, not storage.)
+func TestWriter_DateSerialKeepsDay(t *testing.T) {
+	type row struct{ T time.Time }
+	rows := []row{
+		{time.Date(2026, 12, 31, 23, 59, 59, 999999000, time.UTC)},
+		{time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)},
+		{time.Date(2026, 11, 16, 0, 0, 0, 1000, time.UTC)},
+	}
+	f := writeOneSheet(t, NewWriter[[]row]().WithTimeFormat("dd.mm.yyyy"), rows)
+	require.Equal(t, numCell("46387.9999999884", "dd.mm.yyyy"), readCell(t, f, "S", 1, 1))
+	require.Equal(t, numCell("2958465.99999999", "dd.mm.yyyy"), readCell(t, f, "S", 1, 2))
+	require.Equal(t, numCell("46342", "dd.mm.yyyy"), readCell(t, f, "S", 1, 3))
+}
+
+// TestWriter_Float32ShortestDecimal: a float32 is written as its shortest
+// decimal, not as the binary error of its float64 widening.
+func TestWriter_Float32ShortestDecimal(t *testing.T) {
+	type row struct {
+		F32 float32
+		F64 float64
+	}
+	f := writeOneSheet(t, NewWriter[[]row](), []row{{19.99, 19.99}})
+	require.Equal(t, numCell("19.99", ""), readCell(t, f, "S", 1, 1))
+	require.Equal(t, numCell("19.99", ""), readCell(t, f, "S", 2, 1))
+}
+
+// TestWriter_ArrayTableAddressable: an array table passed by value formats
+// its fields like the same rows in a slice, including methods with
+// pointer receivers.
+func TestWriter_ArrayTableAddressable(t *testing.T) {
+	type row struct{ Value builtinPtrString }
+	f := writeOneSheet(t, NewWriter[[1]row](), [1]row{{builtinPtrString{"field"}}})
+	require.Equal(t, textCell("ptr-stringer:field"), readCell(t, f, "S", 1, 1))
+}
+
+// TestWorkbook_Closed: a closed workbook has released its sheet data,
+// so writing it or adding sheets must fail instead of producing a broken file.
+func TestWorkbook_Closed(t *testing.T) {
+	ctx := context.Background()
+	rows := []overviewRow{{"a", 1}}
+	wb := NewWorkbook()
+	require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(ctx, wb, rows, "S"))
+	require.NoError(t, wb.Close())
+
+	_, err := wb.WriteTo(new(bytes.Buffer))
+	require.ErrorIs(t, err, errWorkbookClosed)
+	err = NewWriter[[]overviewRow]().WriteSheet(ctx, wb, rows, "T")
+	require.ErrorIs(t, err, errWorkbookClosed)
+}
+
+// TestWorkbook_PoisonedAfterGoodSheets: a failure in a later sheet poisons a
+// workbook that already holds valid sheets, so the partial file is never written.
+func TestWorkbook_PoisonedAfterGoodSheets(t *testing.T) {
+	ctx := context.Background()
+	rows := []overviewRow{{"a", 1}, {"b", 2}}
+	errFormatter := errors.New("formatter failed")
+	wb := NewWorkbook()
+	require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(ctx, wb, rows, "Good"))
+	failing := NewWriter[[]overviewRow]().WithKindFormatter(reflect.Int, CellFormatterFunc(
+		func(context.Context, retable.View, int, int) (Cell, error) {
+			return Cell{}, errFormatter
+		},
+	))
+	require.ErrorIs(t, failing.WriteSheet(ctx, wb, rows, "Bad"), errFormatter)
+	_, err := wb.WriteTo(new(bytes.Buffer))
+	require.ErrorIs(t, err, errFormatter)
+	require.NoError(t, wb.Close())
+}
+
+// TestWorkbook_HeaderStyleErrorLeavesNoSheet: an error before the sheet is
+// added, here an invalid header font size, leaves the workbook without the
+// sheet and usable, so the same name can be written afterwards.
+func TestWorkbook_HeaderStyleErrorLeavesNoSheet(t *testing.T) {
+	ctx := context.Background()
+	rows := []overviewRow{{"a", 1}}
+	wb := NewWorkbook()
+	defer wb.Close()
+	invalid := NewWriter[[]overviewRow]().WithHeaderRow(true).WithHeaderFont("Arial", 1000)
+	require.Error(t, invalid.WriteSheet(ctx, wb, rows, "A"))
+	require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(ctx, wb, rows, "A"))
+	var buf bytes.Buffer
+	_, err := wb.WriteTo(&buf)
+	require.NoError(t, err)
+	require.Equal(t, []string{"A"}, openWritten(t, buf.Bytes()).GetSheetList())
+}
+
+// TestWorkbook_HeaderFontPerWriter: writers with different header fonts
+// keep them apart in one workbook, which shares the style cache.
+func TestWorkbook_HeaderFontPerWriter(t *testing.T) {
+	ctx := context.Background()
+	rows := []overviewRow{{"a", 1}}
+	wb := NewWorkbook()
+	defer wb.Close()
+	require.NoError(t, NewWriter[[]overviewRow]().WithHeaderRow(true).WithHeaderFont("Arial", 10).WriteSheet(ctx, wb, rows, "A"))
+	require.NoError(t, NewWriter[[]overviewRow]().WithHeaderRow(true).WithHeaderFont("Courier", 12).WriteSheet(ctx, wb, rows, "B"))
+	var buf bytes.Buffer
+	_, err := wb.WriteTo(&buf)
+	require.NoError(t, err)
+	f := openWritten(t, buf.Bytes())
+	for sheet, want := range map[string]*excelize.Font{
+		"A": {Bold: true, Family: "Arial", Size: 10},
+		"B": {Bold: true, Family: "Courier", Size: 12},
+	} {
+		styleID, err := f.GetCellStyle(sheet, "A1")
+		require.NoError(t, err)
+		style, err := f.GetStyle(styleID)
+		require.NoError(t, err)
+		require.Equal(t, want, style.Font, sheet)
+	}
+}
+
+// TestWriter_DateTimeCellOwnFormat: a DateTimeCell with its own format keeps
+// it; only an empty format falls back to the writer's time format.
+func TestWriter_DateTimeCellOwnFormat(t *testing.T) {
+	someTime := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	view := &retable.AnyValuesView{Cols: []string{"Date"}, Rows: [][]any{{someTime}}}
+	writer := NewWriter[any]().
+		WithTimeFormat("yyyy-mm-dd hh:mm").
+		WithColumnFormatter(0, CellFormatterFunc(func(ctx context.Context, view retable.View, row, col int) (Cell, error) {
+			return DateTimeCell(view.Cell(row, col).(time.Time), "dd.mm.yyyy"), nil
+		}))
+	var buf bytes.Buffer
+	require.NoError(t, writer.WriteView(context.Background(), &buf, view))
+	require.Equal(t, numCell("46342", "dd.mm.yyyy"), readCell(t, openWritten(t, buf.Bytes()), "", 1, 1))
+}
+
+// manyRowsView is a view of numRows rows without storing them.
+type manyRowsView struct{ numRows int }
+
+func (v manyRowsView) Title() string                          { return "Many" }
+func (v manyRowsView) ColumnNames() []string                  { return []string{"A"} }
+func (v manyRowsView) NumColumns() int                        { return 1 }
+func (v manyRowsView) NumRows() int                           { return v.numRows }
+func (v manyRowsView) Cell(row, col int) any                  { return row }
+func (v manyRowsView) ReflectCell(row, col int) reflect.Value { return reflect.ValueOf(row) }
+
+// TestWriter_RowLimit: a sheet with more rows than Excel's 1,048,576 fails
+// with an error and writes nothing, instead of a cut-off sheet.
+func TestWriter_RowLimit(t *testing.T) {
+	var buf bytes.Buffer
+	// The header row plus 2^20 data rows is one row too many
+	err := NewWriter[any]().WithHeaderRow(true).WriteView(context.Background(), &buf, manyRowsView{numRows: 1 << 20})
+	require.ErrorContains(t, err, `sheet "Many"`)
+	require.Zero(t, buf.Len())
+
+	buf.Reset()
+	require.NoError(t, NewWriter[any]().WriteView(context.Background(), &buf, manyRowsView{numRows: 1 << 20}))
+}

@@ -558,3 +558,33 @@ func TestWriter_NilRow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "a;1\nNULL;NULL\nc;3\n", dest.String())
 }
+
+// TestWriter_NilFormatterFuncRemoves: passing nil to a With*FormatterFunc
+// method removes the registration like passing nil to With*Formatter,
+// instead of storing a nil func that panics when the table is written.
+func TestWriter_NilFormatterFuncRemoves(t *testing.T) {
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{42}}}
+	formatter := func(context.Context, retable.View, int, int) (string, bool, error) {
+		return "FORMATTED", false, nil
+	}
+	writers := map[string]*Writer[any]{
+		"type": NewWriter[any]().
+			WithTypeFormatterFunc(reflect.TypeFor[int](), formatter).
+			WithTypeFormatterFunc(reflect.TypeFor[int](), nil),
+		"interface": NewWriter[any]().
+			WithInterfaceTypeFormatterFunc(reflect.TypeFor[fmt.Stringer](), formatter).
+			WithInterfaceTypeFormatterFunc(reflect.TypeFor[fmt.Stringer](), nil),
+		"kind": NewWriter[any]().
+			WithKindFormatterFunc(reflect.Int, formatter).
+			WithKindFormatterFunc(reflect.Int, nil),
+	}
+	for name, writer := range writers {
+		t.Run(name, func(t *testing.T) {
+			var dest bytes.Buffer
+			require.NotPanics(t, func() {
+				require.NoError(t, writer.WithNewLine("\n").WriteView(context.Background(), &dest, view))
+			})
+			require.Equal(t, "42\n", dest.String())
+		})
+	}
+}

@@ -241,9 +241,14 @@ because Excel dates have no time zone.
 A duration is a fraction of a day: 30 hours is `1.25`, 90 minutes is `0.0625`.
 
 Like every float cell, serials and durations are stored rounded to 15
-significant digits, the precision of an Excel number. For a date after 1900
-that is finer than a microsecond, and one hour is stored as
-`0.0416666666666667`, a full hour for Excel's `HOUR` function, not 0:59:59.
+significant digits, the precision of an Excel number. For current dates that
+is about 9 µs (a five-digit day number leaves ten decimal places), and one
+hour is stored as `0.0416666666666667`, a full hour for Excel's `HOUR`
+function, not 0:59:59. A stored date serial never moves into the next day:
+times are truncated to whole milliseconds, Excel's time resolution, and the
+rounding never carries past midnight. Excel still rounds the *displayed* time
+to the precision of the format, so `23:59:59.999` shows as the next day in a
+format without a fraction of a second.
 
 ## Sheet names
 

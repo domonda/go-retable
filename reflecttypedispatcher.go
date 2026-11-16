@@ -217,9 +217,15 @@ func (d *ReflectTypeDispatcher[F]) clone() *ReflectTypeDispatcher[F] {
 
 // isNilValue reports whether value is the nil value of a nillable type,
 // for example an untyped nil passed as an interface, func or pointer F.
-// An interface holding a typed nil pointer is not nil.
+// An interface holding a typed nil pointer is not nil, but one holding
+// a nil func is, because calling it would panic.
 func isNilValue[F any](value F) bool {
 	v := reflect.ValueOf(&value).Elem()
+	if v.Kind() == reflect.Interface && !v.IsNil() && v.Elem().Kind() == reflect.Func {
+		// A nil func converted to an interface F, like a nil
+		// CellFormatterFunc passed as CellFormatter, would panic when called
+		v = v.Elem()
+	}
 	switch v.Kind() {
 	case reflect.Interface, reflect.Pointer, reflect.Func, reflect.Map, reflect.Slice, reflect.Chan, reflect.UnsafePointer:
 		return v.IsNil()

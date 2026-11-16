@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -53,6 +55,7 @@ type Workbook struct {
 	sheets []string
 	styles map[styleKey]int
 	err    error
+	closed bool
 }
 
 // styleKey identifies a cell style of a workbook.
@@ -77,6 +80,9 @@ func NewWorkbook() *Workbook {
 // Returns an error if the workbook has no sheets
 // or if a sheet failed while it was written.
 func (wb *Workbook) WriteTo(dest io.Writer) (int64, error) {
+	if wb.closed {
+		return 0, errWorkbookClosed
+	}
 	if wb.err != nil {
 		return 0, wb.poisonedError()
 	}
@@ -88,9 +94,15 @@ func (wb *Workbook) WriteTo(dest io.Writer) (int64, error) {
 
 // Close releases the resources of the workbook,
 // including temporary files of large sheets.
+// After Close, WriteTo and adding sheets return an error,
+// because the released sheet data would make a broken file.
 func (wb *Workbook) Close() error {
+	wb.closed = true
 	return wb.file.Close()
 }
+
+// errWorkbookClosed is returned when a closed Workbook is used.
+var errWorkbookClosed = errors.New("exceltable: workbook is closed")
 
 func (wb *Workbook) poisonedError() error {
 	return fmt.Errorf("exceltable: workbook unusable after a failed sheet: %w", wb.err)
@@ -311,6 +323,9 @@ func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheet
 // WriteViewSheet adds view as a sheet to wb, named after the view's title.
 // See WriteSheet for how the name is sanitized.
 func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retable.View) error {
+	if wb.closed {
+		return errWorkbookClosed
+	}
 	if wb.err != nil {
 		return wb.poisonedError()
 	}
@@ -400,7 +415,13 @@ func setStreamRow(stream *excelize.StreamWriter, rowNum int, values []any) error
 func (w *Writer[T]) excelizeValue(wb *Workbook, cell Cell) (any, error) {
 	value := cell.value
 	if f, ok := value.(float64); ok {
-		value = roundToExcelPrecision(f)
+		rounded := roundToExcelPrecision(f)
+		// Rounding a date serial up must not carry it into the next day,
+		// for example 23:59:59.999999 into the following date. Keep the
+		// serial, which excelize cuts to 15 digits within the same day.
+		if cell.kind != cellDateTime || math.Floor(rounded) == math.Floor(f) {
+			value = rounded
+		}
 	}
 	// Only number and date/time cells have a format;
 	// an empty number format is Excel's General format
@@ -472,7 +493,12 @@ func (w *Writer[T]) builtinCell(val reflect.Value) Cell {
 		return intCell(deref.Int())
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return uintCell(deref.Uint())
-	case reflect.Float32, reflect.Float64:
+	case reflect.Float32:
+		// The shortest decimal of the float32, so that 19.99 is not
+		// widened to 19.989999771118164 by the conversion to float64
+		f, _ := strconv.ParseFloat(strconv.FormatFloat(deref.Float(), 'g', -1, 32), 64)
+		return NumberCell(f, "")
+	case reflect.Float64:
 		return NumberCell(deref.Float(), "")
 	}
 	if !deref.CanInterface() {

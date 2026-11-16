@@ -352,6 +352,7 @@ func (w *Writer[T]) WithTypeFormatters(formatter *retable.ReflectTypeCellFormatt
 
 // WithTypeFormatter returns a new writer with a formatter registered for the specified type.
 // Type formatters are used when no column formatter is configured for a cell.
+// A nil fmt removes the formatter registered for typ.
 //
 // Parameters:
 //   - typ: The reflect.Type to format
@@ -371,6 +372,7 @@ func (w *Writer[T]) WithTypeFormatter(typ reflect.Type, fmt retable.CellFormatte
 
 // WithTypeFormatterFunc returns a new writer with a formatter function registered for the specified type.
 // This is a convenience wrapper around WithTypeFormatter that accepts a function.
+// A nil fmt removes the registration, like a nil formatter passed to WithTypeFormatter.
 //
 // Parameters:
 //   - typ: The reflect.Type to format
@@ -429,6 +431,8 @@ func (w *Writer[T]) WithTypeFormatterReflectRawFunc(function any) *Writer[T] {
 
 // WithInterfaceTypeFormatter returns a new writer with a formatter for types implementing an interface.
 // The formatter will be used for any cell value that implements the specified interface type.
+// Interfaces are tried in registration order. A nil fmt removes the formatter registered for typ.
+// Panics if typ is nil or not an interface type.
 //
 // Parameters:
 //   - typ: The interface type (must be an interface)
@@ -448,6 +452,7 @@ func (w *Writer[T]) WithInterfaceTypeFormatter(typ reflect.Type, fmt retable.Cel
 
 // WithInterfaceTypeFormatterFunc returns a new writer with a formatter function for types implementing an interface.
 // This is a convenience wrapper around WithInterfaceTypeFormatter that accepts a function.
+// A nil fmt removes the registration, like a nil formatter passed to WithInterfaceTypeFormatter.
 //
 // Parameters:
 //   - typ: The interface type (must be an interface)
@@ -460,6 +465,7 @@ func (w *Writer[T]) WithInterfaceTypeFormatterFunc(typ reflect.Type, fmt retable
 
 // WithKindFormatter returns a new writer with a formatter for a specific reflect.Kind.
 // Kind formatters are the most generic and are used as a last resort before fmt.Sprint.
+// A nil fmt removes the formatter registered for kind.
 //
 // Parameters:
 //   - kind: The reflect.Kind to format
@@ -478,6 +484,7 @@ func (w *Writer[T]) WithKindFormatter(kind reflect.Kind, fmt retable.CellFormatt
 
 // WithKindFormatterFunc returns a new writer with a formatter function for a specific reflect.Kind.
 // This is a convenience wrapper around WithKindFormatter that accepts a function.
+// A nil fmt removes the registration, like a nil formatter passed to WithKindFormatter.
 //
 // Parameters:
 //   - kind: The reflect.Kind to format

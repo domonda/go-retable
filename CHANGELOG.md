@@ -36,7 +36,9 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
     `exceltable.ErrDuplicateSheetName` instead of merging the rows into it.
   - Date serials use the 1900 date system and the same arithmetic as
     `github.com/tealeg/xlsx/v3`, so they equal the ones go-structtable wrote
-    to Excel's 15 significant digits, a difference below a microsecond.
+    to Excel's 15 significant digits and whole milliseconds, a difference
+    of about 9 µs for current dates below the millisecond. A stored serial
+    never moves into the next day.
     Every number is stored rounded to those 15 digits; excelize v2.11.1
     would otherwise cut off the rest and store one hour as slightly less.
     A time is written as its wall clock in its own location; a zero time is

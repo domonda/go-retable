@@ -388,22 +388,37 @@ func (w *Writer[T]) WithTypeFormatters(formatter *retable.ReflectTypeCellFormatt
 	return mod
 }
 
+// WithTypeFormatter returns a new writer with formatter registered for
+// cells of the exact type typ and for pointers to it.
+// A nil formatter removes the formatter registered for typ.
 func (w *Writer[T]) WithTypeFormatter(typ reflect.Type, formatter retable.CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.formatters = w.formatters.WithTypeFormatter(typ, formatter)
 	return mod
 }
 
+// WithTypeFormatterFunc is WithTypeFormatter for a function.
+// A nil formatterFunc removes the formatter registered for typ.
 func (w *Writer[T]) WithTypeFormatterFunc(typ reflect.Type, formatterFunc retable.CellFormatterFunc) *Writer[T] {
 	return w.WithTypeFormatter(typ, formatterFunc)
 }
 
+// WithInterfaceTypeFormatter returns a new writer with formatter registered
+// for cells whose type implements the interface type typ. Interfaces are
+// tried in registration order, after exact types.
+// A nil formatter removes the formatter registered for typ.
+//
+// Panics if typ is nil or not an interface type.
 func (w *Writer[T]) WithInterfaceTypeFormatter(typ reflect.Type, formatter retable.CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.formatters = w.formatters.WithInterfaceTypeFormatter(typ, formatter)
 	return mod
 }
 
+// WithInterfaceTypeFormatterFunc is WithInterfaceTypeFormatter for a function.
+// A nil formatterFunc removes the formatter registered for typ.
+//
+// Panics if typ is nil or not an interface type.
 func (w *Writer[T]) WithInterfaceTypeFormatterFunc(typ reflect.Type, formatterFunc retable.CellFormatterFunc) *Writer[T] {
 	return w.WithInterfaceTypeFormatter(typ, formatterFunc)
 }
@@ -424,12 +439,17 @@ func (w *Writer[T]) WithTypeFormatterReflectRawFunc(function any) *Writer[T] {
 	return w.WithTypeFormatter(typ, formatter)
 }
 
+// WithKindFormatter returns a new writer with formatter registered for
+// cells of the reflect.Kind kind, tried after exact types and interfaces.
+// A nil formatter removes the formatter registered for kind.
 func (w *Writer[T]) WithKindFormatter(kind reflect.Kind, formatter retable.CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.formatters = w.formatters.WithKindFormatter(kind, formatter)
 	return mod
 }
 
+// WithKindFormatterFunc is WithKindFormatter for a function.
+// A nil formatterFunc removes the formatter registered for kind.
 func (w *Writer[T]) WithKindFormatterFunc(kind reflect.Kind, formatterFunc retable.CellFormatterFunc) *Writer[T] {
 	return w.WithKindFormatter(kind, formatterFunc)
 }

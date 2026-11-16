@@ -122,8 +122,12 @@ Two choices in this order are worth explaining.
 
 **Time and duration come before the null check.** A zero `time.Time` is
 null-like, but it is also a time. It is written as an empty cell, not as the
-nil value, so `WithNilValue("NULL")` puts `NULL` only where a pointer or
-nullable value was really absent.
+nil value, so `WithNilValue("NULL")` does not put `NULL` into every unset
+date. The null check is `retable.IsNullLike`, the same one csvtable and
+htmltable use: besides nil pointers and `IsNull()`, it counts any value whose
+`IsZero()` returns true. A number type with an `IsZero` method, like an
+amount in cents, therefore writes its zero as the nil value, not as `0`;
+register a type formatter for it to write `0`.
 
 **Number kinds come before `fmt.Stringer`.** An amount type like
 `type Amount float64` with a `String` method that formats `1,234.50` should

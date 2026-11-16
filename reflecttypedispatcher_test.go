@@ -211,3 +211,25 @@ func TestReflectTypeDispatcher_WithDoesNotMutate(t *testing.T) {
 
 	require.Equal(t, want, collectCandidates(base, typeOfDispatcherValue))
 }
+
+// TestReflectTypeDispatcher_NilFuncInInterfaceRemoves: a nil func converted
+// to an interface F, like a nil CellFormatterFunc passed as CellFormatter by
+// the With*FormatterFunc methods of csvtable and htmltable, removes the
+// registration instead of being stored and panicking when called.
+func TestReflectTypeDispatcher_NilFuncInInterfaceRemoves(t *testing.T) {
+	var nilFunc CellFormatterFunc
+	d := (*ReflectTypeDispatcher[CellFormatter])(nil).
+		WithType(typeOfDispatcherValue, PrintfCellFormatter("x")).
+		WithType(typeOfDispatcherValue, nilFunc)
+	for range d.Candidates(typeOfDispatcherValue) {
+		t.Fatal("nil func must remove the registration")
+	}
+	// A typed nil pointer in the interface is a value: its methods may handle nil
+	var nilFormatter *ReflectTypeCellFormatter
+	d = d.WithType(typeOfDispatcherValue, nilFormatter)
+	n := 0
+	for range d.Candidates(typeOfDispatcherValue) {
+		n++
+	}
+	require.Equal(t, 1, n)
+}
