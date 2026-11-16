@@ -50,6 +50,55 @@ registered first.
 `StringCellFormatter` turns an existing string formatter into a typed one that
 writes text, so formatters written for CSV and HTML can be reused.
 
+## Why Writer has a type parameter
+
+`exceltable.Writer[T]` is generic over the table type, like
+`csvtable.Writer[T]` and `htmltable.Writer[T]`. All three writers share the
+same builder methods and differ only in the cell result, so code that writes
+the same table as CSV, HTML and Excel reads the same way three times.
+
+What `T` buys:
+
+- **A checked argument.** `Write(ctx, dest, table T, sheetName)` accepts only
+  the declared table type. A `Writer[[]Invoice]` stored in a package variable
+  cannot be handed a `[]Booking` by mistake.
+- **A writer per row type.** A column formatter is registered by column index,
+  and index 3 is `Total` only for `Invoice`. Binding the writer to `[]Invoice`
+  keeps that configuration with the type whose columns it describes. A workbook
+  with an overview and detail sheets uses one writer per row type for this
+  reason.
+
+What `T` does not do: the writer never looks at `T`. It passes the table to a
+`retable.Viewer`, whose `NewView(title string, table any)` is untyped, and
+reads every cell from the resulting `retable.View`. `T` is declared as `any`,
+so `NewWriter[Invoice]()` and `NewWriter[[]any]()` compile and fail on the
+first `Write`, and `WriteView` ignores `T` completely. The type safety covers
+the argument, not whether the table can be written.
+
+Because the viewer decides at runtime, `Writer[any]` is a valid writer, not a
+workaround: it opts out of the argument check and writes whatever table each
+call passes. That suits code that is itself untyped, such as a function taking
+a list of sheets as `any`, or a writer used only with views. It gives up the
+per-type binding of column formatters, so configuration that should hold
+across tables goes into type formatters instead. The
+[reference](reference-writer.md#typed-t-or-any) has the comparison.
+
+```
+Write(ctx, dest, table T, name)
+        |
+        v
+retable.Viewer.NewView(name, table any)   <- T ends here
+        |
+        v
+retable.View  ->  Cell(row, col) for every cell  ->  exceltable.Cell
+```
+
+This is a known open question for all three writers, tracked in `TODOS.md`
+under "Decide the Viewer model: generic or untyped": either drop `T` from the
+writers and keep the untyped viewer, or make the viewer generic so `T` is
+checked end to end. Until it is decided, exceltable follows the shape of the
+other two writers, so that a decision applies to all three at once.
+
 ## The order of conversion
 
 Each cell is converted by the first step that handles it:

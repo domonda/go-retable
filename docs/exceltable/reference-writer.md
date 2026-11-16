@@ -29,9 +29,51 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
 receiver unchanged, so a configured writer can be stored in a package variable
 and shared. A `Writer` is safe for concurrent use.
 
-`T` is the table type, typically a slice of structs (`[]Invoice`,
-`[]*Invoice`) or `[][]string`. `WriteView` and `WriteViewSheet` take a
-`retable.View` and ignore `T`, so `NewWriter[any]()` works for them.
+#### The type parameter T
+
+`T` is the type of the table you pass to `Write` and `WriteSheet`, the whole
+table, not one row: `Writer[[]Invoice]`, not `Writer[Invoice]`.
+
+| `T` | Works with the default viewer | Columns |
+| --- | --- | --- |
+| `[]Invoice` | yes | the exported fields of `Invoice`, titles from the `col` tag |
+| `[]*Invoice` | yes, if no element is nil | same |
+| `[][]string` | yes | the first row holds the column names |
+| `any` | yes, for every table the viewer accepts, decided per call | those of the table passed |
+| `Invoice` | compiles, `Write` fails: `table must be slice or array kind but is Invoice` | |
+| `[]any` | compiles, `Write` fails: `row type must be a struct but is interface {}` | |
+| `retable.View` | compiles, `Write` fails; use `WriteView`, or `WithTableViewer` with a viewer for views | |
+| anything else | only with `WithTableViewer` and a viewer that accepts it | whatever the viewer returns |
+
+`T` is used for exactly one thing: the parameter type of `Write` and
+`WriteSheet`. The writer hands the table to a `retable.Viewer`, whose
+`NewView(title string, table any)` turns it into a `retable.View`; every cell
+is then read from that view. So `T` gives a compile-time check of the argument
+(a `Writer[[]Invoice]` refuses a `[]Booking`), but `T` is not constrained, and
+whether the default viewer can handle it is checked at runtime.
+
+`WriteView` and `WriteViewSheet` take a `retable.View` and ignore `T`.
+
+#### Typed T or any
+
+`NewWriter[any]()` is a writer for every table type: `Write` and `WriteSheet`
+accept any value, and the default viewer picks the columns from the dynamic
+type of each table, so one writer can add a `[]Invoice` sheet, a `[]Booking`
+sheet and a `[][]string` sheet to the same workbook. A table the viewer can't
+handle, such as `42`, is an error from that call, at runtime instead of at
+compile time; the workbook stays usable.
+
+| Use a typed writer, `NewWriter[[]Invoice]()`, when | Use `NewWriter[any]()` when |
+| --- | --- |
+| the writer is for one row type, the common case | the writer is used only with `WriteView` and `WriteViewSheet` |
+| it has column formatters, whose indices describe the columns of that row type | one function writes tables whose type it does not know, for example a list of sheets passed in as `any` |
+| you want the compiler to reject a table of another type | the configuration is the same for all tables: type, interface and kind formatters, time and duration formats, nil value, header row |
+
+Avoid `WithColumnFormatter` on a `Writer[any]` that writes tables of
+different types: column 3 is a different field in each, and the formatter runs
+on all of them. Type formatters are the per-value alternative that works across
+tables; a formatter registered for an amount type formats that type in every
+sheet.
 
 | Function / method | Effect |
 | --- | --- |

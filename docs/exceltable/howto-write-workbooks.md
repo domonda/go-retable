@@ -48,7 +48,9 @@ The complete API and the conversion of every Go type are in the
    ```
 
 2. Create the writer once, for example as a package variable. Writers are
-   immutable and safe for concurrent use.
+   immutable and safe for concurrent use. The type parameter is the table
+   type, the slice, not the row struct: `[]Invoice`, not `Invoice`. See
+   [The type parameter T](reference-writer.md#the-type-parameter-t).
 
    ```go
    var invoiceWriter = exceltable.NewWriter[[]Invoice]().WithHeaderRow(true)
@@ -114,6 +116,42 @@ func writeCostCenters(ctx context.Context, dest io.Writer, centers []CostCenter,
 Sheet names are sanitized for Excel: `KST: Vertrieb` becomes `KST_ Vertrieb`,
 and names longer than 31 characters are cut to 30 plus `…`. See
 [Sheet names](reference-writer.md#sheet-names) for all rules.
+
+### With one writer for tables of any type
+
+When the sheets arrive as values of different types that your code does not
+know, use `NewWriter[any]()`. Each call writes the table it gets, with the
+columns of that table's type. Put shared formatting into type formatters, not
+column formatters, because a column index means a different field in every
+table:
+
+```go
+type Sheet struct {
+    Name  string
+    Table any // a slice of structs or [][]string
+}
+
+func writeSheets(ctx context.Context, dest io.Writer, sheets []Sheet) error {
+    writer := exceltable.NewWriter[any]().
+        WithHeaderRow(true).
+        WithTypeFormatter(reflect.TypeFor[money.Amount](), amountCell)
+
+    wb := exceltable.NewWorkbook()
+    defer wb.Close()
+    for _, sheet := range sheets {
+        err := writer.WriteSheet(ctx, wb, sheet.Table, sheet.Name)
+        if err != nil {
+            return err
+        }
+    }
+    _, err := wb.WriteTo(dest)
+    return err
+}
+```
+
+A table the viewer can't handle, like a single struct instead of a slice,
+returns an error at runtime instead of failing to compile. See
+[Typed T or any](reference-writer.md#typed-t-or-any).
 
 ### When two sheet names collide
 
@@ -388,6 +426,12 @@ the sheet, row and column. Fix the cause and start a new `Workbook`.
 Names are compared after sanitizing and ignoring case: `a/b` and `A?B`
 become `a_b` and `A_B`, which Excel treats as the same name. Make the names unique before sanitizing, see
 [When two sheet names collide](#when-two-sheet-names-collide).
+
+**`table must be slice or array kind but is Invoice`.**
+The writer was created for the row type instead of the table type. Use
+`NewWriter[[]Invoice]()`, not `NewWriter[Invoice]()`. The same message for
+another type, like `int`, comes from a `Writer[any]` that was handed a value
+that is not a table.
 
 **A type assertion panics in a formatter.**
 A formatter registered for an interface or a kind sees values of many types.
