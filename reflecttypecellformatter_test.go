@@ -432,3 +432,112 @@ func BenchmarkReflectTypeCellFormatter_FormatCell(b *testing.B) {
 		})
 	}
 }
+
+// TestReflectTypeCellFormatter_InterfaceRegistrationOrder: a type that
+// implements two registered interfaces is formatted by the interface
+// registered first. With the former map of interfaces this was random.
+func TestReflectTypeCellFormatter_InterfaceRegistrationOrder(t *testing.T) {
+	view := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{dispatcherValue{}}}}
+	for range 20 {
+		f := NewReflectTypeCellFormatter().
+			WithInterfaceTypeFormatter(typeOfError, PrintfCellFormatter("error:%T")).
+			WithInterfaceTypeFormatter(typeOfFmtStringer, PrintfCellFormatter("stringer:%T"))
+		str, _, err := f.FormatCell(context.Background(), view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "error:retable.dispatcherValue", str)
+
+		f = NewReflectTypeCellFormatter().
+			WithInterfaceTypeFormatter(typeOfFmtStringer, PrintfCellFormatter("stringer:%T")).
+			WithInterfaceTypeFormatter(typeOfError, PrintfCellFormatter("error:%T"))
+		str, _, err = f.FormatCell(context.Background(), view, 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "stringer:retable.dispatcherValue", str)
+	}
+}
+
+// TestReflectTypeCellFormatter_InterfaceField covers struct fields of
+// interface type: their cells have the static interface type, so the
+// formatter for the dynamic type of the value is tried after nothing
+// matched the interface type itself.
+func TestReflectTypeCellFormatter_InterfaceField(t *testing.T) {
+	type row struct{ A any }
+	value := characterizationStringer{s: "v"}
+	cases := []struct {
+		name    string
+		cell    any
+		f       *ReflectTypeCellFormatter
+		want    string
+		wantErr error
+	}{
+		{
+			name: "int held in any reaches the int kind formatter",
+			cell: 5,
+			f:    NewReflectTypeCellFormatter().WithKindFormatter(reflect.Int, PrintfCellFormatter("int:%v")),
+			want: "int:5",
+		},
+		{
+			name: "pointer held in any derefs to the type formatter",
+			cell: &value,
+			f:    NewReflectTypeCellFormatter().WithTypeFormatter(typeOfCharStringer, PrintfCellFormatter("type:%v")),
+			want: "type:v",
+		},
+		{
+			name:    "nil in any stays unsupported",
+			cell:    nil,
+			f:       NewReflectTypeCellFormatter().WithKindFormatter(reflect.Int, PrintfCellFormatter("int:%v")),
+			wantErr: errors.ErrUnsupported,
+		},
+		{
+			name: "formatter for the interface type itself wins",
+			cell: 5,
+			f: NewReflectTypeCellFormatter().
+				WithKindFormatter(reflect.Int, PrintfCellFormatter("int:%v")).
+				WithKindFormatter(reflect.Interface, PrintfCellFormatter("interface:%v")),
+			want: "interface:5",
+		},
+		{
+			name: "default runs after the dynamic type",
+			cell: "s",
+			f:    NewReflectTypeCellFormatter().WithDefaultFormatter(PrintfCellFormatter("default:%v")),
+			want: "default:s",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			view, err := DefaultStructFieldNaming.NewView("", []row{{A: tc.cell}})
+			require.NoError(t, err)
+			str, _, err := tc.f.FormatCell(context.Background(), view, 0, 0)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, str)
+		})
+	}
+}
+
+func TestReflectTypeCellFormatter_NilFormatterRemoves(t *testing.T) {
+	view := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{dispatcherValue{}}}}
+	format := func(f *ReflectTypeCellFormatter) error {
+		_, _, err := f.FormatCell(context.Background(), view, 0, 0)
+		return err
+	}
+	formatter := PrintfCellFormatter("x")
+	require.NoError(t, format(NewReflectTypeCellFormatter().WithTypeFormatter(typeOfDispatcherValue, formatter)))
+	require.ErrorIs(t, format(NewReflectTypeCellFormatter().
+		WithTypeFormatter(typeOfDispatcherValue, formatter).
+		WithTypeFormatter(typeOfDispatcherValue, nil)), errors.ErrUnsupported)
+	require.ErrorIs(t, format(NewReflectTypeCellFormatter().
+		WithInterfaceTypeFormatter(typeOfError, formatter).
+		WithInterfaceTypeFormatter(typeOfError, nil)), errors.ErrUnsupported)
+	require.ErrorIs(t, format(NewReflectTypeCellFormatter().
+		WithKindFormatter(reflect.Struct, formatter).
+		WithKindFormatter(reflect.Struct, nil)), errors.ErrUnsupported)
+}
+
+func TestReflectTypeCellFormatter_WithInterfaceTypeFormatterPanics(t *testing.T) {
+	require.Panics(t, func() {
+		NewReflectTypeCellFormatter().WithInterfaceTypeFormatter(typeOfDispatcherValue, PrintfCellFormatter("x"))
+	})
+}

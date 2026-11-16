@@ -3,25 +3,29 @@ package retable
 import (
 	"context"
 	"errors"
-	"maps"
 	"reflect"
 )
 
 // Ensure that ReflectTypeCellFormatter implements CellFormatter
 var _ CellFormatter = new(ReflectTypeCellFormatter)
 
-// ReflectTypeCellFormatter is a sophisticated type-based routing formatter that selects
-// the appropriate CellFormatter based on the reflected type, interface, or kind of a cell value.
+// ReflectTypeCellFormatter is a type-based routing formatter that selects
+// the CellFormatter registered for the reflected type, an implemented interface,
+// or the kind of a cell value.
 //
-// This formatter implements a hierarchical matching strategy:
-//  1. Exact type match (Types map) - highest priority
-//  2. Interface type match (InterfaceTypes map) - checks if type implements interface
-//  3. Kind match (Kinds map) - matches reflect.Kind (int, string, struct, etc.)
-//  4. Pointer dereferencing - if pointer type has no match, checks dereferenced type
-//  5. Default formatter - fallback for unmatched types
+// Matching order, see FormatCell for the details:
+//  1. Exact type (WithTypeFormatter)
+//  2. Implemented interfaces, in registration order (WithInterfaceTypeFormatter)
+//  3. Kind (WithKindFormatter)
+//  4. For a non-nil pointer: steps 1-3 for the pointed-to type
+//  5. For a non-nil interface value: steps 1-4 for its dynamic type
+//  6. Default formatter
 //
 // The formatter returns errors.ErrUnsupported if no matching formatter is found and no
 // Default is configured, allowing it to be used in formatter chains.
+//
+// The lookup of steps 1-4 is a ReflectTypeDispatcher[CellFormatter],
+// shared with the exceltable writer.
 //
 // Design pattern:
 // This type uses an immutable builder pattern where all With* methods return a new
@@ -37,24 +41,12 @@ var _ CellFormatter = new(ReflectTypeCellFormatter)
 //	str, raw, err := formatter.FormatCell(ctx, view, 0, 0)
 //	// Automatically routes to the correct formatter based on cell type
 type ReflectTypeCellFormatter struct {
-	// Types maps exact reflect.Type to their CellFormatters.
-	// This has the highest priority in the matching hierarchy.
-	// Example: reflect.TypeOf(time.Time{}) -> LayoutFormatter("2006-01-02")
-	Types map[reflect.Type]CellFormatter
-
-	// InterfaceTypes maps interface types to their CellFormatters.
-	// Cell types are checked if they implement these interfaces.
-	// Example: reflect.TypeOf((*fmt.Stringer)(nil)).Elem() -> custom formatter
-	InterfaceTypes map[reflect.Type]CellFormatter
-
-	// Kinds maps reflect.Kind to their CellFormatters.
-	// This provides fallback formatting for broad categories of types.
-	// Example: reflect.Int -> PrintfCellFormatter("%d")
-	Kinds map[reflect.Kind]CellFormatter
-
 	// Default is the fallback formatter used when no type, interface, or kind matches.
 	// If nil and no match is found, errors.ErrUnsupported is returned.
 	Default CellFormatter
+
+	// dispatcher holds the type, interface and kind registrations.
+	dispatcher *ReflectTypeDispatcher[CellFormatter]
 }
 
 // NewReflectTypeCellFormatter creates a new empty ReflectTypeCellFormatter.
@@ -73,15 +65,20 @@ func NewReflectTypeCellFormatter() *ReflectTypeCellFormatter {
 // the cell value's reflected type.
 //
 // Matching algorithm:
-//  1. Check Types map for exact type match
-//  2. Check InterfaceTypes map for interface implementations
-//  3. Check Kinds map for reflect.Kind match
-//  4. If pointer type and not matched, dereference and try steps 1-3 on dereferenced type
-//  5. Use Default formatter if configured
-//  6. Return errors.ErrUnsupported if no match found
+//  1. Formatter registered for the exact type
+//  2. Formatters of implemented interfaces, in registration order
+//  3. Formatter registered for the kind
+//  4. If the cell is a non-nil pointer, steps 1-3 for the pointed-to type,
+//     called with a DerefView so the formatter sees the pointed-to value
+//  5. If the cell is a non-nil interface value (a struct field of interface type),
+//     steps 1-4 for its dynamic type, called with a DerefView
+//  6. Default formatter if configured, called with the original view
+//  7. errors.ErrUnsupported
 //
 // At each step, if a formatter returns errors.ErrUnsupported, the algorithm continues
 // to the next step. Any other error is returned immediately.
+// A cell without a value (a nil interface) is reported as errors.ErrUnsupported
+// before any formatter runs, so the caller can treat it as null.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
@@ -107,60 +104,44 @@ func (f *ReflectTypeCellFormatter) FormatCell(ctx context.Context, view View, ro
 		// of panicking on the invalid reflect.Value.
 		return "", false, errors.ErrUnsupported
 	}
-	cellType := cellVal.Type()
-	if typeFmt, ok := f.Types[cellType]; ok {
-		str, raw, err := typeFmt.FormatCell(ctx, view, row, col)
+	str, raw, err = f.formatCandidates(ctx, view, row, col, cellVal)
+	if !errors.Is(err, errors.ErrUnsupported) {
+		return str, raw, err
+	}
+	if cellVal.Kind() == reflect.Interface && !cellVal.IsNil() {
+		// A struct field of interface type: nothing matched the
+		// interface type itself, so try the dynamic type of the value.
+		str, raw, err = f.formatCandidates(ctx, DerefView(view), row, col, cellVal.Elem())
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return str, raw, err
-		}
-		// Continue after errors.ErrUnsupported
-	}
-	for interfaceType, interfaceFmt := range f.InterfaceTypes {
-		if cellType.Implements(interfaceType) {
-			str, raw, err := interfaceFmt.FormatCell(ctx, view, row, col)
-			if !errors.Is(err, errors.ErrUnsupported) {
-				return str, raw, err
-			}
-			// Continue after errors.ErrUnsupported
-		}
-	}
-	if kindFmt, ok := f.Kinds[cellType.Kind()]; ok {
-		str, raw, err := kindFmt.FormatCell(ctx, view, row, col)
-		if !errors.Is(err, errors.ErrUnsupported) {
-			return str, raw, err
-		}
-		// Continue after errors.ErrUnsupported
-	}
-	// If pointer type had no direct formatter
-	// check if dereferenced value type has a formatter
-	if cellType.Kind() == reflect.Pointer && !cellVal.IsNil() {
-		derefCellType := cellType.Elem()
-		if typeFmt, ok := f.Types[derefCellType]; ok {
-			str, raw, err := typeFmt.FormatCell(ctx, DerefView(view), row, col)
-			if !errors.Is(err, errors.ErrUnsupported) {
-				return str, raw, err
-			}
-			// Continue after errors.ErrUnsupported
-		}
-		for interfaceType, interfaceFmt := range f.InterfaceTypes {
-			if derefCellType.Implements(interfaceType) {
-				str, raw, err := interfaceFmt.FormatCell(ctx, DerefView(view), row, col)
-				if !errors.Is(err, errors.ErrUnsupported) {
-					return str, raw, err
-				}
-				// Continue after errors.ErrUnsupported
-			}
-		}
-		if kindFmt, ok := f.Kinds[derefCellType.Kind()]; ok {
-			str, raw, err := kindFmt.FormatCell(ctx, DerefView(view), row, col)
-			if !errors.Is(err, errors.ErrUnsupported) {
-				return str, raw, err
-			}
-			// Continue after errors.ErrUnsupported
 		}
 	}
 	if f.Default != nil {
 		return f.Default.FormatCell(ctx, view, row, col)
+	}
+	return "", false, errors.ErrUnsupported
+}
+
+// formatCandidates calls the formatters the dispatcher yields for the type
+// of cellVal until one handles the cell. Candidates for the pointed-to type
+// of a pointer get a DerefView and are skipped for a nil pointer.
+func (f *ReflectTypeCellFormatter) formatCandidates(ctx context.Context, view View, row, col int, cellVal reflect.Value) (string, bool, error) {
+	var derefView View
+	for formatter, deref := range f.dispatcher.Candidates(cellVal.Type()) {
+		formatView := view
+		if deref {
+			if cellVal.IsNil() {
+				break
+			}
+			if derefView == nil {
+				derefView = DerefView(view)
+			}
+			formatView = derefView
+		}
+		str, raw, err := formatter.FormatCell(ctx, formatView, row, col)
+		if !errors.Is(err, errors.ErrUnsupported) {
+			return str, raw, err
+		}
 	}
 	return "", false, errors.ErrUnsupported
 }
@@ -170,6 +151,7 @@ func (f *ReflectTypeCellFormatter) FormatCell(ctx context.Context, view View, ro
 //
 // The type formatter has the highest priority in the matching hierarchy and will be tried
 // before interface, kind, or default formatters.
+// A nil fmt removes the formatter registered for typ.
 //
 // Parameters:
 //   - typ: The exact reflect.Type to match
@@ -193,10 +175,7 @@ func (f *ReflectTypeCellFormatter) FormatCell(ctx context.Context, view View, ro
 //	)
 func (f *ReflectTypeCellFormatter) WithTypeFormatter(typ reflect.Type, fmt CellFormatter) *ReflectTypeCellFormatter {
 	mod := f.cloneOrNew()
-	if mod.Types == nil {
-		mod.Types = make(map[reflect.Type]CellFormatter)
-	}
-	mod.Types[typ] = fmt
+	mod.dispatcher = mod.dispatcher.WithType(typ, fmt)
 	return mod
 }
 
@@ -221,6 +200,13 @@ func (f *ReflectTypeCellFormatter) WithTypeFormatter(typ reflect.Type, fmt CellF
 //
 // Interface type formatters match any cell value whose type implements the specified interface.
 // This is checked after exact type matching but before kind matching.
+// Interfaces are tried in the order they were first registered; registering an
+// interface again replaces its formatter and keeps its position.
+// A nil fmt removes the formatter registered for typ.
+//
+// Panics if typ is nil or not an interface type. Like template.Must, this treats
+// the mistake as a programming error at configuration time instead of letting
+// reflect.Type.Implements panic while a table is written.
 //
 // Parameters:
 //   - typ: The interface type to match (use reflect.TypeOf((*InterfaceName)(nil)).Elem())
@@ -245,10 +231,7 @@ func (f *ReflectTypeCellFormatter) WithTypeFormatter(typ reflect.Type, fmt CellF
 //	formatter = formatter.WithInterfaceTypeFormatter(formatterInterface, myFormatter)
 func (f *ReflectTypeCellFormatter) WithInterfaceTypeFormatter(typ reflect.Type, fmt CellFormatter) *ReflectTypeCellFormatter {
 	mod := f.cloneOrNew()
-	if mod.InterfaceTypes == nil {
-		mod.InterfaceTypes = make(map[reflect.Type]CellFormatter)
-	}
-	mod.InterfaceTypes[typ] = fmt
+	mod.dispatcher = mod.dispatcher.WithInterfaceType(typ, fmt)
 	return mod
 }
 
@@ -258,6 +241,7 @@ func (f *ReflectTypeCellFormatter) WithInterfaceTypeFormatter(typ reflect.Type, 
 // Kind formatters provide broad category matching for types with the same reflect.Kind
 // (int, string, struct, etc.). This is checked after exact type and interface matching,
 // providing a coarse-grained fallback before the default formatter.
+// A nil fmt removes the formatter registered for kind.
 //
 // Parameters:
 //   - kind: The reflect.Kind to match (e.g., reflect.Int, reflect.String)
@@ -287,10 +271,7 @@ func (f *ReflectTypeCellFormatter) WithInterfaceTypeFormatter(typ reflect.Type, 
 //	)
 func (f *ReflectTypeCellFormatter) WithKindFormatter(kind reflect.Kind, fmt CellFormatter) *ReflectTypeCellFormatter {
 	mod := f.cloneOrNew()
-	if mod.Kinds == nil {
-		mod.Kinds = make(map[reflect.Kind]CellFormatter)
-	}
-	mod.Kinds[kind] = fmt
+	mod.dispatcher = mod.dispatcher.WithKind(kind, fmt)
 	return mod
 }
 
@@ -347,18 +328,7 @@ func (f *ReflectTypeCellFormatter) cloneOrNew() *ReflectTypeCellFormatter {
 	if f == nil {
 		return new(ReflectTypeCellFormatter)
 	}
-	c := &ReflectTypeCellFormatter{Default: f.Default}
-	if len(f.Types) > 0 {
-		c.Types = make(map[reflect.Type]CellFormatter, len(f.Types))
-		maps.Copy(c.Types, f.Types)
-	}
-	if len(f.InterfaceTypes) > 0 {
-		c.InterfaceTypes = make(map[reflect.Type]CellFormatter, len(f.InterfaceTypes))
-		maps.Copy(c.InterfaceTypes, f.InterfaceTypes)
-	}
-	if len(f.Kinds) > 0 {
-		c.Kinds = make(map[reflect.Kind]CellFormatter, len(f.Kinds))
-		maps.Copy(c.Kinds, f.Kinds)
-	}
-	return c
+	// The dispatcher is immutable, so sharing it is safe.
+	c := *f
+	return &c
 }
