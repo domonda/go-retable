@@ -1,9 +1,13 @@
 package retable
 
 import (
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -152,32 +156,140 @@ func TestIndexedStructFieldReflectValues(t *testing.T) {
 	})
 }
 
-func TestValueLikeNil(t *testing.T) {
-	var nilInterface any
-	var nilInt *int
-	var nilSlice []int
+// Types for TestIsNullLike, one per method rule of IsNullLike.
+// The value receivers report null for an empty string,
+// the pointer receivers for an empty string as well.
+type (
+	nullLikeValueIsNull struct{ s string }
+	nullLikePtrIsNull   struct{ s string }
+	nullLikeValueIsZero struct{ s string }
+	nullLikePtrIsZero   struct{ s string }
+	nullLikeNotNullZero struct{}
+	nullLikeValuer      struct {
+		v   driver.Value
+		err error
+	}
+)
+
+func (v nullLikeValueIsNull) IsNull() bool            { return v.s == "" }
+func (p *nullLikePtrIsNull) IsNull() bool             { return p.s == "" }
+func (v nullLikeValueIsZero) IsZero() bool            { return v.s == "" }
+func (p *nullLikePtrIsZero) IsZero() bool             { return p.s == "" }
+func (nullLikeNotNullZero) IsNull() bool              { return false }
+func (nullLikeNotNullZero) IsZero() bool              { return true }
+func (v nullLikeValuer) Value() (driver.Value, error) { return v.v, v.err }
+
+// addressable returns val as an addressable reflect.Value,
+// like a field read from a struct behind a pointer.
+func addressable(val any) reflect.Value {
+	ptr := reflect.New(reflect.TypeOf(val))
+	ptr.Elem().Set(reflect.ValueOf(val))
+	return ptr.Elem()
+}
+
+// interfaceHeld returns val as the reflect.Value of a struct field of type any,
+// which is what a view of structs with an any field yields.
+func interfaceHeld(val any) reflect.Value {
+	holder := struct{ A any }{A: val}
+	return reflect.ValueOf(&holder).Elem().Field(0)
+}
+
+// TestIsNullLike covers every rule of IsNullLike positive and negative,
+// in value, pointer, pointer-to-pointer and interface-held form,
+// and pins the cases that changed when IsNullLike started to look
+// through non-nil pointers (marked "changed").
+func TestIsNullLike(t *testing.T) {
+	var (
+		nilInterface any
+		nilInt       *int
+		nilIntPtr    = &nilInt
+		nilSlice     []int
+		nilMap       map[string]int
+		nilChan      chan int
+		nilFunc      func()
+		zeroTime     time.Time
+		someTime     = time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+		one          = 1
+		onePtr       = &one
+	)
+	unexported := struct{ v nullLikeValueIsNull }{}
 	tests := []struct {
 		name string
 		val  reflect.Value
 		want bool
 	}{
-		// true
-		{name: "reflect.Value{}", val: reflect.Value{}, want: true},
-		{name: "<nil> interface{}", val: reflect.ValueOf(nilInterface), want: true},
-		{name: "<nil> int", val: reflect.ValueOf(nilInt), want: true},
-		{name: "<nil> []int", val: reflect.ValueOf(nilSlice), want: true},
-		{name: "struct{}{}", val: reflect.ValueOf(struct{}{}), want: true},
+		// Rule 1: pointer and interface chain
+		{name: "nil *int", val: reflect.ValueOf(nilInt), want: true},
+		{name: "**int to nil *int (changed)", val: reflect.ValueOf(nilIntPtr), want: true},
+		{name: "**int to *int to 1", val: reflect.ValueOf(&onePtr), want: false},
+		{name: "*int to 1", val: reflect.ValueOf(onePtr), want: false},
+		{name: "any holding typed nil pointer (changed)", val: interfaceHeld((*nullLikeValueIsNull)(nil)), want: true},
+		{name: "any holding nil", val: interfaceHeld(nil), want: true},
+		{name: "any holding 1", val: interfaceHeld(1), want: false},
+		{name: "pointer to zero time.Time (changed)", val: reflect.ValueOf(&zeroTime), want: true},
+		{name: "pointer to non-zero time.Time", val: reflect.ValueOf(&someTime), want: false},
 
-		// false
-		{name: "any(0)", val: reflect.ValueOf(any(0)), want: false},
+		// Rule 2: invalid reflect.Value
+		{name: "reflect.Value{}", val: reflect.Value{}, want: true},
+		{name: "reflect.ValueOf(nil interface)", val: reflect.ValueOf(nilInterface), want: true},
+
+		// Rule 3: nil-able kinds
+		{name: "nil []int", val: reflect.ValueOf(nilSlice), want: true},
+		{name: "empty []int", val: reflect.ValueOf([]int{}), want: false},
+		{name: "nil map", val: reflect.ValueOf(nilMap), want: true},
+		{name: "empty map", val: reflect.ValueOf(map[string]int{}), want: false},
+		{name: "nil chan", val: reflect.ValueOf(nilChan), want: true},
+		{name: "nil func", val: reflect.ValueOf(nilFunc), want: true},
+		{name: "nil unsafe.Pointer", val: reflect.ValueOf(unsafe.Pointer(nil)), want: true},
+
+		// Rule 4: empty struct
+		{name: "struct{}{}", val: reflect.ValueOf(struct{}{}), want: true},
+		{name: "pointer to struct{}{} (changed)", val: reflect.ValueOf(&struct{}{}), want: true},
+
+		// Rule 5: unexported field (used to panic)
+		{name: "unexported field (changed)", val: reflect.ValueOf(unexported).Field(0), want: false},
+
+		// Rule 6: IsNull with value receiver
+		{name: "IsNull value receiver true", val: reflect.ValueOf(nullLikeValueIsNull{}), want: true},
+		{name: "IsNull value receiver false", val: reflect.ValueOf(nullLikeValueIsNull{"x"}), want: false},
+		{name: "pointer to IsNull true (changed)", val: reflect.ValueOf(&nullLikeValueIsNull{}), want: true},
+		{name: "pointer to IsNull false", val: reflect.ValueOf(&nullLikeValueIsNull{"x"}), want: false},
+		{name: "any holding IsNull true (changed)", val: interfaceHeld(nullLikeValueIsNull{}), want: true},
+
+		// Rule 6: IsNull with pointer receiver
+		{name: "IsNull pointer receiver, addressable, true (changed)", val: addressable(nullLikePtrIsNull{}), want: true},
+		{name: "IsNull pointer receiver, addressable, false", val: addressable(nullLikePtrIsNull{"x"}), want: false},
+		{name: "IsNull pointer receiver, not addressable", val: reflect.ValueOf(nullLikePtrIsNull{}), want: false},
+		{name: "pointer with IsNull pointer receiver true (changed)", val: reflect.ValueOf(&nullLikePtrIsNull{}), want: true},
+
+		// Rule 6: IsZero
+		{name: "IsZero value receiver true", val: reflect.ValueOf(nullLikeValueIsZero{}), want: true},
+		{name: "IsZero value receiver false", val: reflect.ValueOf(nullLikeValueIsZero{"x"}), want: false},
+		{name: "IsZero pointer receiver, addressable, true (changed)", val: addressable(nullLikePtrIsZero{}), want: true},
+		{name: "IsZero pointer receiver, not addressable", val: reflect.ValueOf(nullLikePtrIsZero{}), want: false},
+		{name: "zero time.Time", val: reflect.ValueOf(zeroTime), want: true},
+		{name: "non-zero time.Time", val: reflect.ValueOf(someTime), want: false},
+		{name: "IsNull false but IsZero true", val: reflect.ValueOf(nullLikeNotNullZero{}), want: true},
+
+		// Rule 6: driver.Valuer
+		{name: "Valuer (nil, nil)", val: reflect.ValueOf(nullLikeValuer{}), want: true},
+		{name: "Valuer (x, nil)", val: reflect.ValueOf(nullLikeValuer{v: "x"}), want: false},
+		{name: "Valuer (nil, err)", val: reflect.ValueOf(nullLikeValuer{err: errors.New("e")}), want: false},
+		{name: "sql.NullString{}", val: reflect.ValueOf(sql.NullString{}), want: true},
+		{name: "sql.NullString valid", val: reflect.ValueOf(sql.NullString{String: "", Valid: true}), want: false},
+		{name: "pointer to sql.NullInt64{} (changed)", val: reflect.ValueOf(&sql.NullInt64{}), want: true},
+
+		// Not null-like
+		{name: "0", val: reflect.ValueOf(0), want: false},
+		{name: "false", val: reflect.ValueOf(false), want: false},
 		{name: "empty string", val: reflect.ValueOf(""), want: false},
-		{name: "empty slice", val: reflect.ValueOf([]int{}), want: false},
+		{name: "42", val: reflect.ValueOf(42), want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsNullLike(tt.val); got != tt.want {
-				t.Errorf("ValueLikeNil() = %v, want %v", got, tt.want)
-			}
+			var got bool
+			require.NotPanics(t, func() { got = IsNullLike(tt.val) })
+			require.Equal(t, tt.want, got)
 		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -316,4 +317,22 @@ func TestReflectCellFormatterFuncWrongCellType(t *testing.T) {
 	str, _, err := byKind.FormatCell(context.Background(), plain, 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, "formatted", str)
+}
+
+// TestTryFormattersOrSprint_PointerToNullValue: the Sprint fallback writes
+// an empty string for a non-nil pointer to a null-like value, following
+// IsNullLike, instead of printing the pointed-to zero time.
+func TestTryFormattersOrSprint_PointerToNullValue(t *testing.T) {
+	var zeroTime time.Time
+	someTime := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	view := &AnyValuesView{Cols: []string{"A", "B"}, Rows: [][]any{{&zeroTime, &someTime}}}
+	f := TryFormattersOrSprint()
+
+	str, _, err := f.FormatCell(context.Background(), view, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, "", str)
+
+	str, _, err = f.FormatCell(context.Background(), view, 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, someTime.String(), str)
 }

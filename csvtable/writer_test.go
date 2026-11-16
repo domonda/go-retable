@@ -520,3 +520,25 @@ func TestWriter_WithTypeFormattersAndReflectFuncs(t *testing.T) {
 		require.Contains(t, buf.String(), "raw:x")
 	})
 }
+
+// TestWriter_PointerToNullValue pins the csv side of the IsNullLike change:
+// a non-nil pointer to a null-like value is written as the nil value.
+// Before, IsNullLike reported every non-nil pointer as not null and the
+// writer printed the pointed-to value, "0001-01-01 00:00:00 +0000 UTC"
+// for a pointer to a zero time.
+func TestWriter_PointerToNullValue(t *testing.T) {
+	type row struct {
+		Time *time.Time
+		Text *string
+	}
+	var zeroTime time.Time
+	empty := ""
+	var dest bytes.Buffer
+	err := NewWriter[[]row]().
+		WithNewLine("\n").
+		WithNilValue("NULL").
+		Write(context.Background(), &dest, []row{{Time: &zeroTime, Text: &empty}})
+	require.NoError(t, err)
+	// The empty string is a value, the zero time is null-like
+	require.Equal(t, "NULL;\n", dest.String())
+}
