@@ -583,7 +583,9 @@ func (w *Writer[T]) WithTableViewer(viewer retable.Viewer) *Writer[T] {
 func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.columnFormatters = maps.Clone(w.columnFormatters)
-	if formatter == nil {
+	// A nil CellFormatterFunc converted to CellFormatter is not a nil
+	// interface, but calling it would panic, so it removes too
+	if f, isFunc := formatter.(CellFormatterFunc); formatter == nil || isFunc && f == nil {
 		delete(mod.columnFormatters, columnIndex)
 		return mod
 	}

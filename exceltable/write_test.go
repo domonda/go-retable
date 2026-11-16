@@ -982,3 +982,21 @@ func TestWriter_RowLimit(t *testing.T) {
 	buf.Reset()
 	require.NoError(t, NewWriter[any]().WriteView(context.Background(), &buf, manyRowsView{numRows: 1 << 20}))
 }
+
+// TestWriter_NilColumnFormatterFuncRemoves: a nil CellFormatterFunc passed as
+// column formatter removes it like a nil interface, instead of being stored
+// and panicking when the table is written.
+func TestWriter_NilColumnFormatterFuncRemoves(t *testing.T) {
+	var nilFunc CellFormatterFunc
+	writer := NewWriter[any]().
+		WithColumnFormatter(0, CellFormatterFunc(func(context.Context, retable.View, int, int) (Cell, error) {
+			return StringCell("formatted"), nil
+		})).
+		WithColumnFormatter(0, nilFunc)
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{1}}}
+	var buf bytes.Buffer
+	require.NotPanics(t, func() {
+		require.NoError(t, writer.WriteView(context.Background(), &buf, view))
+	})
+	require.Equal(t, numCell("1", ""), readCell(t, openWritten(t, buf.Bytes()), "", 1, 1))
+}
