@@ -1,8 +1,10 @@
-// Package exceltable provides functionality for reading Excel files (.xlsx, .xlsm, .xltm, .xltx)
-// and converting them into retable.View interfaces for tabular data manipulation.
+// Package exceltable reads Excel files (.xlsx, .xlsm, .xltm, .xltx) into
+// retable.View interfaces and writes tables as .xlsx workbooks.
 //
-// The package uses the excelize library (github.com/xuri/excelize/v2) under the hood
-// to parse Excel files and extract sheet data as string-based tables.
+// The package uses the excelize library (github.com/xuri/excelize/v2) under the hood.
+// Reading extracts sheet data as string-based tables. Writing, see Writer and
+// Workbook, keeps cells typed: numbers stay numbers and dates stay Excel dates
+// with their number formats, so the sheets can be sorted, filtered and summed.
 //
 // Key features:
 //   - Read single or multiple sheets from Excel files
