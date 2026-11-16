@@ -8,18 +8,17 @@ on:
 
 jobs:
 
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v7
 
     - name: Set up Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@v7
       with:
-        go-version: 1.23
+        go-version-file: go.mod
 
-    - name: Build
-      run: go build -v ./...
-
-    - name: Test
-      run: go test -v ./...
+    # Runs the tests of every module of go.work,
+    # including the exceltable submodule that go test ./... does not reach
+    - name: Test workspace modules
+      run: ./test-workspace.sh
