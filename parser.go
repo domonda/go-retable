@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -65,6 +66,8 @@ type Parser interface {
 	// ParseDuration parses a string into a time.Duration value.
 	// Uses Go's standard duration format (e.g., "1h30m", "5s").
 	// Returns an error if the string is not a valid duration.
+	// StringParser also accepts the clock form [-]H:MM:SS[.fraction]
+	// that spreadsheets display for durations, e.g. "30:00:00".
 	ParseDuration(string) (time.Duration, error)
 
 	// IsNil reports whether str represents a nil or null value,
@@ -426,17 +429,26 @@ func (p *StringParser) ParseTime(str string) (time.Time, error) {
 }
 
 // ParseDuration parses a string into a time.Duration value.
-// Uses Go's standard time.ParseDuration which accepts strings like "1h30m", "5s", "100ms".
+// It first tries Go's standard time.ParseDuration, which accepts strings
+// like "1h30m", "5s", "100ms". If that fails, it accepts the clock form
+// [-]H:MM:SS[.fraction] that spreadsheets display for a duration
+// formatted as "[h]:mm:ss": any number of hour digits, then exactly two
+// digits each for minutes and seconds below 60, and an optional fraction
+// of up to nine digits. That is how exceltable writes time.Duration
+// cells, so they read back as the same duration.
+//
+// A two-part "H:MM" is not accepted, because it cannot be told apart
+// from "MM:SS".
 //
 // Valid units: "ns" (nanoseconds), "us" (microseconds), "ms" (milliseconds),
 // "s" (seconds), "m" (minutes), "h" (hours).
 //
 // Parameters:
-//   - str: The string to parse (e.g., "1h30m", "5s")
+//   - str: The string to parse (e.g., "1h30m", "5s", "30:00:00")
 //
 // Returns:
 //   - time.Duration: The parsed duration value
-//   - error: Error if string is not a valid duration format
+//   - error: The error of time.ParseDuration if str is in neither form
 //
 // Example:
 //
@@ -444,9 +456,61 @@ func (p *StringParser) ParseTime(str string) (time.Time, error) {
 //	d, _ := parser.ParseDuration("5s")       // 5 seconds
 //	d, _ := parser.ParseDuration("100ms")    // 100 milliseconds
 //	d, _ := parser.ParseDuration("2h45m30s") // 2 hours 45 minutes 30 seconds
+//	d, _ := parser.ParseDuration("30:00:00") // 30 hours
+//	d, _ := parser.ParseDuration("1:30:02.5") // 1 hour 30 minutes 2.5 seconds
 //	_, err := parser.ParseDuration("invalid") // error
 func (p *StringParser) ParseDuration(str string) (time.Duration, error) {
-	return time.ParseDuration(str)
+	d, err := time.ParseDuration(str)
+	if err == nil {
+		return d, nil
+	}
+	if d, ok := parseClockDuration(str); ok {
+		return d, nil
+	}
+	return 0, err
+}
+
+// parseClockDuration parses the clock form [-]H:MM:SS[.fraction]
+// described at StringParser.ParseDuration.
+func parseClockDuration(str string) (time.Duration, bool) {
+	sign, rest := "", str
+	if strings.HasPrefix(rest, "-") {
+		sign, rest = "-", rest[1:]
+	}
+	hours, rest, ok := strings.Cut(rest, ":")
+	if !ok || !isASCIIDigits(hours) {
+		return 0, false
+	}
+	minutes, seconds, ok := strings.Cut(rest, ":")
+	if !ok || len(minutes) != 2 || !isASCIIDigits(minutes) || minutes >= "60" {
+		return 0, false
+	}
+	wholeSeconds, fraction, hasFraction := strings.Cut(seconds, ".")
+	if len(wholeSeconds) != 2 || !isASCIIDigits(wholeSeconds) || wholeSeconds >= "60" {
+		return 0, false
+	}
+	if hasFraction && (len(fraction) == 0 || len(fraction) > 9 || !isASCIIDigits(fraction)) {
+		return 0, false
+	}
+	// Reuse time.ParseDuration for the arithmetic and overflow check
+	d, err := time.ParseDuration(sign + hours + "h" + minutes + "m" + seconds + "s")
+	if err != nil {
+		return 0, false
+	}
+	return d, true
+}
+
+// isASCIIDigits reports whether s is not empty and consists of ASCII digits only.
+func isASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // IsNil reports whether str is one of the configured NilStrings,
