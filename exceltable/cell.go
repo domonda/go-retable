@@ -2,6 +2,8 @@ package exceltable
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/domonda/go-retable"
@@ -82,12 +84,23 @@ func BoolCell(b bool) Cell {
 // because Excel date/time values have no time zone.
 // An empty format uses the writer's time format, see Writer.WithTimeFormat.
 // A zero t returns an empty Cell.
+//
+// Excel dates start at 1900-01-01 and end with the year 9999.
+// A t outside that range returns a string Cell with the wall clock time
+// in the form "2006-01-02T15:04:05.999999999", which StringParser.ParseTime
+// reads back.
 func DateTimeCell(t time.Time, format string) Cell {
 	if t.IsZero() {
 		return Cell{}
 	}
+	if year := t.Year(); year < 1900 || year > 9999 {
+		return StringCell(t.Format(outOfRangeTimeFormat))
+	}
 	return Cell{kind: cellDateTime, value: timeSerial(t), format: format}
 }
+
+// outOfRangeTimeFormat is the text form of a time that Excel cannot store as a date.
+const outOfRangeTimeFormat = "2006-01-02T15:04:05.999999999"
 
 // Constants of the date serial arithmetic, equal to the ones of
 // github.com/tealeg/xlsx/v3 that go-structtable used, so that the serials
@@ -99,20 +112,61 @@ const (
 	// system, whose day zero is 1899-12-30 because Excel counts the
 	// non-existent 1900-02-29.
 	daysBetween1900And1970 = 25569.0
+	// serialOf1900March1 is the first serial after the non-existent
+	// 1900-02-29, which Excel counts as serial 60. Before it, day zero
+	// is 1899-12-31 and 1900-01-01 is serial 1.
+	serialOf1900March1 = 61.0
 )
 
 // timeSerial returns the Excel 1900 date system serial of the wall clock
-// time of t in its own location.
+// time of t in its own location. t must not be before 1900-01-01.
 func timeSerial(t time.Time) float64 {
 	_, offset := t.Zone()
 	wallClock := time.Unix(t.Unix()+int64(offset), int64(t.Nanosecond())).UTC()
-	return float64(wallClock.Unix())/secondsPerDay + daysBetween1900And1970 + float64(wallClock.Nanosecond())/nanosPerDay
+	serial := float64(wallClock.Unix())/secondsPerDay + daysBetween1900And1970 + float64(wallClock.Nanosecond())/nanosPerDay
+	if serial < serialOf1900March1 {
+		serial--
+	}
+	return serial
 }
 
-// durationSerial returns d as a fraction of a day,
-// the value Excel shows as a duration with the format "[h]:mm:ss".
-func durationSerial(d time.Duration) float64 {
-	return float64(d) / float64(24*time.Hour)
+// durationCell returns d as a fraction of a day, which Excel displays
+// as a duration with format, for example "[h]:mm:ss".
+// Excel cannot display a negative date or time value, so a negative d
+// returns a string Cell with d in the clock form -H:MM:SS[.fraction],
+// which StringParser.ParseDuration reads back.
+func durationCell(d time.Duration, format string) Cell {
+	if d < 0 {
+		return StringCell(clockDuration(d))
+	}
+	return NumberCell(float64(d)/float64(24*time.Hour), format)
+}
+
+// clockDuration formats d as [-]H:MM:SS[.fraction] with the fraction
+// of a second only as long as needed and none for whole seconds.
+func clockDuration(d time.Duration) string {
+	sign := ""
+	if d < 0 {
+		sign = "-"
+	}
+	// Each part is negated on its own, because -d overflows
+	// for the smallest time.Duration
+	hours := int64(absDuration(d / time.Hour))
+	minutes := int64(absDuration(d % time.Hour / time.Minute))
+	seconds := int64(absDuration(d % time.Minute / time.Second))
+	nanos := int64(absDuration(d % time.Second))
+	str := fmt.Sprintf("%s%d:%02d:%02d", sign, hours, minutes, seconds)
+	if nanos != 0 {
+		str += strings.TrimRight(fmt.Sprintf(".%09d", nanos), "0")
+	}
+	return str
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 // CellFormatter converts the view cell at a row/col position into a typed Cell.

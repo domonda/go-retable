@@ -37,7 +37,15 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
   - Date serials use the 1900 date system and the same arithmetic as
     `github.com/tealeg/xlsx/v3`, so they equal the ones go-structtable wrote.
     A time is written as its wall clock in its own location; a zero time is
-    an empty cell. A duration is a fraction of a day.
+    an empty cell. A duration is a fraction of a day. Unlike tealeg/xlsx,
+    dates before 1900-03-01 get Excel's serials (1900-01-01 is 1), and what
+    Excel cannot display is written as text that reads back: a time before
+    1900 or after 9999 as `2006-01-02T15:04:05.999999999`, a negative
+    duration as `-H:MM:SS[.fraction]`.
+  - Number kinds come before `fmt.Stringer`, so a number type with a
+    `String` method stays a number that Excel can sum. csvtable and
+    htmltable write the `String` result, so an enum like `time.Month` is
+    `March` there and `3` here unless a formatter is registered for it.
   - Format codes are stored as given and never mapped onto Excel's built-in
     formats, which Excel displays per the reader's locale.
   - After a sheet failed midway, for example by a formatter error or a
@@ -46,10 +54,17 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
   - `exceltable.ContentType`, the MIME type of `.xlsx` files.
 - `retable.ReflectTypeDispatcher[F]`: the type, interface and kind lookup that
   `ReflectTypeCellFormatter` and the exceltable writer share. Interfaces are
-  tried in registration order.
+  tried in registration order. `CellCandidates` yields the formatters for a
+  view cell together with the view to call each with, looking through
+  pointers and interface-typed fields.
 - `StringParser.ParseDuration` also accepts the clock form
   `[-]H:MM:SS[.fraction]`, which is how spreadsheets display durations, so
-  durations written by the exceltable writer read back unchanged.
+  durations written by the exceltable writer read back, to the precision
+  of the duration format: the default `[h]:mm:ss` rounds to whole seconds,
+  `[h]:mm:ss.000` keeps milliseconds. `SmartAssign` parses the clock form
+  only into `time.Duration` and `*time.Duration`, not into other defined
+  `int64` types, so a time of day like `12:30:00` in a `type Bytes int64`
+  column stays an error.
 
 ### Changed
 
@@ -61,7 +76,9 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
   time used to be written as `0001-01-01 00:00:00 +0000 UTC`), a `**T`
   pointing to a nil `*T`, an interface holding a typed nil pointer, and a
   value whose `IsNull` or `IsZero` has a pointer receiver. A value of an
-  unexported struct field reports false instead of panicking.
+  unexported struct field reports false instead of panicking. A self
+  referential value, like an `any` holding a pointer to itself, reports
+  false instead of looping forever.
 - `ReflectTypeCellFormatter` tries interface formatters in registration order;
   it used to iterate a map, so a type implementing two registered interfaces
   was formatted by either of them at random. For a struct field of interface

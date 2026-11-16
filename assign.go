@@ -8,6 +8,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 // SmartAssign performs intelligent type conversion when assigning src to dst.
@@ -70,7 +71,8 @@ import (
 //     Types defined as time.Time, like "type Date time.Time", are
 //     included, and so is every defined int64 type for the duration
 //     case, because reflection cannot tell one defined as time.Duration
-//     apart from any other, see timeType and durationType.
+//     apart from any other, see timeType and durationType. The clock
+//     form H:MM:SS is only parsed into time.Duration itself.
 //
 //  10. Pointer dereferencing: If src is a non-nil pointer, SmartAssign is
 //     recursively called with the dereferenced value.
@@ -313,7 +315,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// Try converting string to time.Duration.
 	// Without this the underlying int64 kind of time.Duration
 	// would only accept a plain number of nanoseconds.
-	if srcKind == reflect.String && (durationType(dstType) || dstKind == reflect.Pointer && durationType(dstType.Elem())) {
+	if srcKind == reflect.String && parsesAsDuration(dstType, src.String()) {
 		d, e := parser.ParseDuration(src.String())
 		if e == nil {
 			setParsed(dst, reflect.ValueOf(d))
@@ -509,7 +511,8 @@ func parseReasonOf(err error) error {
 }
 
 // maxPointerDepth bounds how far a pointer type is followed to the
-// type it finally points to.
+// type it finally points to, and how far IsNullLike unwraps pointer
+// and interface values.
 //
 // A self referential pointer type is legal Go and its element type is
 // itself, so "type SelfPtr *SelfPtr" makes an unbounded walk spin
@@ -560,6 +563,22 @@ func timeType(t reflect.Type) bool {
 // parsing of SmartAssign handles it.
 func durationType(t reflect.Type) bool {
 	return t.Kind() == typeOfDuration.Kind() && t.PkgPath() != ""
+}
+
+// parsesAsDuration reports whether SmartAssign parses str with
+// Parser.ParseDuration for the destination type t: a durationType or a
+// pointer to one. The clock form H:MM:SS, recognized by its colon, is
+// only parsed for time.Duration itself, so that the cost documented at
+// durationType does not grow to a time of day like "12:30:00" being
+// read into a "type Bytes int64" column.
+func parsesAsDuration(t reflect.Type, str string) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if !durationType(t) {
+		return false
+	}
+	return t == typeOfDuration || !strings.Contains(str, ":")
 }
 
 // setParsed assigns the parsed value val to dst, converting it to the

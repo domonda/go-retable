@@ -480,6 +480,8 @@ func UseTitle(columnTitle string) func(fieldName string) (columnTitle string) {
 //     (*int)(nil), a **int pointing to a nil *int, and an any holding
 //     a typed nil pointer all are. A non-nil pointer is judged by the
 //     value it points to, so a pointer to a zero time.Time is null-like.
+//     A chain longer than maxPointerDepth, which only a self referential
+//     value like an any holding a pointer to itself has, is not null-like.
 //  2. The zero reflect.Value is null-like (also what an unwrapped
 //     nil interface yields).
 //  3. A nil slice, map, channel, func or unsafe.Pointer is null-like.
@@ -513,9 +515,13 @@ func UseTitle(columnTitle string) func(fieldName string) (columnTitle string) {
 //
 //	IsNullLike(reflect.ValueOf(42))               // false
 func IsNullLike(val reflect.Value) bool {
-	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
+	for depth := 0; val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface; depth++ {
 		if val.IsNil() {
 			return true
+		}
+		if depth == maxPointerDepth {
+			// Self referential, would loop forever
+			return false
 		}
 		val = val.Elem()
 	}

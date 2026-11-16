@@ -198,7 +198,7 @@ Nothing in this item is still open.
 
 **Context:** Proposed: a `retable.CellPipeline` (name open) holding column formatters, a `ReflectTypeCellFormatter` and the nil value, with `FormatCell` returning the final string and raw flag, embedded by both writers. Both writers keep their format-specific `With*` methods only. Delete the `Func` twins and let callers write `retable.CellFormatterFunc(f)`. Replace the two `ReflectFunc` methods with one that returns an error, or keep the panic and document that it is a programming error like `template.Must`.
 
-Since v1.0.0-beta.2 there is a third writer, `exceltable.Writer`, whose formatters return a typed `exceltable.Cell` instead of a string, so a shared pipeline has to be generic over the formatter result. The type, interface and kind lookup is already shared: `retable.ReflectTypeDispatcher[F]` serves `ReflectTypeCellFormatter` and `exceltable.Writer`, with interfaces in registration order. What the three writers still each implement is the column formatter step, the interface-field unwrapping around `Candidates`, and the null fallback.
+Since v1.0.0-beta.2 there is a third writer, `exceltable.Writer`, whose formatters return a typed `exceltable.Cell` instead of a string, so a shared pipeline has to be generic over the formatter result. The type, interface and kind lookup is already shared: `retable.ReflectTypeDispatcher[F].CellCandidates` serves `ReflectTypeCellFormatter` and `exceltable.Writer`, with interfaces in registration order, including the pointer and interface-field unwrapping. What the three writers still each implement is the column formatter step and the null fallback.
 
 **Effort:** M
 **Priority:** P1

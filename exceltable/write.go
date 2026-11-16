@@ -23,9 +23,10 @@ const (
 	defaultTimeFormat     = "dd.mm.yyyy hh:mm:ss"
 	defaultDurationFormat = "[h]:mm:ss"
 
-	// maxSheetNameUnits is Excel's limit for a sheet name,
-	// counted in UTF-16 code units like Excel and excelize do.
-	maxSheetNameUnits = 31
+	// maxDerefDepth bounds how far the built-in steps unwrap pointers
+	// and interfaces, because a self referential value, like an any
+	// holding a pointer to itself, would make them loop forever.
+	maxDerefDepth = 32
 )
 
 var (
@@ -106,14 +107,14 @@ func (wb *Workbook) addSheet(name string) (string, error) {
 			return "", fmt.Errorf("%w: %q (existing sheet %q)", ErrDuplicateSheetName, name, existing)
 		}
 	}
+	var err error
 	if len(wb.sheets) == 0 {
-		if err := wb.file.SetSheetName(wb.file.GetSheetName(0), name); err != nil {
-			return "", err
-		}
+		err = wb.file.SetSheetName(wb.file.GetSheetName(0), name)
 	} else {
-		if _, err := wb.file.NewSheet(name); err != nil {
-			return "", err
-		}
+		_, err = wb.file.NewSheet(name)
+	}
+	if err != nil {
+		return "", err
 	}
 	wb.sheets = append(wb.sheets, name)
 	return name, nil
@@ -126,7 +127,9 @@ func (wb *Workbook) style(key styleKey) (int, error) {
 	}
 	style := new(excelize.Style)
 	if key.numFmt != "" {
-		style.CustomNumFmt = &key.numFmt
+		// A copy, so that key does not escape to the heap on cache hits
+		numFmt := key.numFmt
+		style.CustomNumFmt = &numFmt
 	}
 	if key.header {
 		style.Font = &excelize.Font{
@@ -166,7 +169,8 @@ func sanitizeSheetName(name string) string {
 	if strings.HasSuffix(name, "'") {
 		name = name[:len(name)-1] + "_"
 	}
-	if utf16Len(name) <= maxSheetNameUnits {
+	// Excel and excelize count the limit in UTF-16 code units
+	if utf16Len(name) <= excelize.MaxSheetNameLength {
 		return name
 	}
 	var (
@@ -175,7 +179,7 @@ func sanitizeSheetName(name string) string {
 	)
 	for _, r := range name {
 		n := utf16.RuneLen(r)
-		if units+n > maxSheetNameUnits-1 {
+		if units+n > excelize.MaxSheetNameLength-1 {
 			break
 		}
 		b.WriteRune(r)
@@ -206,8 +210,10 @@ func utf16Len(s string) (n int) {
 //	  ├─ formatters by type: exact type, interfaces in registration order, kind,
 //	  │    then the same for the pointed-to type of a non-nil pointer,
 //	  │    then for the dynamic type of a non-nil interface value
-//	  ├─ time.Time: date serial with the time format; zero time → empty cell
-//	  ├─ time.Duration: fraction of a day with the duration format
+//	  ├─ time.Time: date serial with the time format; zero time → empty cell;
+//	  │    before 1900 or after 9999 → text, see DateTimeCell
+//	  ├─ time.Duration: fraction of a day with the duration format;
+//	  │    negative → text -H:MM:SS[.fraction], Excel has no negative times
 //	  ├─ retable.IsNullLike → the nil value text, empty cell by default
 //	  ├─ bool, string, integer and float kinds as Excel bool, string, number
 //	  ├─ fmt.Stringer of the value, of its address, of the dereferenced value
@@ -218,6 +224,11 @@ func utf16Len(s string) (n int) {
 // next step; any other error aborts the sheet and poisons the workbook.
 // The built-in steps from time.Time on look through pointers and
 // interfaces, so a *time.Time is written as a date.
+// The kinds come before fmt.Stringer, so that a number type with a
+// String method, like an amount, stays a number Excel can sum.
+// csvtable and htmltable write the String result instead, so an enum
+// like time.Month is "March" there and 3 here; register a type or
+// kind formatter to write its text.
 //
 // The header row, written when enabled with WithHeaderRow, holds the
 // column names of the view, for a struct slice the titles of
@@ -225,8 +236,10 @@ func utf16Len(s string) (n int) {
 //
 // Round trip: a sheet written with a header row and read back with
 // exceltable.Read and retable.ViewToStructSlice gives the same structs,
-// except that times lose their time zone (Excel dates have none) and
-// any fraction of a second the time format does not show.
+// except that times lose their time zone (Excel dates have none),
+// and times and durations lose any fraction of a second that their
+// format does not show: the default duration format "[h]:mm:ss" rounds
+// 1.5s to 2s. Use WithDurationFormat("[h]:mm:ss.000") to keep milliseconds.
 // Without a header row, a column whose cells are all empty is dropped
 // by the reader and the following columns shift.
 //
@@ -234,7 +247,6 @@ func utf16Len(s string) (n int) {
 type Writer[T any] struct {
 	viewer           retable.Viewer
 	columnFormatters map[int]CellFormatter
-	// gstack-shortcut(dec-ff9cbe37): exceltable needs root >= v1.0.0-beta.2 (lockstep), upgrade when a consumer reports undefined retable.ReflectTypeDispatcher
 	formatters       *retable.ReflectTypeDispatcher[CellFormatter]
 	headerRow        bool
 	headerFontFamily string
@@ -272,7 +284,8 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 	defer func() {
 		err = errors.Join(err, wb.Close())
 	}()
-	if err := w.WriteViewSheet(ctx, wb, view); err != nil {
+	err = w.WriteViewSheet(ctx, wb, view)
+	if err != nil {
 		return err
 	}
 	_, err = wb.WriteTo(dest)
@@ -346,7 +359,8 @@ func (w *Writer[T]) writeSheetRows(ctx context.Context, wb *Workbook, sheet stri
 		for col, name := range columns {
 			values[col] = excelize.Cell{StyleID: headerStyle, Value: name}
 		}
-		if err := setStreamRow(stream, rowNum, values); err != nil {
+		err = setStreamRow(stream, rowNum, values)
+		if err != nil {
 			return err
 		}
 		rowNum++
@@ -365,7 +379,8 @@ func (w *Writer[T]) writeSheetRows(ctx context.Context, wb *Workbook, sheet stri
 				return err
 			}
 		}
-		if err := setStreamRow(stream, rowNum, values); err != nil {
+		err = setStreamRow(stream, rowNum, values)
+		if err != nil {
 			return err
 		}
 		rowNum++
@@ -383,18 +398,11 @@ func setStreamRow(stream *excelize.StreamWriter, rowNum int, values []any) error
 
 // excelizeValue converts cell into a value for excelize.StreamWriter.SetRow.
 func (w *Writer[T]) excelizeValue(wb *Workbook, cell Cell) (any, error) {
+	// Only number and date/time cells have a format;
+	// an empty number format is Excel's General format
 	format := cell.format
-	switch cell.kind {
-	case cellEmpty:
-		return nil, nil
-	case cellDateTime:
-		if format == "" {
-			format = w.timeFormat
-		}
-	case cellNumber:
-		// Format may be empty for General
-	default:
-		return cell.value, nil
+	if format == "" && cell.kind == cellDateTime {
+		format = w.timeFormat
 	}
 	if format == "" {
 		return cell.value, nil
@@ -416,59 +424,33 @@ func (w *Writer[T]) cell(ctx context.Context, view retable.View, reflectView ret
 		}
 	}
 	val := reflectView.ReflectCell(row, col)
-	if val.IsValid() {
-		cell, err := w.formatByType(ctx, view, row, col, val)
-		if !errors.Is(err, errors.ErrUnsupported) {
-			return cell, err
-		}
-		if val.Kind() == reflect.Interface && !val.IsNil() {
-			cell, err = w.formatByType(ctx, retable.DerefView(view), row, col, val.Elem())
-			if !errors.Is(err, errors.ErrUnsupported) {
-				return cell, err
-			}
-		}
-	}
-	return w.builtinCell(val), nil
-}
-
-// formatByType calls the formatters registered for the type of val
-// until one handles the cell. Formatters for the pointed-to type of
-// a pointer get a DerefView and are skipped for a nil pointer.
-func (w *Writer[T]) formatByType(ctx context.Context, view retable.View, row, col int, val reflect.Value) (Cell, error) {
-	var derefView retable.View
-	for formatter, deref := range w.formatters.Candidates(val.Type()) {
-		formatView := view
-		if deref {
-			if val.IsNil() {
-				break
-			}
-			if derefView == nil {
-				derefView = retable.DerefView(view)
-			}
-			formatView = derefView
-		}
+	for formatter, formatView := range w.formatters.CellCandidates(view, val) {
 		cell, err := formatter.FormatCell(ctx, formatView, row, col)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return cell, err
 		}
 	}
-	return Cell{}, errors.ErrUnsupported
+	return w.builtinCell(val), nil
 }
 
 // builtinCell converts val with the built-in steps documented at Writer.
 func (w *Writer[T]) builtinCell(val reflect.Value) Cell {
 	deref := val
-	for deref.IsValid() && (deref.Kind() == reflect.Pointer || deref.Kind() == reflect.Interface) && !deref.IsNil() {
+	for range maxDerefDepth {
+		if !deref.IsValid() || deref.Kind() != reflect.Pointer && deref.Kind() != reflect.Interface || deref.IsNil() {
+			break
+		}
 		deref = deref.Elem()
 	}
 	if deref.IsValid() && deref.CanInterface() {
 		switch deref.Type() {
 		case typeOfTime:
 			// DateTimeCell returns an empty cell for the zero time,
-			// which is not null in the sense of the nil value
-			return DateTimeCell(deref.Interface().(time.Time), w.timeFormat)
+			// which is not null in the sense of the nil value.
+			// excelizeValue applies the writer's time format.
+			return DateTimeCell(deref.Interface().(time.Time), "")
 		case typeOfDuration:
-			return NumberCell(durationSerial(time.Duration(deref.Int())), w.durationFormat)
+			return durationCell(time.Duration(deref.Int()), w.durationFormat)
 		}
 	}
 	if retable.IsNullLike(val) {
@@ -503,13 +485,14 @@ func (w *Writer[T]) builtinCell(val reflect.Value) Cell {
 			return StringCell(s.String())
 		}
 	}
-	if s, ok := deref.Interface().(fmt.Stringer); ok {
+	x := deref.Interface()
+	if s, ok := x.(fmt.Stringer); ok {
 		return StringCell(s.String())
 	}
 	if deref.Kind() == reflect.Slice && deref.Type().Elem().Kind() == reflect.Uint8 {
 		return StringCell(string(deref.Bytes()))
 	}
-	return StringCell(fmt.Sprint(deref.Interface()))
+	return StringCell(fmt.Sprint(x))
 }
 
 // newView creates the view of table with the configured viewer

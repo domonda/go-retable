@@ -24,7 +24,7 @@ var _ CellFormatter = new(ReflectTypeCellFormatter)
 // The formatter returns errors.ErrUnsupported if no matching formatter is found and no
 // Default is configured, allowing it to be used in formatter chains.
 //
-// The lookup of steps 1-4 is a ReflectTypeDispatcher[CellFormatter],
+// The lookup of steps 1-5 is ReflectTypeDispatcher.CellCandidates,
 // shared with the exceltable writer.
 //
 // Design pattern:
@@ -104,44 +104,14 @@ func (f *ReflectTypeCellFormatter) FormatCell(ctx context.Context, view View, ro
 		// of panicking on the invalid reflect.Value.
 		return "", false, errors.ErrUnsupported
 	}
-	str, raw, err = f.formatCandidates(ctx, view, row, col, cellVal)
-	if !errors.Is(err, errors.ErrUnsupported) {
-		return str, raw, err
-	}
-	if cellVal.Kind() == reflect.Interface && !cellVal.IsNil() {
-		// A struct field of interface type: nothing matched the
-		// interface type itself, so try the dynamic type of the value.
-		str, raw, err = f.formatCandidates(ctx, DerefView(view), row, col, cellVal.Elem())
+	for formatter, formatView := range f.dispatcher.CellCandidates(view, cellVal) {
+		str, raw, err = formatter.FormatCell(ctx, formatView, row, col)
 		if !errors.Is(err, errors.ErrUnsupported) {
 			return str, raw, err
 		}
 	}
 	if f.Default != nil {
 		return f.Default.FormatCell(ctx, view, row, col)
-	}
-	return "", false, errors.ErrUnsupported
-}
-
-// formatCandidates calls the formatters the dispatcher yields for the type
-// of cellVal until one handles the cell. Candidates for the pointed-to type
-// of a pointer get a DerefView and are skipped for a nil pointer.
-func (f *ReflectTypeCellFormatter) formatCandidates(ctx context.Context, view View, row, col int, cellVal reflect.Value) (string, bool, error) {
-	var derefView View
-	for formatter, deref := range f.dispatcher.Candidates(cellVal.Type()) {
-		formatView := view
-		if deref {
-			if cellVal.IsNil() {
-				break
-			}
-			if derefView == nil {
-				derefView = DerefView(view)
-			}
-			formatView = derefView
-		}
-		str, raw, err := formatter.FormatCell(ctx, formatView, row, col)
-		if !errors.Is(err, errors.ErrUnsupported) {
-			return str, raw, err
-		}
 	}
 	return "", false, errors.ErrUnsupported
 }
@@ -315,20 +285,13 @@ func (f *ReflectTypeCellFormatter) WithDefaultFormatter(fmt CellFormatter) *Refl
 // 	return f.WithDefaultFormatter(fmt)
 // }
 
-// cloneOrNew creates a deep copy of the ReflectTypeCellFormatter.
-// If f is nil, returns a new empty formatter.
-//
-// This method implements the immutable builder pattern by creating a copy before
-// modifications, ensuring that the original formatter remains unchanged when
-// With* methods are called.
-//
-// Returns:
-//   - A new ReflectTypeCellFormatter with copied maps and default formatter
+// cloneOrNew returns a shallow copy of f for the With* methods,
+// or a new empty formatter if f is nil. The copy shares the
+// dispatcher, which is safe because the dispatcher is immutable.
 func (f *ReflectTypeCellFormatter) cloneOrNew() *ReflectTypeCellFormatter {
 	if f == nil {
 		return new(ReflectTypeCellFormatter)
 	}
-	// The dispatcher is immutable, so sharing it is safe.
 	c := *f
 	return &c
 }

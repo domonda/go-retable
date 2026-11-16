@@ -509,6 +509,34 @@ func TestSmartAssign(t *testing.T) {
 			wantDst: byteCount(5 * time.Minute),
 		},
 		{
+			// The clock form is how spreadsheets display a duration
+			name:    "clock string to time.Duration",
+			dst:     assignableValue[time.Duration](),
+			src:     reflect.ValueOf("-1:30:02.5"),
+			wantDst: -(time.Hour + 30*time.Minute + 2500*time.Millisecond),
+		},
+		{
+			name:    "clock string to *time.Duration",
+			dst:     assignableValue[*time.Duration](),
+			src:     reflect.ValueOf("30:00:00"),
+			wantDst: pointerTo(30 * time.Hour),
+		},
+		{
+			// The clock form stays limited to time.Duration itself,
+			// so the cost of the defined int64 types does not grow
+			// to a time of day being read as nanoseconds.
+			name:    "clock string to defined int64 type",
+			dst:     assignableValue[byteCount](),
+			src:     reflect.ValueOf("12:30:00"),
+			wantErr: true,
+		},
+		{
+			name:    "clock string to defined time.Duration type",
+			dst:     assignableValue[timeout](),
+			src:     reflect.ValueOf("12:30:00"),
+			wantErr: true,
+		},
+		{
 			// The predeclared int64 is excluded from that, so an
 			// ordinary numeric column keeps rejecting duration strings.
 			name:    "duration string to int64",

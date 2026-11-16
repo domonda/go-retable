@@ -107,6 +107,7 @@ func (d *ReflectTypeDispatcher[F]) WithKind(kind reflect.Kind, value F) *Reflect
 // A caller formatting a value stops at the first candidate that handles
 // it. For candidates with deref set it has to pass the dereferenced value
 // (for example a DerefView) and must skip them for a nil pointer.
+// CellCandidates does both for a view cell.
 func (d *ReflectTypeDispatcher[F]) Candidates(typ reflect.Type) iter.Seq2[F, bool] {
 	return func(yield func(F, bool) bool) {
 		if d == nil || typ == nil {
@@ -142,6 +143,63 @@ func (d *ReflectTypeDispatcher[F]) yieldCandidates(typ reflect.Type, deref bool,
 		}
 	}
 	return true
+}
+
+// CellCandidates yields the values registered for the type of cell, the
+// reflected value of the cell of view that the values will format, each
+// with the view to pass to it:
+//
+//	the Candidates of the type of cell, with view,
+//	  or a DerefView of view for the pointed-to type of a non-nil pointer
+//	if cell is a non-nil interface value: the same for its dynamic type,
+//	  with a DerefView of view
+//
+// Candidates for the pointed-to type of a nil pointer are skipped.
+// An invalid cell, for example of a nil interface, yields nothing.
+// A DerefView is only created when a value is yielded with it.
+func (d *ReflectTypeDispatcher[F]) CellCandidates(view View, cell reflect.Value) iter.Seq2[F, View] {
+	return func(yield func(F, View) bool) {
+		if d == nil || !cell.IsValid() {
+			return
+		}
+		views := derefViews{view}
+		if !d.yieldCellCandidates(cell, &views, 0, yield) {
+			return
+		}
+		if cell.Kind() == reflect.Interface && !cell.IsNil() {
+			d.yieldCellCandidates(cell.Elem(), &views, 1, yield)
+		}
+	}
+}
+
+// yieldCellCandidates yields the Candidates of the type of cell with the
+// view at depth, or the one below it for deref candidates, and reports
+// whether the caller wants more.
+func (d *ReflectTypeDispatcher[F]) yieldCellCandidates(cell reflect.Value, views *derefViews, depth int, yield func(F, View) bool) bool {
+	for value, deref := range d.Candidates(cell.Type()) {
+		viewDepth := depth
+		if deref {
+			if cell.IsNil() {
+				return true
+			}
+			viewDepth++
+		}
+		if !yield(value, views.at(viewDepth)) {
+			return false
+		}
+	}
+	return true
+}
+
+// derefViews holds a view at index 0 and lazily created
+// DerefViews of the previous index at the following indices.
+type derefViews [3]View
+
+func (v *derefViews) at(depth int) View {
+	if v[depth] == nil {
+		v[depth] = DerefView(v.at(depth - 1))
+	}
+	return v[depth]
 }
 
 // clone returns a copy of d that shares no mutable state with it,

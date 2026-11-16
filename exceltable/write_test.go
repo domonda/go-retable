@@ -292,6 +292,9 @@ func TestWriter_BuiltinCells(t *testing.T) {
 		one        = 1
 	)
 	longString := strings.Repeat("x", 32767+10)
+	// A self referential value is legal Go and has no end to unwrap
+	selfAny := new(any)
+	*selfAny = selfAny
 	cases := []struct {
 		name string
 		cell any
@@ -321,6 +324,9 @@ func TestWriter_BuiltinCells(t *testing.T) {
 		{name: "nil time pointer is null", cell: nilTimePtr, want: emptyCell, wantNull: &writtenCell{Type: excelize.CellTypeInlineString, Raw: "NULL"}},
 		{name: "duration over 24h", cell: 30 * time.Hour, want: numCell("1.25", "[h]:mm:ss")},
 		{name: "pointer to duration", cell: new(30 * time.Hour), want: numCell("1.25", "[h]:mm:ss")},
+		{name: "negative duration as text", cell: -90 * time.Minute, want: textCell("-1:30:00")},
+		{name: "time before 1900 as text", cell: time.Date(1899, 1, 2, 3, 4, 5, 0, time.UTC), want: textCell("1899-01-02T03:04:05")},
+		{name: "1900-01-01 is serial 1", cell: time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC), want: numCell("1", "dd.mm.yyyy hh:mm:ss")},
 		{name: "nil pointer is null", cell: nilIntPtr, want: emptyCell, wantNull: &writtenCell{Type: excelize.CellTypeInlineString, Raw: "NULL"}},
 		{name: "nil interface is null", cell: nil, want: emptyCell, wantNull: &writtenCell{Type: excelize.CellTypeInlineString, Raw: "NULL"}},
 		{name: "pointer to int", cell: &one, want: numCell("1", "")},
@@ -334,6 +340,7 @@ func TestWriter_BuiltinCells(t *testing.T) {
 		{name: "bytes as string", cell: []byte("bytes"), want: textCell("bytes")},
 		{name: "Sprint fallback", cell: builtinPlain{A: 1, B: "b"}, want: textCell("{1 b}")},
 		{name: "Sprint of dereferenced value", cell: &builtinPlain{A: 2, B: "c"}, want: textCell("{2 c}")},
+		{name: "self referential value does not hang", cell: selfAny, want: textCell(fmt.Sprint(selfAny))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -721,6 +728,14 @@ func TestWriter_RoundTrip(t *testing.T) {
 			StringPtr: &s, IntPtr: &i, TimePtr: &tm, DurationPtr: &d,
 		},
 		{
+			// Excel cannot display a negative duration or a date before
+			// 1900, so both are written as text that reads back.
+			// Before 1900-03-01, Excel's day zero is 1899-12-31.
+			String: "edge values", Duration: -(90*time.Minute + 2500*time.Millisecond),
+			Time: time.Date(1899, 12, 31, 12, 0, 0, 0, time.UTC), TimePtr: new(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)),
+			DurationPtr: new(time.Duration(0)), StringPtr: new(""),
+		},
+		{
 			String: "zero values",
 			// A nil *string would be written as an empty cell and read back
 			// as a pointer to "", because the reader assigns "" to string
@@ -737,4 +752,23 @@ func TestWriter_RoundTrip(t *testing.T) {
 	got, err := retable.ViewToStructSlice[roundTripRow](view, &retable.DefaultStructFieldNaming, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, rows, got)
+}
+
+// TestWriter_DurationPrecision: the default duration format rounds to
+// whole seconds, a format with milliseconds keeps them.
+func TestWriter_DurationPrecision(t *testing.T) {
+	type row struct{ Duration time.Duration }
+	rows := []row{{1500 * time.Millisecond}, {999 * time.Millisecond}}
+	readBack := func(writer *Writer[[]row]) []row {
+		t.Helper()
+		var buf bytes.Buffer
+		require.NoError(t, writer.WithHeaderRow(true).Write(context.Background(), &buf, rows, "D"))
+		view, err := ReadFirstSheet(bytes.NewReader(buf.Bytes()), false)
+		require.NoError(t, err)
+		got, err := retable.ViewToStructSlice[row](view, &retable.DefaultStructFieldNaming, nil, nil, nil, nil)
+		require.NoError(t, err)
+		return got
+	}
+	require.Equal(t, []row{{2 * time.Second}, {time.Second}}, readBack(NewWriter[[]row]()))
+	require.Equal(t, rows, readBack(NewWriter[[]row]().WithDurationFormat("[h]:mm:ss.000")))
 }

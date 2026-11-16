@@ -429,8 +429,8 @@ func (p *StringParser) ParseTime(str string) (time.Time, error) {
 }
 
 // ParseDuration parses a string into a time.Duration value.
-// It first tries Go's standard time.ParseDuration, which accepts strings
-// like "1h30m", "5s", "100ms". If that fails, it accepts the clock form
+// It accepts Go's standard format of time.ParseDuration, strings
+// like "1h30m", "5s", "100ms", and the clock form
 // [-]H:MM:SS[.fraction] that spreadsheets display for a duration
 // formatted as "[h]:mm:ss": any number of hour digits, then exactly two
 // digits each for minutes and seconds below 60, and an optional fraction
@@ -460,14 +460,14 @@ func (p *StringParser) ParseTime(str string) (time.Time, error) {
 //	d, _ := parser.ParseDuration("1:30:02.5") // 1 hour 30 minutes 2.5 seconds
 //	_, err := parser.ParseDuration("invalid") // error
 func (p *StringParser) ParseDuration(str string) (time.Duration, error) {
-	d, err := time.ParseDuration(str)
-	if err == nil {
-		return d, nil
+	// time.ParseDuration never accepts a colon,
+	// so a string with one can only be in the clock form
+	if strings.IndexByte(str, ':') >= 0 {
+		if d, ok := parseClockDuration(str); ok {
+			return d, nil
+		}
 	}
-	if d, ok := parseClockDuration(str); ok {
-		return d, nil
-	}
-	return 0, err
+	return time.ParseDuration(str)
 }
 
 // parseClockDuration parses the clock form [-]H:MM:SS[.fraction]

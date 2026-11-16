@@ -213,6 +213,11 @@ func TestIsNullLike(t *testing.T) {
 		onePtr       = &one
 	)
 	unexported := struct{ v nullLikeValueIsNull }{}
+	// A self referential value is legal Go and has no end to unwrap
+	selfAny := new(any)
+	*selfAny = selfAny
+	var selfPointer selfPtr
+	selfPointer = &selfPointer
 	tests := []struct {
 		name string
 		val  reflect.Value
@@ -228,6 +233,8 @@ func TestIsNullLike(t *testing.T) {
 		{name: "any holding 1", val: interfaceHeld(1), want: false},
 		{name: "pointer to zero time.Time (changed)", val: reflect.ValueOf(&zeroTime), want: true},
 		{name: "pointer to non-zero time.Time", val: reflect.ValueOf(&someTime), want: false},
+		{name: "any holding a pointer to itself", val: reflect.ValueOf(selfAny), want: false},
+		{name: "self referential pointer type", val: reflect.ValueOf(selfPointer), want: false},
 
 		// Rule 2: invalid reflect.Value
 		{name: "reflect.Value{}", val: reflect.Value{}, want: true},
