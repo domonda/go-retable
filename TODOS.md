@@ -26,9 +26,11 @@
 **Priority:** P1
 **Depends on:** None
 
-### CI never tests exceltable and has never run gosec
+### CI has never run gosec
 
-**What:** `.github/workflows/go.yml` runs `go test ./...` from the root, which resolves to four packages; `exceltable` is a separate module and is not among them. `.github/workflows/gosec.yml` triggers on `master` while the default branch is `main`, so it has no runs at all. `codeql-analysis.yml` pins `github/codeql-action/*@v1`, which is retired, and `setup-go` pins Go 1.23 against a `go.mod` that requires 1.26, passing only because the toolchain directive downloads 1.26.
+**What:** `.github/workflows/gosec.yml` triggers on `master` while the default branch is `main`, so it has no runs at all. `codeql-analysis.yml` pins `github/codeql-action/*@v1`, which is retired.
+
+**Done in v1.0.0-beta.2:** `.github/workflows/go.yml` used to run `go test ./...` from the root, which never reached the `exceltable` module, with `setup-go` pinned to Go 1.23. It now runs `./test-workspace.sh` with the Go version from `go.mod`, and the script fails when `go list` fails.
 
 **Why:** Tagging a v1 whose security scan has never executed, and whose Excel reader is never exercised by CI, states a level of assurance that has not been measured. `./test-workspace.sh` already iterates the workspace modules correctly and is what the workflow should call.
 
@@ -52,10 +54,10 @@ Surface counts at the time of the review:
 
 | Package    | Exported symbols | Notes                                       |
 | ---------- | ---------------- | ------------------------------------------- |
-| retable    | 63               | plus 32 methods on `csvtable.Writer`        |
+| retable    | 63               | plus 32 methods on `csvtable.Writer`; since beta.2 plus `ReflectTypeDispatcher` |
 | csvtable   | 20               | 5 `Read*ToStructSlice` variants, 8 params   |
 | htmltable  | 9                | plus 22 methods on `Writer`                 |
-| exceltable | 6                | 2x2 matrix of reader functions              |
+| exceltable | 20               | 2x2 matrix of reader functions; since beta.2 plus `Writer` (14 methods), `Workbook` (2 methods), `Cell` and 4 constructors, `CellFormatter`, `ContentType`, `ErrDuplicateSheetName` |
 | sqltable   | 4                | 15% coverage, 3 consumer call sites         |
 
 ### Decide whether ReflectCell is part of View or not
@@ -196,6 +198,8 @@ Nothing in this item is still open.
 
 **Context:** Proposed: a `retable.CellPipeline` (name open) holding column formatters, a `ReflectTypeCellFormatter` and the nil value, with `FormatCell` returning the final string and raw flag, embedded by both writers. Both writers keep their format-specific `With*` methods only. Delete the `Func` twins and let callers write `retable.CellFormatterFunc(f)`. Replace the two `ReflectFunc` methods with one that returns an error, or keep the panic and document that it is a programming error like `template.Must`.
 
+Since v1.0.0-beta.2 there is a third writer, `exceltable.Writer`, whose formatters return a typed `exceltable.Cell` instead of a string, so a shared pipeline has to be generic over the formatter result. The type, interface and kind lookup is already shared: `retable.ReflectTypeDispatcher[F]` serves `ReflectTypeCellFormatter` and `exceltable.Writer`, with interfaces in registration order. What the three writers still each implement is the column formatter step, the interface-field unwrapping around `Candidates`, and the null fallback.
+
 **Effort:** M
 **Priority:** P1
 **Depends on:** The raw output decision
@@ -226,7 +230,7 @@ Nothing in this item is still open.
 
 ### Decide the fate of sqltable and the subpackage asymmetry
 
-**What:** `sqltable` is a regexp `SELECT` parser whose `parseQuery` returns `offset` and `limit` that are always zero, has 15% coverage, and three consumer call sites. Across the subpackages: CSV reads and writes, HTML only writes, Excel only reads and returns every cell as a string even with `rawCellStrings=false`, and compacts empty rows and columns so indices no longer match the sheet. `exceltable` exports `type ErrSheetNotExist = excelize.ErrSheetNotExist`, leaking the dependency's type into the API. `csvtable.Encoder` is a bespoke `Bytes([]byte) ([]byte, error)` interface where `golang.org/x/text/transform.Transformer` already exists. `csvtable.Writer` defaults to `;` and `\r\n`, a German Excel convention rather than RFC 4180. `csvtable.Format.Encoding` and `FormatDetectionConfig.Encodings` are stringly typed.
+**What:** `sqltable` is a regexp `SELECT` parser whose `parseQuery` returns `offset` and `limit` that are always zero, has 15% coverage, and three consumer call sites. Across the subpackages: CSV reads and writes, HTML only writes, Excel reads, and since v1.0.0-beta.2 writes typed cells, but its reader returns every cell as a string even with `rawCellStrings=false`, and compacts empty rows and columns so indices no longer match the sheet. `exceltable` exports `type ErrSheetNotExist = excelize.ErrSheetNotExist`, leaking the dependency's type into the API. `csvtable.Encoder` is a bespoke `Bytes([]byte) ([]byte, error)` interface where `golang.org/x/text/transform.Transformer` already exists. `csvtable.Writer` defaults to `;` and `\r\n`, a German Excel convention rather than RFC 4180. `csvtable.Format.Encoding` and `FormatDetectionConfig.Encodings` are stringly typed.
 
 **Why:** A v1 promises each of these as they are. `sqltable` in particular is the least tested code in the module and the only subpackage whose defects surface inside `database/sql` where the caller cannot step in.
 

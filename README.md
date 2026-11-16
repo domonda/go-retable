@@ -8,7 +8,7 @@ A powerful Go library for working with tabular data using reflection. `go-retabl
 ## Features
 
 - **Unified Table Interface**: Work with all tabular data through a single `View` interface
-- **Multiple Format Support**: Read/write CSV, Excel (XLSX), HTML tables, and SQL result sets
+- **Multiple Format Support**: Read/write CSV and Excel (XLSX) with typed cells, write HTML tables, read SQL result sets
 - **Type-Safe Conversions**: Convert between struct slices, string slices, and generic values
 - **Smart Type Conversion**: Intelligent value assignment across different Go types
 - **Configurable Parsing**: Locale number formats, custom time layouts and null-value spellings, with scanners for your own types
@@ -121,6 +121,36 @@ for _, sheet := range sheets {
 
 // Read first sheet only
 firstSheet, err := exceltable.ReadLocalFileFirstSheet("data.xlsx", false)
+```
+
+Writing keeps cells typed, so numbers stay numbers and dates stay Excel dates
+that can be sorted, filtered and summed:
+
+```go
+type Invoice struct {
+    Number string    `col:"Invoice"`
+    Date   time.Time `col:"Date"`
+    Total  float64   `col:"Total"`
+}
+
+writer := exceltable.NewWriter[[]Invoice]().
+    WithHeaderRow(true).
+    WithTimeFormat("dd.mm.yyyy").
+    WithColumnFormatter(2, exceltable.CellFormatterFunc(
+        func(ctx context.Context, view retable.View, row, col int) (exceltable.Cell, error) {
+            return exceltable.NumberCell(view.Cell(row, col).(float64), "#,##0.00"), nil
+        },
+    ))
+
+// One sheet
+err := writer.Write(ctx, w, invoices, "Invoices")
+
+// Several sheets, each with its own row type
+wb := exceltable.NewWorkbook()
+defer wb.Close()
+err = overviewWriter.WriteSheet(ctx, wb, overview, "Overview")
+err = writer.WriteSheet(ctx, wb, invoices, "Invoices")
+_, err = wb.WriteTo(w) // w.Header().Set("Content-Type", exceltable.ContentType)
 ```
 
 ### Generating HTML Tables
@@ -837,11 +867,21 @@ joined back together afterwards, so the parser has no quote state while splittin
 
 ### exceltable
 
-Excel file reading using excelize:
+Excel file reading and writing using excelize:
 - Read XLSX files from filesystem or `io.Reader`
 - Multiple sheet support
 - Raw or formatted cell values
 - Automatic empty row/column cleanup
+- `Writer[T]` writes typed cells: numbers with number format codes, Excel
+  dates (1900 date system, the wall clock of each time in its own location),
+  durations as `[h]:mm:ss`, booleans and text
+- Formatters by column, type, interface and kind return an `exceltable.Cell`,
+  the typed counterpart of `retable.CellFormatter`
+- A `Workbook` takes several sheets of different row types; sheet names are
+  sanitized for Excel, and a duplicate name is an `ErrDuplicateSheetName`
+  error instead of a merged sheet
+- A sheet that fails midway poisons the workbook, so a truncated file is
+  never written
 
 ### htmltable
 
@@ -905,7 +945,14 @@ for i := range records {
     records[i].Name = strings.ToUpper(records[i].Name)
 }
 
-// Write to Excel (via another library or export as HTML/CSV)
+// Write to Excel
+xlsxFile, err := os.Create("output.xlsx")
+check(err)
+defer xlsxFile.Close()
+err = exceltable.NewWriter[[]Record]().
+    WithHeaderRow(true).
+    Write(context.Background(), xlsxFile, records, "Data")
+check(err)
 ```
 
 ### Example 2: Data Validation Pipeline
