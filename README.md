@@ -153,6 +153,8 @@ err = writer.WriteSheet(ctx, wb, invoices, "Invoices")
 _, err = wb.WriteTo(w) // w.Header().Set("Content-Type", exceltable.ContentType)
 ```
 
+More in [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md).
+
 ### Generating HTML Tables
 
 ```go
@@ -867,21 +869,23 @@ joined back together afterwards, so the parser has no quote state while splittin
 
 ### exceltable
 
-Excel file reading and writing using excelize:
-- Read XLSX files from filesystem or `io.Reader`
-- Multiple sheet support
-- Raw or formatted cell values
-- Automatic empty row/column cleanup
-- `Writer[T]` writes typed cells: numbers with number format codes, Excel
-  dates (1900 date system, the wall clock of each time in its own location),
-  durations as `[h]:mm:ss`, booleans and text
-- Formatters by column, type, interface and kind return an `exceltable.Cell`,
-  the typed counterpart of `retable.CellFormatter`
-- A `Workbook` takes several sheets of different row types; sheet names are
-  sanitized for Excel, and a duplicate name is an `ErrDuplicateSheetName`
-  error instead of a merged sheet
-- A sheet that fails midway poisons the workbook, so a truncated file is
-  never written
+Excel `.xlsx` reading and writing using excelize:
+- Read XLSX files from filesystem or `io.Reader`, all sheets or the first,
+  with raw or formatted cell values and empty rows and columns removed
+- `Writer[T]` writes typed cells, so numbers, dates, durations and booleans
+  stay sortable and summable in Excel; formatters by column, type, interface
+  and kind return an `exceltable.Cell`
+- A `Workbook` takes several sheets of different row types, and a sheet that
+  fails midway makes the workbook refuse to write a truncated file
+
+Documentation:
+- [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md):
+  several sheets, HTTP downloads, money and date columns, enums, troubleshooting
+- [Writer reference](docs/exceltable/reference-writer.md): every method and
+  default, the conversion of each Go type, sheet name rules, errors
+- [Why exceltable writes typed cells](docs/exceltable/explanation-typed-cells.md):
+  date serials, time zones, precision, the unusable workbook, trade-offs
+- API on [pkg.go.dev](https://pkg.go.dev/github.com/domonda/go-retable/exceltable)
 
 ### htmltable
 
