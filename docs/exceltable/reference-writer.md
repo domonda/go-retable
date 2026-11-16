@@ -37,7 +37,8 @@ table, not one row: `Writer[[]Invoice]`, not `Writer[Invoice]`.
 | `T` | Works with the default viewer | Columns |
 | --- | --- | --- |
 | `[]Invoice` | yes | the exported fields of `Invoice`, titles from the `col` tag |
-| `[]*Invoice` | yes, if no element is nil | same |
+| `[]*Invoice` | yes | same; a nil element is a row of null cells |
+| `[3]Invoice`, `*[]Invoice` | yes | same as the slice |
 | `[][]string` | yes | the first row holds the column names |
 | `any` | yes, for every table the viewer accepts, decided per call | those of the table passed |
 | `Invoice` | compiles, `Write` fails: `table must be slice or array kind but is Invoice` | |

@@ -103,6 +103,18 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
   `ReflectTypeCellFormatter`. Register formatters with its `With*` methods;
   `Default` stays.
 
+### Fixed
+
+- A nil element of a slice of struct pointers, like `[]*Invoice{nil}`, and the
+  fields of a nil embedded struct pointer are null cells: `Cell` returns nil and
+  `ReflectCell` an invalid `reflect.Value`, which every writer renders as its
+  nil value. Writing such a table with csvtable, htmltable or exceltable used
+  to panic in `reflect`. `StructFieldReflectValues`, `StructFieldAnyValues` and
+  their `Indexed` variants return nil values for a nil struct pointer.
+- `StructRowsViewer.NewView`, and with it every writer's default viewer,
+  accepts an array of structs, as documented. It returned
+  `table must be slice or array kind` for every array.
+
 ## [1.0.0-beta.1] - 2026-10-26
 
 The first tagged release, as `v1.0.0-beta.1` for the root module and

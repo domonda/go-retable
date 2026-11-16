@@ -138,7 +138,7 @@ func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 	for rows.Kind() == reflect.Pointer && !rows.IsNil() {
 		rows = rows.Elem()
 	}
-	if rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array {
+	if rows.Kind() != reflect.Slice && rows.Kind() != reflect.Array {
 		return nil, fmt.Errorf("table must be slice or array kind but is %T", table)
 	}
 	rowType := rows.Type().Elem()

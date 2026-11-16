@@ -221,3 +221,70 @@ func TestStructRowsViewer_NewView_Errors(t *testing.T) {
 		})
 	}
 }
+
+// TestStructRowsViewer_NewView_Array: an array of structs is a table like a
+// slice, as NewView documents. The kind check used to reject every array.
+func TestStructRowsViewer_NewView_Array(t *testing.T) {
+	type row struct{ Name string }
+	rows := [2]row{{"a"}, {"b"}}
+
+	for name, table := range map[string]any{"array": rows, "pointer to array": &rows} {
+		t.Run(name, func(t *testing.T) {
+			view, err := DefaultStructRowsViewer().NewView("Rows", table)
+			require.NoError(t, err)
+			require.Equal(t, 2, view.NumRows())
+			require.Equal(t, "a", view.Cell(0, 0))
+			require.Equal(t, "b", view.Cell(1, 0))
+		})
+	}
+}
+
+// TestStructRowsView_NilRows: a nil element of a slice of struct pointers and
+// a nil embedded struct pointer are rows and fields without values. They read
+// as nil and as an invalid reflect.Value, which the writers render as null,
+// instead of panicking in reflect.
+func TestStructRowsView_NilRows(t *testing.T) {
+	type Embedded struct {
+		City string
+	}
+	type row struct {
+		Name string
+		*Embedded
+		Count int
+	}
+	rows := []*row{
+		{Name: "a", Embedded: &Embedded{City: "Vienna"}, Count: 1},
+		nil,
+		{Name: "c", Count: 3}, // nil embedded struct pointer
+	}
+
+	viewers := map[string]*StructRowsViewer{
+		"1:1 columns":      DefaultStructRowsViewer(),
+		"remapped columns": {StructFieldNaming: DefaultStructFieldNaming, MapIndices: map[int]int{0: 2, 1: 0, 2: 1}},
+	}
+	for name, viewer := range viewers {
+		t.Run(name, func(t *testing.T) {
+			view, err := viewer.NewView("Rows", rows)
+			require.NoError(t, err)
+			reflectView := view.(ReflectCellView)
+			// Column of each field for this viewer
+			nameCol, cityCol, countCol := 0, 1, 2
+			if viewer.MapIndices != nil {
+				nameCol, cityCol, countCol = 2, 0, 1
+			}
+
+			require.Equal(t, "a", view.Cell(0, nameCol))
+			require.Equal(t, "Vienna", view.Cell(0, cityCol))
+
+			for col := range view.NumColumns() {
+				require.Nil(t, view.Cell(1, col), "nil row, column %d", col)
+				require.False(t, reflectView.ReflectCell(1, col).IsValid(), "nil row, column %d", col)
+			}
+
+			require.Equal(t, "c", view.Cell(2, nameCol))
+			require.Nil(t, view.Cell(2, cityCol), "field of nil embedded struct")
+			require.False(t, reflectView.ReflectCell(2, cityCol).IsValid())
+			require.Equal(t, 3, view.Cell(2, countCol))
+		})
+	}
+}

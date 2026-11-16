@@ -534,3 +534,39 @@ func TestNoTagsStructRowsViewer(t *testing.T) {
 	require.Equal(t, []string{"Name", "Age"}, view.ColumnNames(), "the col tags must be ignored")
 	require.Equal(t, 1, view.NumRows())
 }
+
+// TestStructFieldValues_NilPointer: a nil struct pointer has no field values,
+// so every field is nil or an invalid reflect.Value, including the fields
+// of embedded structs, and the count still matches StructFieldTypes.
+func TestStructFieldValues_NilPointer(t *testing.T) {
+	type inner struct {
+		B int
+		C bool
+	}
+	type outer struct {
+		A int
+		*inner
+		D string
+	}
+	var nilOuter *outer
+
+	require.Equal(t, []any{nil, nil, nil, nil}, StructFieldAnyValues(reflect.ValueOf(nilOuter)))
+	reflectVals := StructFieldReflectValues(reflect.ValueOf(nilOuter))
+	require.Len(t, reflectVals, 4)
+	for i, val := range reflectVals {
+		require.False(t, val.IsValid(), "field %d", i)
+	}
+
+	// A nil embedded pointer inside a non-nil struct
+	s := outer{A: 1, D: "d"}
+	require.Equal(t, []any{1, nil, nil, "d"}, StructFieldAnyValues(reflect.ValueOf(s)))
+	vals := IndexedStructFieldReflectValues(reflect.ValueOf(s), 4, []int{3, 2, 1, 0})
+	require.Equal(t, "d", vals[0].Interface())
+	require.False(t, vals[1].IsValid())
+	require.False(t, vals[2].IsValid())
+	require.Equal(t, 1, vals[3].Interface())
+	require.Equal(t, []any{"d", nil, nil, 1}, IndexedStructFieldAnyValues(reflect.ValueOf(s), 4, []int{3, 2, 1, 0}))
+
+	// The index count check still sees all flattened fields
+	require.Panics(t, func() { IndexedStructFieldReflectValues(reflect.ValueOf(nilOuter), 1, []int{0}) })
+}

@@ -807,3 +807,25 @@ func TestWriter_FloatPrecision(t *testing.T) {
 		require.Equal(t, numCell(tc.want, ""), readCell(t, f, "", i+1, 1), "value %v", tc.value)
 	}
 }
+
+// TestWriter_NilRowAndArray: a nil element of a slice of struct pointers is
+// a row of null cells, and an array of structs is a table like a slice.
+// Both used to fail in retable's struct viewer.
+func TestWriter_NilRowAndArray(t *testing.T) {
+	t.Run("nil row", func(t *testing.T) {
+		rows := []*overviewRow{{"a", 1}, nil, {"c", 3}}
+		f := writeOneSheet(t, NewWriter[[]*overviewRow]().WithNilValue("NULL"), rows)
+		require.Equal(t, textCell("a"), readCell(t, f, "S", 1, 1))
+		require.Equal(t, textCell("NULL"), readCell(t, f, "S", 1, 2))
+		require.Equal(t, textCell("NULL"), readCell(t, f, "S", 2, 2))
+		require.Equal(t, numCell("3", ""), readCell(t, f, "S", 2, 3))
+	})
+
+	t.Run("array", func(t *testing.T) {
+		rows := [2]overviewRow{{"a", 1}, {"b", 2}}
+		f := writeOneSheet(t, NewWriter[[2]overviewRow]().WithHeaderRow(true), rows)
+		require.Equal(t, textCell("Name"), readCell(t, f, "S", 1, 1))
+		require.Equal(t, textCell("b"), readCell(t, f, "S", 1, 3))
+		require.Equal(t, numCell("2", ""), readCell(t, f, "S", 2, 3))
+	})
+}

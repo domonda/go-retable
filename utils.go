@@ -52,6 +52,8 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 // StructFieldReflectValues returns the reflect.Value of exported struct fields,
 // including the inlined fields of any anonymously embedded structs.
 // If structValue is a pointer, it automatically dereferences to the underlying struct value.
+// A nil pointer, like a nil row or a nil embedded struct pointer, has no
+// field values and yields an invalid reflect.Value for each of its fields.
 //
 // The function recursively processes embedded structs, flattening their field values into the result.
 // Only exported fields (those starting with an uppercase letter) are included.
@@ -72,6 +74,10 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 //	// Returns reflect.Values for: ["John", "Main St", "NYC"]
 func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 	if structValue.Kind() == reflect.Pointer {
+		if structValue.IsNil() {
+			// A nil row or nil embedded struct has no field values
+			return make([]reflect.Value, len(StructFieldTypes(structValue.Type())))
+		}
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
@@ -127,6 +133,11 @@ func IndexedStructFieldReflectValues(structValue reflect.Value, numVals int, ind
 // can report the total number of fields.
 func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue reflect.Value, indices []int, fieldIndex int) int {
 	if structValue.Kind() == reflect.Pointer {
+		if structValue.IsNil() {
+			// A nil row or nil embedded struct has no field values,
+			// its fields keep the invalid zero reflect.Value
+			return fieldIndex + len(StructFieldTypes(structValue.Type()))
+		}
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
@@ -148,6 +159,8 @@ func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue ref
 // StructFieldAnyValues returns the values of exported struct fields as []any,
 // including the inlined fields of any anonymously embedded structs.
 // If structValue is a pointer, it automatically dereferences to the underlying struct value.
+// A nil pointer, like a nil row or a nil embedded struct pointer, has no
+// field values and yields nil for each of its fields.
 //
 // This is similar to StructFieldReflectValues but returns the values as any interfaces
 // instead of reflect.Value, making it easier to work with in non-reflection contexts.
@@ -166,6 +179,10 @@ func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue ref
 //	// Returns: []any{"John", 30}
 func StructFieldAnyValues(structValue reflect.Value) []any {
 	if structValue.Kind() == reflect.Pointer {
+		if structValue.IsNil() {
+			// A nil row or nil embedded struct has no field values
+			return make([]any, len(StructFieldTypes(structValue.Type())))
+		}
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()

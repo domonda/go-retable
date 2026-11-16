@@ -542,3 +542,19 @@ func TestWriter_PointerToNullValue(t *testing.T) {
 	// The empty string is a value, the zero time is null-like
 	require.Equal(t, "NULL;\n", dest.String())
 }
+
+// TestWriter_NilRow: a nil element of a slice of struct pointers is a row
+// of null cells written as the nil value. It used to panic in reflect.
+func TestWriter_NilRow(t *testing.T) {
+	type row struct {
+		Name  string
+		Count int
+	}
+	var dest bytes.Buffer
+	err := NewWriter[[]*row]().
+		WithNewLine("\n").
+		WithNilValue("NULL").
+		Write(context.Background(), &dest, []*row{{"a", 1}, nil, {"c", 3}})
+	require.NoError(t, err)
+	require.Equal(t, "a;1\nNULL;NULL\nc;3\n", dest.String())
+}
