@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -84,6 +85,350 @@ func TestReflectTypeCellFormatter_FormatCell_TypedCell(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, "FORMATTED", str)
+		})
+	}
+}
+
+// probeFormatter returns a CellFormatter that appends name to *calls and
+// returns result and err. It records the type of the cell value it was
+// handed in *seen, so a test can tell whether it got the original view
+// or a dereferenced one.
+func probeFormatter(name string, calls *[]string, seen *[]string, result string, err error) CellFormatter {
+	return CellFormatterFunc(func(_ context.Context, view View, row, col int) (string, bool, error) {
+		*calls = append(*calls, name)
+		if seen != nil {
+			*seen = append(*seen, reflect.TypeOf(view.Cell(row, col)).String())
+		}
+		return result, false, err
+	})
+}
+
+type characterizationStringer struct{ s string }
+
+func (c characterizationStringer) String() string { return c.s }
+
+var (
+	typeOfStringer           = reflect.TypeFor[interface{ String() string }]()
+	typeOfCharStringer       = reflect.TypeFor[characterizationStringer]()
+	typeOfCharStringerPtr    = reflect.TypeFor[*characterizationStringer]()
+	errCharacterizationFatal = errors.New("fatal")
+)
+
+// TestReflectTypeCellFormatter_FormatCell_Contract pins the resolution
+// contract of FormatCell: exact type, then interfaces, then kind, each
+// falling through on errors.ErrUnsupported and stopping at any other
+// error; for a non-nil pointer the same three steps again on the
+// pointed-to type with a dereferenced view; finally Default with the
+// original view. These cases were written against the map based
+// implementation before it moved onto ReflectTypeDispatcher and must
+// keep passing unchanged.
+func TestReflectTypeCellFormatter_FormatCell_Contract(t *testing.T) {
+	value := characterizationStringer{s: "v"}
+	type testCase struct {
+		name      string
+		cell      any
+		build     func(calls, seen *[]string) *ReflectTypeCellFormatter
+		wantStr   string
+		wantErr   error
+		wantCalls []string
+		wantSeen  []string
+	}
+	unsupported := errors.ErrUnsupported
+	cases := []testCase{
+		{
+			name: "type formatter wins",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "T", nil)).
+					WithInterfaceTypeFormatter(typeOfStringer, probeFormatter("iface", calls, seen, "I", nil)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "K", nil)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantStr:   "T",
+			wantCalls: []string{"type"},
+		},
+		{
+			name: "type unsupported falls through to interface",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "", unsupported)).
+					WithInterfaceTypeFormatter(typeOfStringer, probeFormatter("iface", calls, seen, "I", nil)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "K", nil))
+			},
+			wantStr:   "I",
+			wantCalls: []string{"type", "iface"},
+		},
+		{
+			name: "interface unsupported falls through to kind",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithInterfaceTypeFormatter(typeOfStringer, probeFormatter("iface", calls, seen, "", unsupported)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "K", nil)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantStr:   "K",
+			wantCalls: []string{"iface", "kind"},
+		},
+		{
+			name: "kind unsupported falls through to default",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "", unsupported)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantStr:   "D",
+			wantCalls: []string{"kind", "default"},
+		},
+		{
+			name: "all unsupported without default",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "", unsupported)).
+					WithInterfaceTypeFormatter(typeOfStringer, probeFormatter("iface", calls, seen, "", unsupported)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "", unsupported))
+			},
+			wantErr:   unsupported,
+			wantCalls: []string{"type", "iface", "kind"},
+		},
+		{
+			name: "type error stops",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "", errCharacterizationFatal)).
+					WithInterfaceTypeFormatter(typeOfStringer, probeFormatter("iface", calls, seen, "I", nil)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantErr:   errCharacterizationFatal,
+			wantCalls: []string{"type"},
+		},
+		{
+			name: "interface error stops",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithInterfaceTypeFormatter(typeOfStringer, probeFormatter("iface", calls, seen, "", errCharacterizationFatal)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "K", nil))
+			},
+			wantErr:   errCharacterizationFatal,
+			wantCalls: []string{"iface"},
+		},
+		{
+			name: "kind error stops",
+			cell: value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "", errCharacterizationFatal)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantErr:   errCharacterizationFatal,
+			wantCalls: []string{"kind"},
+		},
+		{
+			name: "pointer type formatter wins before deref",
+			cell: &value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringerPtr, probeFormatter("ptrtype", calls, seen, "P", nil)).
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "T", nil))
+			},
+			wantStr:   "P",
+			wantCalls: []string{"ptrtype"},
+			wantSeen:  []string{"*retable.characterizationStringer"},
+		},
+		{
+			name: "pointer kind formatter wins before deref",
+			cell: &value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithKindFormatter(reflect.Pointer, probeFormatter("ptrkind", calls, seen, "PK", nil)).
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "T", nil))
+			},
+			wantStr:   "PK",
+			wantCalls: []string{"ptrkind"},
+			wantSeen:  []string{"*retable.characterizationStringer"},
+		},
+		{
+			name: "non-nil pointer derefs to type with deref view",
+			cell: &value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "T", nil))
+			},
+			wantStr:   "T",
+			wantCalls: []string{"type"},
+			wantSeen:  []string{"retable.characterizationStringer"},
+		},
+		{
+			name: "deref type unsupported falls through to deref kind",
+			cell: &value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "", unsupported)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "K", nil))
+			},
+			wantStr:   "K",
+			wantCalls: []string{"type", "kind"},
+			wantSeen:  []string{"retable.characterizationStringer", "retable.characterizationStringer"},
+		},
+		{
+			name: "deref error stops",
+			cell: &value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "", errCharacterizationFatal)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantErr:   errCharacterizationFatal,
+			wantCalls: []string{"kind"},
+		},
+		{
+			name: "default gets the original view for a pointer",
+			cell: &value,
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, nil, "", unsupported)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantStr:   "D",
+			wantCalls: []string{"type", "default"},
+			wantSeen:  []string{"*retable.characterizationStringer"},
+		},
+		{
+			name: "nil pointer skips deref",
+			cell: (*characterizationStringer)(nil),
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "T", nil)).
+					WithKindFormatter(reflect.Struct, probeFormatter("kind", calls, seen, "K", nil)).
+					WithDefaultFormatter(probeFormatter("default", calls, seen, "D", nil))
+			},
+			wantStr:   "D",
+			wantCalls: []string{"default"},
+			wantSeen:  []string{"*retable.characterizationStringer"},
+		},
+		{
+			name: "nil pointer without default is unsupported",
+			cell: (*characterizationStringer)(nil),
+			build: func(calls, seen *[]string) *ReflectTypeCellFormatter {
+				return NewReflectTypeCellFormatter().
+					WithTypeFormatter(typeOfCharStringer, probeFormatter("type", calls, seen, "T", nil))
+			},
+			wantErr: unsupported,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls, seen []string
+			f := tc.build(&calls, &seen)
+			view := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{tc.cell}}}
+			str, _, err := f.FormatCell(context.Background(), view, 0, 0)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.wantStr, str)
+			}
+			require.Equal(t, tc.wantCalls, calls)
+			if tc.wantSeen != nil {
+				require.Equal(t, tc.wantSeen, seen)
+			}
+		})
+	}
+}
+
+// TestReflectTypeCellFormatter_FormatCell_ContextAndNil covers the two
+// early exits: a nil formatter reports errors.ErrUnsupported and a
+// cancelled context is returned before any formatter runs.
+func TestReflectTypeCellFormatter_FormatCell_ContextAndNil(t *testing.T) {
+	view := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{"a"}}}
+
+	var nilFormatter *ReflectTypeCellFormatter
+	_, _, err := nilFormatter.FormatCell(context.Background(), view, 0, 0)
+	require.ErrorIs(t, err, errors.ErrUnsupported)
+
+	var calls []string
+	f := NewReflectTypeCellFormatter().
+		WithTypeFormatter(reflect.TypeFor[string](), probeFormatter("type", &calls, nil, "T", nil)).
+		WithDefaultFormatter(probeFormatter("default", &calls, nil, "D", nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = f.FormatCell(ctx, view, 0, 0)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, calls)
+}
+
+// TestReflectTypeCellFormatter_WithDoesNotMutate proves the builder is
+// copy-on-write: every With* method leaves the receiver formatting cells
+// exactly as before, also when the receiver already has registrations.
+func TestReflectTypeCellFormatter_WithDoesNotMutate(t *testing.T) {
+	view := &AnyValuesView{Cols: []string{"A", "B"}, Rows: [][]any{{"a", 1}}}
+	format := func(f *ReflectTypeCellFormatter, col int) string {
+		t.Helper()
+		str, _, err := f.FormatCell(context.Background(), view, 0, col)
+		if errors.Is(err, errors.ErrUnsupported) {
+			return "unsupported"
+		}
+		require.NoError(t, err)
+		return str
+	}
+
+	base := NewReflectTypeCellFormatter().
+		WithTypeFormatter(reflect.TypeFor[string](), PrintfCellFormatter("type:%v")).
+		WithInterfaceTypeFormatter(typeOfStringer, PrintfCellFormatter("iface:%v")).
+		WithKindFormatter(reflect.Int, PrintfCellFormatter("kind:%v"))
+	require.Equal(t, "type:a", format(base, 0))
+	require.Equal(t, "kind:1", format(base, 1))
+
+	_ = base.WithTypeFormatter(reflect.TypeFor[string](), PrintfCellFormatter("changed:%v"))
+	_ = base.WithTypeFormatter(reflect.TypeFor[int](), PrintfCellFormatter("changed:%v"))
+	_ = base.WithInterfaceTypeFormatter(reflect.TypeFor[error](), PrintfCellFormatter("changed:%v"))
+	_ = base.WithKindFormatter(reflect.Int, PrintfCellFormatter("changed:%v"))
+	_ = base.WithDefaultFormatter(PrintfCellFormatter("changed:%v"))
+
+	require.Equal(t, "type:a", format(base, 0))
+	require.Equal(t, "kind:1", format(base, 1))
+	require.Nil(t, base.Default)
+
+	var nilFormatter *ReflectTypeCellFormatter
+	built := nilFormatter.WithKindFormatter(reflect.Int, PrintfCellFormatter("kind:%v"))
+	require.Equal(t, "kind:1", format(built, 1))
+}
+
+// BenchmarkReflectTypeCellFormatter_FormatCell measures the per-cell cost
+// of the lookup that csvtable and htmltable run for every typed cell.
+func BenchmarkReflectTypeCellFormatter_FormatCell(b *testing.B) {
+	value := characterizationStringer{s: "v"}
+	noop := CellFormatterFunc(func(context.Context, View, int, int) (string, bool, error) {
+		return "x", false, nil
+	})
+	f := NewReflectTypeCellFormatter().
+		WithTypeFormatter(reflect.TypeFor[string](), noop).
+		WithTypeFormatter(typeOfCharStringer, noop).
+		WithInterfaceTypeFormatter(reflect.TypeFor[error](), noop).
+		WithInterfaceTypeFormatter(typeOfStringer, noop)
+	cases := []struct {
+		name string
+		cell any
+	}{
+		{"type hit", "a"},
+		{"interface hit", time.Second},
+		{"pointer deref", &value},
+		{"miss", 42},
+	}
+	ctx := context.Background()
+	for _, c := range cases {
+		view := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{c.cell}}}
+		b.Run(c.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _, _ = f.FormatCell(ctx, view, 0, 0)
+			}
 		})
 	}
 }
