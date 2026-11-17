@@ -15,8 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by the stack trace of the panic like `go-errs.AsErrorWithDebugStack`. This
   restores the guard of the `go-structtable/csv` functions they replaced, so
   callers parsing uploaded files no longer have to add their own. A panic of a
-  caller-supplied reader, `Scanner`, `Parser`, `Formatter` or validate func is
-  returned the same way.
+  caller-supplied reader or validate func is returned the same way.
+- `SmartAssign` keeps the panic it recovers: the error now has the prefix
+  `retable: panic`, wraps an error panic value with `%w` and carries the stack
+  trace, instead of only the `%+v` text of the value. This covers a panicking
+  `Scanner`, `Parser` or `Formatter` passed to it, including through the
+  `csvtable` `Read*ToStructSlice` functions and `ViewToStructSlice`.
 
 ## [1.0.0-beta.2] - 2026-11-17
 

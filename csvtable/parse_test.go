@@ -806,7 +806,8 @@ func fuzzSeeds() []string {
 // inputs that panic although the entry points return them as errors.
 func requireNoRecoveredPanic(t *testing.T, err error) {
 	t.Helper()
-	if err != nil && strings.HasPrefix(err.Error(), "csvtable: panic") {
+	// retable.SmartAssign recovers panics during the cell conversions itself
+	if err != nil && (strings.HasPrefix(err.Error(), "csvtable: panic") || strings.HasPrefix(err.Error(), "retable: panic")) {
 		require.Fail(t, "recovered panic", "%+v", err)
 	}
 }

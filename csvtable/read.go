@@ -15,9 +15,11 @@ import (
 // non-empty row is used as column titles.
 //
 // ReadStringsToStructSlice never panics: a panic while converting the rows,
-// including one from the passed dstScanner, parser, srcFormatter or validate,
-// is returned as an error with the prefix "csvtable: panic" followed by the
-// stack trace of the panic.
+// including one from the passed validate, is returned as an error with the
+// prefix "csvtable: panic" followed by the stack trace of the panic.
+// A panic of the passed dstScanner, parser or srcFormatter is recovered by
+// retable.SmartAssign, which returns it the same way with the prefix
+// "retable: panic".
 func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, err error) {
 	defer recoverParsePanic(&err)
 
@@ -46,9 +48,12 @@ func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFiel
 // using ReadStringsToStructSlice.
 //
 // ReadBytesWithFormatToStructSlice never panics: a panic while parsing or
-// converting, including one from the passed dstScanner, parser, srcFormatter
-// or validate, is returned as an error with the prefix "csvtable: panic"
-// followed by the stack trace of the panic.
+// converting, including one from the passed validate, is returned as an
+// error with the prefix "csvtable: panic" followed by the stack trace of
+// the panic.
+// A panic of the passed dstScanner, parser or srcFormatter is recovered by
+// retable.SmartAssign, which returns it the same way with the prefix
+// "retable: panic".
 func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, err error) {
 	defer recoverParsePanic(&err)
 
@@ -63,9 +68,12 @@ func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, nam
 // it to ReadBytesWithFormatToStructSlice.
 //
 // ReadFileWithFormatToStructSlice never panics: a panic while reading,
-// parsing or converting, including one from the passed csvReader, dstScanner,
-// parser, srcFormatter or validate, is returned as an error with the prefix
-// "csvtable: panic" followed by the stack trace of the panic.
+// parsing or converting, including one from the passed csvReader or validate,
+// is returned as an error with the prefix "csvtable: panic" followed by the
+// stack trace of the panic.
+// A panic of the passed dstScanner, parser or srcFormatter is recovered by
+// retable.SmartAssign, which returns it the same way with the prefix
+// "retable: panic".
 func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, err error) {
 	defer recoverParsePanic(&err)
 
@@ -81,9 +89,12 @@ func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format,
 // The detected format is returned even when the conversion fails.
 //
 // ReadBytesDetectFormatToStructSlice never panics: a panic while parsing or
-// converting, including one from the passed dstScanner, parser, srcFormatter
-// or validate, is returned as an error with the prefix "csvtable: panic"
-// followed by the stack trace of the panic.
+// converting, including one from the passed validate, is returned as an
+// error with the prefix "csvtable: panic" followed by the stack trace of
+// the panic.
+// A panic of the passed dstScanner, parser or srcFormatter is recovered by
+// retable.SmartAssign, which returns it the same way with the prefix
+// "retable: panic".
 func ReadBytesDetectFormatToStructSlice[T any](csvData []byte, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, format *Format, err error) {
 	defer recoverParsePanic(&err)
 
@@ -99,9 +110,12 @@ func ReadBytesDetectFormatToStructSlice[T any](csvData []byte, detectConfig *For
 // it to ReadBytesDetectFormatToStructSlice.
 //
 // ReadFileDetectFormatToStructSlice never panics: a panic while reading,
-// parsing or converting, including one from the passed csvReader, dstScanner,
-// parser, srcFormatter or validate, is returned as an error with the prefix
-// "csvtable: panic" followed by the stack trace of the panic.
+// parsing or converting, including one from the passed csvReader or validate,
+// is returned as an error with the prefix "csvtable: panic" followed by the
+// stack trace of the panic.
+// A panic of the passed dstScanner, parser or srcFormatter is recovered by
+// retable.SmartAssign, which returns it the same way with the prefix
+// "retable: panic".
 func ReadFileDetectFormatToStructSlice[T any](csvReader io.Reader, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, format *Format, err error) {
 	defer recoverParsePanic(&err)
 

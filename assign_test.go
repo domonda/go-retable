@@ -1083,7 +1083,45 @@ func TestSmartAssignRecoversPanic(t *testing.T) {
 	var s string
 	require.NotPanics(t, func() {
 		err := SmartAssign(reflect.ValueOf(&s).Elem(), src, nil, nil, nil)
-		require.Error(t, err)
+		require.ErrorContains(t, err, "retable: panic: ")
+		require.Contains(t, err.Error(), "reflect.Value.Interface", "stack trace of the panic")
+	})
+
+	t.Run("a panicking Scanner keeps its panic value and stack", func(t *testing.T) {
+		// given
+		scannerErr := errors.New("scanner is broken")
+		scanner := ScannerFunc(func(dst reflect.Value, str string, parser Parser) error {
+			panic(scannerErr)
+		})
+		var n int
+
+		// when
+		var err error
+		require.NotPanics(t, func() {
+			err = SmartAssign(reflect.ValueOf(&n).Elem(), reflect.ValueOf("42"), scanner, nil, nil)
+		})
+
+		// then
+		msg, stack, hasStack := strings.Cut(err.Error(), "\n")
+		require.Equal(t, "retable: panic: scanner is broken", msg)
+		require.True(t, hasStack, "the stack trace has to follow the message")
+		require.Contains(t, stack, "TestSmartAssignRecoversPanic", "stack trace of the panic")
+		require.ErrorIs(t, err, scannerErr)
+	})
+
+	t.Run("a panicking Formatter with a non-error value is formatted", func(t *testing.T) {
+		// given
+		formatter := FormatterFunc(func(reflect.Value) (string, error) { panic(42) })
+		var str string
+
+		// when
+		var err error
+		require.NotPanics(t, func() {
+			err = SmartAssign(reflect.ValueOf(&str).Elem(), reflect.ValueOf(7), nil, nil, formatter)
+		})
+
+		// then
+		require.ErrorContains(t, err, "retable: panic: 42\n")
 	})
 }
 

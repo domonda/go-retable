@@ -190,6 +190,7 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 	panicErr := errors.New("caller func is broken")
 	panicErrValidate := func(reflect.Value) error { panic(panicErr) }
 	panicStringValidate := func(reflect.Value) error { panic("validate is broken") }
+	panicScanner := retable.ScannerFunc(func(reflect.Value, string, retable.Parser) error { panic(panicErr) })
 	format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
 	csvData := []byte(bookingsCSV)
 
@@ -226,6 +227,20 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 			},
 			wantMsg:   "csvtable: panic: validate is broken",
 			wantFrame: "retable.ViewToStructSlice",
+		},
+		{
+			// retable.SmartAssign recovers a panic of the cell conversion
+			// hooks itself, so it carries the retable prefix, not csvtable's
+			name: "ReadStringsToStructSlice with panicking Scanner",
+			read: func(t *testing.T) error {
+				rows, err := ParseWithFormat(csvData, format)
+				require.NoError(t, err)
+				_, err = ReadStringsToStructSlice[booking](rows, bookingNaming, panicScanner, germanCSVParser(), nil, nil)
+				return err
+			},
+			wantErr:   panicErr,
+			wantMsg:   "retable: panic: caller func is broken",
+			wantFrame: "retable.SmartAssign",
 		},
 		{
 			name: "ReadBytesWithFormatToStructSlice",
