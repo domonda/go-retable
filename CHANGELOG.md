@@ -29,6 +29,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
   because the mark would misdeclare the encoded output.
 
+### Fixed
+
+- `exceltable`: a panic while writing a sheet, for example of a
+  `CellFormatter` or the `Viewer`, is returned as error by `Write`,
+  `WriteView`, `WriteSheet` and `WriteViewSheet` with the prefix
+  `exceltable: panic`, wrapping an error value with `%w`, followed by the stack
+  trace, like the `csvtable` parse functions. A panic after the sheet was added
+  fails the `Workbook` like an error, so that `WriteTo` never writes the
+  incomplete sheet; a panic before leaves it usable.
+
 ## [1.0.0-beta.3] - 2026-11-17
 
 Makes `csvtable` safe to replace `github.com/domonda/go-structtable/csv`

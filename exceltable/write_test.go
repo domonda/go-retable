@@ -1060,3 +1060,136 @@ func TestWriter_NilCustomFormatterFuncRemoves(t *testing.T) {
 		})
 	}
 }
+
+// panickingTitleView is a view whose Title panics,
+// which happens before the sheet is added.
+type panickingTitleView struct{ retable.View }
+
+func (panickingTitleView) Title() string { panic("title panicked") }
+
+// panickingViewer is a Viewer that panics creating the view.
+type panickingViewer struct{}
+
+func (panickingViewer) NewView(string, any) (retable.View, error) { panic("viewer panicked") }
+
+// TestWorkbook_PoisonedByPanic covers that a panic while writing a sheet
+// is returned as error and, once the sheet was added, fails the workbook
+// like a returned error, so that the incomplete sheet is never written.
+func TestWorkbook_PoisonedByPanic(t *testing.T) {
+	rows := []overviewRow{{"a", 1}, {"b", 2}, {"c", 3}}
+	errPanic := errors.New("formatter panicked with an error")
+	panicInRow := func(value any) CellFormatterFunc {
+		return func(ctx context.Context, view retable.View, row, col int) (Cell, error) {
+			if row == 1 {
+				panic(value)
+			}
+			return Cell{}, errors.ErrUnsupported
+		}
+	}
+
+	tests := []struct {
+		name    string
+		write   func(ctx context.Context, wb *Workbook) error
+		wantErr []string
+		wantIs  error
+	}{
+		{
+			name: "CellFormatter panics with a string in WriteSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				w := NewWriter[[]overviewRow]().WithColumnFormatter(0, panicInRow("boom"))
+				return w.WriteSheet(ctx, wb, rows, "Failing")
+			},
+			wantErr: []string{`sheet "Failing": exceltable: panic: boom`, "goroutine "},
+		},
+		{
+			name: "CellFormatter panics with an error in WriteViewSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				w := NewWriter[[][]string]().WithColumnFormatter(0, panicInRow(errPanic))
+				view := retable.NewStringsView(" Strings ", [][]string{{"A"}, {"1"}, {"2"}})
+				return w.WriteViewSheet(ctx, wb, view)
+			},
+			wantErr: []string{`sheet "Strings": exceltable: panic: formatter panicked with an error`},
+			wantIs:  errPanic,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wb := NewWorkbook()
+			defer wb.Close()
+			require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Good"))
+
+			err := tt.write(t.Context(), wb)
+			require.Error(t, err)
+			for _, want := range tt.wantErr {
+				require.ErrorContains(t, err, want)
+			}
+			if tt.wantIs != nil {
+				require.ErrorIs(t, err, tt.wantIs)
+			}
+
+			var buf bytes.Buffer
+			_, err = wb.WriteTo(&buf)
+			require.ErrorContains(t, err, "exceltable: workbook unusable after a failed sheet: "+tt.wantErr[0])
+			require.Zero(t, buf.Len(), "the incomplete sheet must not be written")
+			err = NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Next")
+			require.ErrorContains(t, err, tt.wantErr[0])
+		})
+	}
+}
+
+// TestWorkbook_PanicBeforeSheetAdded covers that a panic before the sheet
+// is added returns an error but leaves the workbook usable and unchanged,
+// like ErrDuplicateSheetName.
+func TestWorkbook_PanicBeforeSheetAdded(t *testing.T) {
+	rows := []overviewRow{{"a", 1}}
+	tests := []struct {
+		name    string
+		write   func(ctx context.Context, wb *Workbook) error
+		wantErr string
+	}{
+		{
+			name: "view Title panics in WriteViewSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				view := panickingTitleView{retable.NewStringsView("X", [][]string{{"A"}, {"1"}})}
+				return NewWriter[[][]string]().WriteViewSheet(ctx, wb, view)
+			},
+			wantErr: "exceltable: panic: title panicked",
+		},
+		{
+			name: "Viewer panics in WriteSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				return NewWriter[[]overviewRow]().WithTableViewer(panickingViewer{}).WriteSheet(ctx, wb, rows, "Never")
+			},
+			wantErr: "exceltable: panic: viewer panicked",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wb := NewWorkbook()
+			defer wb.Close()
+
+			err := tt.write(t.Context(), wb)
+			require.ErrorContains(t, err, tt.wantErr)
+			require.NotContains(t, err.Error(), "sheet \"", "a sheet that was not added is not named")
+
+			require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Later"))
+			var buf bytes.Buffer
+			_, err = wb.WriteTo(&buf)
+			require.NoError(t, err)
+			require.Equal(t, []string{"Later"}, openWritten(t, buf.Bytes()).GetSheetList())
+		})
+	}
+}
+
+func TestWriter_WritePanics(t *testing.T) {
+	var buf bytes.Buffer
+	err := NewWriter[[]overviewRow]().WithTableViewer(panickingViewer{}).Write(t.Context(), &buf, nil, "S")
+	require.ErrorContains(t, err, "exceltable: panic: viewer panicked")
+
+	w := NewWriter[[]overviewRow]().WithKindFormatter(reflect.String, CellFormatterFunc(
+		func(context.Context, retable.View, int, int) (Cell, error) { panic("boom") },
+	))
+	err = w.Write(t.Context(), &buf, []overviewRow{{"a", 1}}, "S")
+	require.ErrorContains(t, err, `sheet "S": exceltable: panic: boom`)
+	require.Zero(t, buf.Len(), "nothing is written to dest")
+}

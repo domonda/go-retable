@@ -249,7 +249,13 @@ remembers the error and returns it from every later `WriteSheet`,
 `WriteViewSheet` and `WriteTo`. The error says which sheet, row and column
 failed and wraps the cause, so `errors.Is(err, context.Canceled)` still works.
 
-Errors found before a sheet is added do not have this effect: a duplicate
+A panic, like a formatter's failed type assertion or reflection over a nil
+value, stops the sheet midway just like an error. The writer recovers it,
+returns it as an error with the stack trace, and fails the workbook the same
+way. Sheets are written in HTTP handlers and job workers, where an unrecovered
+panic takes down more than the one export.
+
+Errors and panics before a sheet is added do not have this effect: a duplicate
 name, a table the viewer can't handle, a table with more rows or columns than
 an Excel sheet holds, or a context that was already done leave the workbook
 unchanged and usable. The size is checked before any cell is converted.

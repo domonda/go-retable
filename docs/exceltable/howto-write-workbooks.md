@@ -421,7 +421,8 @@ a number cell is right-aligned and its format shows under Format Cells.
 
 **Every later write returns `exceltable: workbook unusable after a failed sheet`.**
 A sheet failed after it was added, through a formatter error, a cancelled
-context or an excelize error. The sheet holds only part of its rows, so the
+context, an excelize error or a panic, which the error shows as
+`exceltable: panic: <value>` followed by the stack trace. The sheet holds only part of its rows, so the
 workbook refuses to write a truncated file. The error wraps the cause and names
 the sheet, row and column. Fix the cause and start a new `Workbook`.
 

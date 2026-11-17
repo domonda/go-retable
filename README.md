@@ -914,7 +914,8 @@ Excel `.xlsx` reading and writing using excelize:
   stay sortable and summable in Excel; formatters by column, type, interface
   and kind return an `exceltable.Cell`
 - A `Workbook` takes several sheets of different row types, and a sheet that
-  fails midway makes the workbook refuse to write a truncated file
+  fails midway, with an error or a panic, makes the workbook refuse to write
+  a truncated file
 
 Documentation:
 - [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md):

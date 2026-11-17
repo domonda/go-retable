@@ -8,6 +8,7 @@ import (
 	"maps"
 	"math"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -42,11 +43,11 @@ var (
 // one Writer per row type.
 //
 // A Workbook keeps the first error of a sheet that failed after it was
-// added, for example a CellFormatter error or a cancelled context.
-// The sheet then holds only part of its rows, so every later WriteSheet,
-// WriteViewSheet and WriteTo returns that error and a truncated file can
-// never be written. Errors found before a sheet is added, such as
-// ErrDuplicateSheetName, leave the workbook usable.
+// added, for example a CellFormatter error, a cancelled context or a panic,
+// such as of a CellFormatter. The sheet then holds only part of its rows,
+// so every later WriteSheet, WriteViewSheet and WriteTo returns that error
+// and a truncated file can never be written. Errors and panics before a
+// sheet is added, such as ErrDuplicateSheetName, leave the workbook usable.
 //
 // A Workbook is not safe for concurrent use.
 // Call Close to remove the temporary files of large sheets.
@@ -281,7 +282,10 @@ func NewWriter[T any]() *Writer[T] {
 
 // Write writes table as the only sheet of a new workbook to dest.
 // The sheet name is sanitized, see WriteSheet.
-func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetName string) error {
+// A panic is returned as error, see WriteViewSheet.
+func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetName string) (err error) {
+	defer recoverPanic(&err)
+
 	view, err := w.newView(table, sheetName)
 	if err != nil {
 		return err
@@ -312,7 +316,14 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 // a name longer than 31 UTF-16 code units is cut to 30 units plus "…".
 // If the sanitized name equals an existing sheet name, ignoring case,
 // ErrDuplicateSheetName is returned and wb is left unchanged.
-func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheetName string) error {
+// A panic, for example of a CellFormatter or of the Viewer, is returned
+// as error and fails wb like an error if the sheet was already added,
+// see WriteViewSheet.
+func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheetName string) (err error) {
+	// WriteViewSheet recovers its own panics,
+	// this one is for the Viewer creating the view
+	defer recoverPanic(&err)
+
 	view, err := w.newView(table, sheetName)
 	if err != nil {
 		return err
@@ -322,19 +333,49 @@ func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheet
 
 // WriteViewSheet adds view as a sheet to wb, named after the view's title.
 // See WriteSheet for how the name is sanitized.
-func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retable.View) error {
+//
+// A panic while writing, for example of a CellFormatter or of the view,
+// is returned as error starting with "exceltable: panic", wrapping the
+// panic value with %w if it is an error, followed by the stack trace
+// of the panic. If the panic happened after the sheet was added to wb,
+// the sheet is incomplete and wb fails with that error like after a
+// returned error: every later WriteSheet, WriteViewSheet and WriteTo
+// returns it. A panic before, such as of view.Title, leaves wb usable.
+//
+// Example:
+//
+//	err := writer.WriteViewSheet(ctx, wb, view) // a CellFormatter panics
+//	// err: `sheet "Invoices": exceltable: panic: ...`
+//	_, err = wb.WriteTo(dest)
+//	// err: `exceltable: workbook unusable after a failed sheet: sheet "Invoices": exceltable: panic: ...`
+func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retable.View) (err error) {
 	if wb.closed {
 		return errWorkbookClosed
 	}
 	if wb.err != nil {
 		return wb.poisonedError()
 	}
+	// Set when wb is about to be changed by adding the sheet,
+	// after which a panic leaves an incomplete sheet behind
+	var sheetName string
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
+		}
+		err = panicError(p)
+		if sheetName != "" {
+			wb.err = fmt.Errorf("sheet %q: %w", sheetName, err)
+			err = wb.err
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// Everything that can fail before the sheet exists happens first,
 	// so that such errors leave no empty sheet behind.
-	err := w.checkSheetSize(view)
+	err = w.checkSheetSize(view)
 	if err != nil {
 		return err
 	}
@@ -349,8 +390,14 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 			return err
 		}
 	}
-	name, err := wb.addSheet(view.Title())
+	title := view.Title()
+	// sanitizeSheetName never returns "", it is "UNNAMED" for an empty title
+	sheetName = sanitizeSheetName(title)
+	name, err := wb.addSheet(title)
 	if err != nil {
+		// Only ErrDuplicateSheetName and excelize errors
+		// about the name, wb is unchanged
+		sheetName = ""
 		return err
 	}
 	err = w.writeSheetRows(ctx, wb, name, view, headerStyle)
@@ -359,6 +406,29 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 		return wb.err
 	}
 	return nil
+}
+
+// recoverPanic assigns a recovered panic to *err, see panicError.
+// It has to be deferred directly by the function whose named error
+// result err points to, because recover only stops a panic there.
+func recoverPanic(err *error) {
+	if p := recover(); p != nil {
+		*err = panicError(p)
+	}
+}
+
+// panicError returns the recovered panic value p as error with the prefix
+// "exceltable: panic", wrapping p with %w if it is an error so that
+// errors.Is and errors.As still find it, followed by the stack trace,
+// like csvtable does for parse panics. It has to be called by the
+// deferred function that recovered p, while the stack of the panicking
+// goroutine is not yet unwound.
+func panicError(p any) error {
+	stack := debug.Stack()
+	if pErr, ok := p.(error); ok {
+		return fmt.Errorf("exceltable: panic: %w\n%s", pErr, stack)
+	}
+	return fmt.Errorf("exceltable: panic: %v\n%s", p, stack)
 }
 
 // checkSheetSize returns an error if view does not fit into an Excel sheet,
