@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf16"
 
 	"github.com/xuri/excelize/v2"
@@ -149,18 +150,21 @@ func numberedSheetName(name string, n int) string {
 	name = cmp.Or(strings.TrimSpace(name), "UNNAMED")
 	suffix := " (" + strconv.Itoa(n) + ")"
 	maxUnits := excelize.MaxSheetNameLength - len(suffix) // suffix is ASCII
-	var (
-		b     strings.Builder
-		units int
-	)
-	for _, r := range name {
+	// No double space before the number if the cut ends at a space
+	return strings.TrimRightFunc(cutToUTF16Units(name, maxUnits), unicode.IsSpace) + suffix
+}
+
+// cutToUTF16Units returns the longest prefix of s of whole runes
+// with at most maxUnits UTF-16 code units.
+func cutToUTF16Units(s string, maxUnits int) string {
+	units := 0
+	for i, r := range s {
 		units += utf16.RuneLen(r)
 		if units > maxUnits {
-			break
+			return s[:i]
 		}
-		b.WriteRune(r)
 	}
-	return b.String() + suffix
+	return s
 }
 
 // existingSheet returns the name of the sheet of wb that equals name,
@@ -248,20 +252,7 @@ func sanitizeSheetName(name string) string {
 	if utf16Len(name) <= excelize.MaxSheetNameLength {
 		return name
 	}
-	var (
-		b     strings.Builder
-		units int
-	)
-	for _, r := range name {
-		n := utf16.RuneLen(r)
-		if units+n > excelize.MaxSheetNameLength-1 {
-			break
-		}
-		b.WriteRune(r)
-		units += n
-	}
-	b.WriteRune('…')
-	return b.String()
+	return cutToUTF16Units(name, excelize.MaxSheetNameLength-1) + "…"
 }
 
 // utf16Len returns the number of UTF-16 code units of s.
@@ -357,7 +348,12 @@ func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetNam
 
 // WriteView writes view as the only sheet of a new workbook to dest,
 // named after the view's title.
+// A panic is returned as error, see WriteViewSheet.
 func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
+	// WriteViewSheet recovers its own panics,
+	// this one is for writing the workbook to dest
+	defer recoverPanic(&err)
+
 	wb := NewWorkbook()
 	defer func() {
 		err = errors.Join(err, wb.Close())

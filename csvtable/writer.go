@@ -119,7 +119,7 @@ func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer 
 //
 // With WithUTF8BOM(true) the output starts with UTF8BOM,
 // see WithUTF8BOM for the combination with an encoder.
-func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) error {
+func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
 	if w.utf8BOM {
 		if w.encoder != nil {
 			return ErrUTF8BOMWithEncoder
@@ -127,10 +127,17 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		_, err := io.WriteString(dest, UTF8BOM)
-		if err != nil {
-			return err
-		}
+		// The mark goes out with the first row, so that an error before
+		// it, like of a formatter, leaves dest untouched as without the mark,
+		// for example an http.ResponseWriter that can still send an error
+		bom := &utf8BOMWriter{dest: dest}
+		dest = bom
+		defer func() {
+			if err == nil {
+				// A table without rows still starts with the mark
+				err = bom.writeBOM()
+			}
+		}()
 	}
 
 	if w.padding != NoPadding {
@@ -144,6 +151,30 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 		}
 	}
 	return w.writeView(ctx, dest, view)
+}
+
+// utf8BOMWriter writes UTF8BOM to dest in front of the first written bytes.
+type utf8BOMWriter struct {
+	dest    io.Writer
+	written bool
+}
+
+func (b *utf8BOMWriter) Write(p []byte) (int, error) {
+	err := b.writeBOM()
+	if err != nil {
+		return 0, err
+	}
+	return b.dest.Write(p)
+}
+
+// writeBOM writes UTF8BOM to dest unless it was already written.
+func (b *utf8BOMWriter) writeBOM() error {
+	if b.written {
+		return nil
+	}
+	b.written = true
+	_, err := io.WriteString(b.dest, UTF8BOM)
+	return err
 }
 
 // headerWriter returns a clone for writing the header row.

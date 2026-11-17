@@ -140,10 +140,13 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			v = reflect.New(rowType).Elem()
 		}
 		for _, requiredCol := range requiredCols {
-			if !slices.ContainsFunc(viewCols, func(viewCol string) bool { return naming.TitlesMatch(viewCol, requiredCol) }) {
+			viewColIndex := slices.IndexFunc(viewCols, func(viewCol string) bool { return naming.TitlesMatch(viewCol, requiredCol) })
+			if viewColIndex == -1 {
 				return nil, fmt.Errorf("required column %q not found in View columns", requiredCol)
 			}
-			if !naming.ColumnStructFieldValue(v, requiredCol).IsValid() {
+			// Look up the field with the view column, like the rows below,
+			// so that MatchTitle gets the view title as its first argument
+			if !naming.ColumnStructFieldValue(v, viewCols[viewColIndex]).IsValid() {
 				return nil, fmt.Errorf("required column %q not found as struct field", requiredCol)
 			}
 		}

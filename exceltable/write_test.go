@@ -1225,6 +1225,9 @@ func TestWorkbook_UniqueSheetName(t *testing.T) {
 		{name: "long name", sheet: a40, want: strings.Repeat("a", 30) + "…"},
 		{name: "long name clash", existing: []string{a40}, sheet: a40, want: a27 + " (2)"},
 		{name: "long name clash with two digits", existing: append([]string{a40}, numbered(a27, 9)[1:]...), sheet: a40, want: a27[1:] + " (10)"},
+		// The cut to 27 units ends with the space after the 26 "a",
+		// which is dropped to avoid a double space before the number
+		{name: "cut at a space", existing: []string{a27[1:] + " bbbb"}, sheet: a27[1:] + " bbbb", want: a27[1:] + " (2)"},
 		{name: "cut to whole runes", existing: []string{emoji16}, sheet: emoji16, want: strings.Repeat("😀", 13) + " (2)"},
 		{name: "apostrophe at the start", existing: []string{"'Q1'"}, sheet: "'Q1'", want: "_Q1' (2)"},
 	}

@@ -1,6 +1,10 @@
 package csvtable
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/domonda/go-retable"
+)
 
 // TableBounds locates the actual table within rows that can also contain
 // header lines before and trailer lines after it, as produced by exports
@@ -122,7 +126,7 @@ func hasEmptyField(row []string) bool {
 func countMatchingTitles(row, expectedTitles []string) (matches int) {
 	for _, title := range expectedTitles {
 		for _, field := range row {
-			if strings.EqualFold(strings.TrimSpace(field), strings.TrimSpace(title)) {
+			if retable.TrimEqualFold(field, title) {
 				matches++
 				break
 			}

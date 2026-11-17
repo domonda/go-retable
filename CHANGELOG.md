@@ -25,7 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   match each other with `ErrDuplicateColumnTitle`.
 - `csvtable.Writer.WithUTF8BOM` starts the output of `Write`,
   `WriteWithViewer` and `WriteView`, padded or not, with the UTF-8 byte order
-  mark `csvtable.UTF8BOM`, so that Excel opens the file as UTF-8. With an
+  mark `csvtable.UTF8BOM`, so that Excel opens the file as UTF-8. The mark is
+  written together with the first row, so an error before it leaves the
+  destination untouched, as without the mark. With an
   encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
   because the mark would misdeclare the encoded output.
 - `exceltable.Workbook.UniqueSheetName` returns a sheet name that does not

@@ -336,13 +336,18 @@ func (n *StructFieldNaming) columns(t reflect.Type) []string {
 //	err := naming.CheckUniqueColumns(Account{})
 //	// errors.Is(err, ErrDuplicateColumnTitle) == true
 func (n *StructFieldNaming) CheckUniqueColumns(strct any) error {
-	columns := n.Columns(strct)
-	for i, column := range columns {
-		for _, other := range columns[i+1:] {
+	return n.checkUniqueTitles(n.Columns(strct), strct)
+}
+
+// checkUniqueTitles implements CheckUniqueColumns for the already
+// determined column titles of strct, which is only used in the error.
+func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error {
+	for i, title := range titles {
+		for _, other := range titles[i+1:] {
 			// Both argument orders, because MatchTitle
 			// does not have to be symmetric
-			if n.TitlesMatch(other, column) || n.TitlesMatch(column, other) {
-				return fmt.Errorf("%w: %q and %q of %T", ErrDuplicateColumnTitle, column, other, strct)
+			if n.TitlesMatch(other, title) || n.TitlesMatch(title, other) {
+				return fmt.Errorf("%w: %q and %q of %T", ErrDuplicateColumnTitle, title, other, strct)
 			}
 		}
 	}
@@ -414,7 +419,7 @@ func (n *StructFieldNaming) FindTitleRow(rows [][]string, strct any) (titleRow i
 	if len(titles) == 0 {
 		return -1, nil, fmt.Errorf("%w: %T", ErrNoColumns, strct)
 	}
-	err = n.CheckUniqueColumns(strct)
+	err = n.checkUniqueTitles(titles, strct)
 	if err != nil {
 		return -1, nil, err
 	}

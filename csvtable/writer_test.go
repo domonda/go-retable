@@ -695,6 +695,30 @@ func TestWriter_WithUTF8BOMAndEncoder(t *testing.T) {
 	}
 }
 
+// TestWriter_WithUTF8BOMFormatterError covers that the byte order mark
+// goes out with the first row: an error before it leaves dest untouched,
+// so that for example an http.ResponseWriter can still send an error status.
+func TestWriter_WithUTF8BOMFormatterError(t *testing.T) {
+	view := retable.NewStringsView("", [][]string{{"a"}, {"x"}})
+	errFormat := errors.New("format failed")
+	w := NewWriter[[][]string]().
+		WithUTF8BOM(true).
+		WithColumnFormatterFunc(0, func(context.Context, retable.View, int, int) (string, bool, error) {
+			return "", false, errFormat
+		})
+	for name, w := range map[string]*Writer[[][]string]{
+		"unpadded": w,
+		"padded":   w.WithPadding(AlignLeft),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := w.WriteView(t.Context(), &buf, view)
+			require.ErrorIs(t, err, errFormat)
+			require.Empty(t, buf.String(), "nothing must be written")
+		})
+	}
+}
+
 func TestWriter_WithUTF8BOMOptions(t *testing.T) {
 	base := NewWriter[[][]string]()
 	require.False(t, base.UTF8BOM(), "default")
