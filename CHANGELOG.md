@@ -34,11 +34,13 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
     a name longer than 31 UTF-16 units is cut to 30 plus `…`. A name that
     collides with an existing sheet, ignoring case, returns
     `exceltable.ErrDuplicateSheetName` instead of merging the rows into it.
+    A table with more rows (1,048,576 including the header) or columns
+    (16,384) than an Excel sheet holds returns an error before any cell is
+    converted, and the workbook stays usable.
   - Date serials use the 1900 date system and the same arithmetic as
     `github.com/tealeg/xlsx/v3`, so they equal the ones go-structtable wrote
-    to Excel's 15 significant digits and whole milliseconds, a difference
-    of about 9 µs for current dates below the millisecond. A stored serial
-    never moves into the next day.
+    to Excel's 15 significant digits, about 9 µs for current dates. A stored
+    serial never moves into the next day.
     Every number is stored rounded to those 15 digits; excelize v2.11.1
     would otherwise cut off the rest and store one hour as slightly less.
     A time is written as its wall clock in its own location; a zero time is
@@ -116,6 +118,9 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
 - `StructRowsViewer.NewView`, and with it every writer's default viewer,
   accepts an array of structs, as documented. It returned
   `table must be slice or array kind` for every array.
+- `csvtable.Writer` and `htmltable.Writer`: `WithColumnFormatterFunc(i, nil)`
+  removes the column formatter, as documented. It stored the nil func, and
+  writing the table panicked on the first cell of the column.
 
 ## [1.0.0-beta.1] - 2026-10-26
 

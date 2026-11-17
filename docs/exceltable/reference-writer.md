@@ -245,8 +245,8 @@ significant digits, the precision of an Excel number. For current dates that
 is about 9 µs (a five-digit day number leaves ten decimal places), and one
 hour is stored as `0.0416666666666667`, a full hour for Excel's `HOUR`
 function, not 0:59:59. A stored date serial never moves into the next day:
-times are truncated to whole milliseconds, Excel's time resolution, and the
-rounding never carries past midnight. Excel still rounds the *displayed* time
+neither float64 arithmetic nor the rounding carries a time just before
+midnight past it. Excel still rounds the *displayed* time
 to the precision of the format, so `23:59:59.999` shows as the next day in a
 format without a fraction of a second.
 
@@ -286,9 +286,11 @@ workbook unchanged. Names that differ before sanitizing can collide after it:
 | The viewer cannot create a view of `table`, for example a struct instead of a slice | the viewer's error | unchanged, usable |
 | `ctx` is done before the sheet is added | `ctx.Err()` | unchanged, usable |
 | Duplicate sheet name | wraps `ErrDuplicateSheetName`: `duplicate sheet name: "Overview" (existing sheet "OVERVIEW")` | unchanged, usable |
+| More than 1,048,576 rows (header included) or 16,384 columns | `exceltable: sheet "Invoices" has 1048577 rows, more than Excel's 1048576` | unchanged, usable |
 | A formatter error, a cancelled `ctx` or an excelize error while rows are written | `sheet "Invoices": row 1, column "Total": <cause>` | unusable |
 | Any write to an unusable workbook, including `WriteTo` | `exceltable: workbook unusable after a failed sheet: sheet "Invoices": ...` | unusable |
 | `WriteTo` without sheets | `exceltable: workbook has no sheets` | unchanged, usable |
+| Any use after `Close` | `exceltable: workbook is closed` | closed |
 
 Every error wraps its cause, so `errors.Is(err, context.Canceled)` and
 `errors.Is(err, yourFormatterErr)` work, also on the errors of an unusable

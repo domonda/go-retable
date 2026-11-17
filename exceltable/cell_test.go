@@ -166,3 +166,16 @@ func TestRoundToExcelPrecision(t *testing.T) {
 	require.True(t, math.IsNaN(roundToExcelPrecision(math.NaN())))
 	require.Equal(t, math.Inf(-1), roundToExcelPrecision(math.Inf(-1)))
 }
+
+// TestTimeSerialStaysOnDay: the float64 serial of a time a few nanoseconds
+// before midnight of 9999-12-31 rounds to the next day's integer; timeSerial
+// keeps it on its day, and keeps sub-millisecond precision for current dates.
+func TestTimeSerialStaysOnDay(t *testing.T) {
+	last := timeSerial(time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC))
+	require.Less(t, last, 2958466.0)
+	require.Equal(t, 2958465.0, math.Floor(last))
+
+	a := timeSerial(time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC))
+	b := timeSerial(time.Date(2026, 11, 16, 10, 0, 0, 500000, time.UTC))
+	require.Greater(t, b, a, "half a millisecond must change the serial")
+}

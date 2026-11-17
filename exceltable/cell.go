@@ -85,12 +85,11 @@ func BoolCell(b bool) Cell {
 // built-in date formats, which Excel would display per the reader's locale.
 //
 // The serial represents the wall clock time of t in t's own location,
-// because Excel date/time values have no time zone, truncated to whole
-// milliseconds, the resolution of Excel times. The truncation keeps a
-// time just before midnight on its day, which a float64 serial of the
-// year 9999 could not hold at nanosecond precision. Excel still rounds
-// the displayed time to the precision of the format, so 23:59:59.999
-// shows as the next day with a format that has no fraction of a second.
+// because Excel date/time values have no time zone. It always stays on
+// the day of t, also for a time a few nanoseconds before midnight that a
+// float64 serial cannot hold. Excel still rounds the displayed time to
+// the precision of the format, so 23:59:59.999 shows as the next day
+// with a format that has no fraction of a second.
 // An empty format uses the writer's time format, see Writer.WithTimeFormat.
 // A zero t returns an empty Cell.
 //
@@ -105,7 +104,7 @@ func DateTimeCell(t time.Time, format string) Cell {
 	if year := t.Year(); year < 1900 || year > 9999 {
 		return StringCell(t.Format(outOfRangeTimeFormat))
 	}
-	return Cell{kind: cellDateTime, value: timeSerial(t.Truncate(time.Millisecond)), format: format}
+	return Cell{kind: cellDateTime, value: timeSerial(t), format: format}
 }
 
 // outOfRangeTimeFormat is the text form of a time that Excel cannot store as a date.
@@ -132,10 +131,18 @@ const (
 
 // timeSerial returns the Excel 1900 date system serial of the wall clock
 // time of t in its own location. t must not be before 1900-01-01.
+// The serial never reaches the next day, see dayEndSerial.
 func timeSerial(t time.Time) float64 {
 	_, offset := t.Zone()
 	wallClock := time.Unix(t.Unix()+int64(offset), int64(t.Nanosecond())).UTC()
 	serial := float64(wallClock.Unix())/secondsPerDay + daysBetween1900And1970 + float64(wallClock.Nanosecond())/nanosPerDay
+	// The float64 sum of a time a few nanoseconds before midnight can
+	// round up to the next day's integer serial, which happens in the
+	// year 9999 where a serial has seven integer digits
+	day := float64(wallClock.Truncate(24*time.Hour).Unix())/secondsPerDay + daysBetween1900And1970
+	if serial >= day+1 {
+		serial = math.Nextafter(day+1, 0)
+	}
 	if serial < serialOf1900March1 {
 		serial--
 	}
@@ -214,7 +221,11 @@ func (f CellFormatterFunc) FormatCell(ctx context.Context, view retable.View, ro
 // to a CellFormatter that writes its result as a string Cell.
 // The raw result of f is ignored: a spreadsheet string cell needs no escaping.
 // errors.ErrUnsupported and other errors of f are passed through.
+// A nil f, also a nil func, returns nil.
 func StringCellFormatter(f retable.CellFormatter) CellFormatter {
+	if isNilFormatter(f) {
+		return nil
+	}
 	return CellFormatterFunc(func(ctx context.Context, view retable.View, row, col int) (Cell, error) {
 		str, _, err := f.FormatCell(ctx, view, row, col)
 		if err != nil {

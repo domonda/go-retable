@@ -334,9 +334,12 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 	}
 	// Everything that can fail before the sheet exists happens first,
 	// so that such errors leave no empty sheet behind.
+	err := w.checkSheetSize(view)
+	if err != nil {
+		return err
+	}
 	var headerStyle int
 	if w.headerRow {
-		var err error
 		headerStyle, err = wb.style(styleKey{
 			header:     true,
 			fontFamily: w.headerFontFamily,
@@ -354,6 +357,23 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 	if err != nil {
 		wb.err = fmt.Errorf("sheet %q: %w", name, err)
 		return wb.err
+	}
+	return nil
+}
+
+// checkSheetSize returns an error if view does not fit into an Excel sheet,
+// before any cell is converted: at most 1,048,576 rows including the
+// header row and 16,384 columns.
+func (w *Writer[T]) checkSheetSize(view retable.View) error {
+	rows := view.NumRows()
+	if w.headerRow {
+		rows++
+	}
+	if rows > excelize.TotalRows {
+		return fmt.Errorf("exceltable: sheet %q has %d rows, more than Excel's %d", view.Title(), rows, excelize.TotalRows)
+	}
+	if cols := len(view.ColumnNames()); cols > excelize.MaxColumns {
+		return fmt.Errorf("exceltable: sheet %q has %d columns, more than Excel's %d", view.Title(), cols, excelize.MaxColumns)
 	}
 	return nil
 }
@@ -419,6 +439,7 @@ func (w *Writer[T]) excelizeValue(wb *Workbook, cell Cell) (any, error) {
 		// Rounding a date serial up must not carry it into the next day,
 		// for example 23:59:59.999999 into the following date. Keep the
 		// serial, which excelize cuts to 15 digits within the same day.
+		// timeSerial already keeps the unrounded serial on its day.
 		if cell.kind != cellDateTime || math.Floor(rounded) == math.Floor(f) {
 			value = rounded
 		}
@@ -583,9 +604,7 @@ func (w *Writer[T]) WithTableViewer(viewer retable.Viewer) *Writer[T] {
 func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter CellFormatter) *Writer[T] {
 	mod := w.clone()
 	mod.columnFormatters = maps.Clone(w.columnFormatters)
-	// A nil CellFormatterFunc converted to CellFormatter is not a nil
-	// interface, but calling it would panic, so it removes too
-	if f, isFunc := formatter.(CellFormatterFunc); formatter == nil || isFunc && f == nil {
+	if isNilFormatter(formatter) {
 		delete(mod.columnFormatters, columnIndex)
 		return mod
 	}
@@ -594,6 +613,16 @@ func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter CellFormatter
 	}
 	mod.columnFormatters[columnIndex] = formatter
 	return mod
+}
+
+// isNilFormatter reports whether formatter is nil or a nil func, like a nil
+// CellFormatterFunc, which is a non-nil interface that panics when called.
+func isNilFormatter(formatter any) bool {
+	if formatter == nil {
+		return true
+	}
+	v := reflect.ValueOf(formatter)
+	return v.Kind() == reflect.Func && v.IsNil()
 }
 
 // WithTypeFormatter returns a new writer with formatter registered for

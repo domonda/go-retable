@@ -843,7 +843,9 @@ func TestWriter_DateSerialKeepsDay(t *testing.T) {
 		{time.Date(2026, 11, 16, 0, 0, 0, 1000, time.UTC)},
 	}
 	f := writeOneSheet(t, NewWriter[[]row]().WithTimeFormat("dd.mm.yyyy"), rows)
-	require.Equal(t, numCell("46387.9999999884", "dd.mm.yyyy"), readCell(t, f, "S", 1, 1))
+	// Rounding to 15 digits would give 46388; the writer keeps the serial
+	// and excelize cuts it to 15 digits on the same day
+	require.Equal(t, numCell("46387.9999999999", "dd.mm.yyyy"), readCell(t, f, "S", 1, 1))
 	require.Equal(t, numCell("2958465.99999999", "dd.mm.yyyy"), readCell(t, f, "S", 1, 2))
 	require.Equal(t, numCell("46342", "dd.mm.yyyy"), readCell(t, f, "S", 1, 3))
 }
@@ -970,17 +972,39 @@ func (v manyRowsView) NumRows() int                           { return v.numRows
 func (v manyRowsView) Cell(row, col int) any                  { return row }
 func (v manyRowsView) ReflectCell(row, col int) reflect.Value { return reflect.ValueOf(row) }
 
-// TestWriter_RowLimit: a sheet with more rows than Excel's 1,048,576 fails
-// with an error and writes nothing, instead of a cut-off sheet.
+// TestWriter_RowLimit: a sheet with more rows than Excel's 1,048,576 or more
+// columns than 16,384 is rejected before any cell is converted and before
+// the sheet is added, so the workbook stays usable.
 func TestWriter_RowLimit(t *testing.T) {
-	var buf bytes.Buffer
+	ctx := context.Background()
+	wb := NewWorkbook()
+	defer wb.Close()
+	converted := 0
+	counting := NewWriter[any]().WithHeaderRow(true).WithKindFormatter(reflect.Int, CellFormatterFunc(
+		func(context.Context, retable.View, int, int) (Cell, error) {
+			converted++
+			return Cell{}, errors.ErrUnsupported
+		},
+	))
 	// The header row plus 2^20 data rows is one row too many
-	err := NewWriter[any]().WithHeaderRow(true).WriteView(context.Background(), &buf, manyRowsView{numRows: 1 << 20})
-	require.ErrorContains(t, err, `sheet "Many"`)
-	require.Zero(t, buf.Len())
+	err := counting.WriteViewSheet(ctx, wb, manyRowsView{numRows: 1 << 20})
+	require.ErrorContains(t, err, `sheet "Many" has 1048577 rows`)
+	require.Zero(t, converted, "no cell is converted before the size check")
 
+	wideCols := make([]string, excelize.MaxColumns+1)
+	err = NewWriter[any]().WriteViewSheet(ctx, wb, &retable.AnyValuesView{TableTitle: "Wide", Cols: wideCols})
+	require.ErrorContains(t, err, `sheet "Wide" has 16385 columns`)
+
+	// Neither error poisoned the workbook or added a sheet
+	require.NoError(t, NewWriter[any]().WriteViewSheet(ctx, wb, manyRowsView{numRows: 2}))
+	var buf bytes.Buffer
+	_, err = wb.WriteTo(&buf)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Many"}, openWritten(t, buf.Bytes()).GetSheetList())
+
+	// Without a header row 2^20 data rows fit exactly
 	buf.Reset()
-	require.NoError(t, NewWriter[any]().WriteView(context.Background(), &buf, manyRowsView{numRows: 1 << 20}))
+	require.NoError(t, NewWriter[any]().WriteView(ctx, &buf, manyRowsView{numRows: 1 << 20}))
 }
 
 // TestWriter_NilColumnFormatterFuncRemoves: a nil CellFormatterFunc passed as
@@ -999,4 +1023,40 @@ func TestWriter_NilColumnFormatterFuncRemoves(t *testing.T) {
 		require.NoError(t, writer.WriteView(context.Background(), &buf, view))
 	})
 	require.Equal(t, numCell("1", ""), readCell(t, openWritten(t, buf.Bytes()), "", 1, 1))
+}
+
+// customFormatterFunc is a user func type implementing CellFormatter,
+// other than CellFormatterFunc.
+type customFormatterFunc func() Cell
+
+func (f customFormatterFunc) FormatCell(context.Context, retable.View, int, int) (Cell, error) {
+	return f(), nil
+}
+
+// TestWriter_NilCustomFormatterFuncRemoves: a nil func of any type with a
+// FormatCell method removes the column formatter, and StringCellFormatter
+// of a nil formatter is nil, so neither panics when the table is written.
+func TestWriter_NilCustomFormatterFuncRemoves(t *testing.T) {
+	var nilCustom customFormatterFunc
+	var nilStringFunc retable.CellFormatterFunc
+	require.Nil(t, StringCellFormatter(nil))
+	require.Nil(t, StringCellFormatter(nilStringFunc))
+
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{1}}}
+	constant := CellFormatterFunc(func(context.Context, retable.View, int, int) (Cell, error) {
+		return StringCell("formatted"), nil
+	})
+	for name, formatter := range map[string]CellFormatter{
+		"nil custom func":               nilCustom,
+		"StringCellFormatter(nil func)": StringCellFormatter(nilStringFunc),
+	} {
+		t.Run(name, func(t *testing.T) {
+			writer := NewWriter[any]().WithColumnFormatter(0, constant).WithColumnFormatter(0, formatter)
+			var buf bytes.Buffer
+			require.NotPanics(t, func() {
+				require.NoError(t, writer.WriteView(context.Background(), &buf, view))
+			})
+			require.Equal(t, numCell("1", ""), readCell(t, openWritten(t, buf.Bytes()), "", 1, 1))
+		})
+	}
 }
