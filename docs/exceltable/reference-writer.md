@@ -125,6 +125,7 @@ field. For `[][]string` the first row holds the column names; with
 | --- | --- |
 | `NewWorkbook() *Workbook` | An empty workbook. |
 | `(wb) WriteTo(dest io.Writer) (int64, error)` | Writes the workbook as `.xlsx` to `dest`. Can be called more than once, with sheets added in between. |
+| `(wb) UniqueSheetName(name string) string` | The sanitized `name`, or, if a sheet of that name exists, `name` followed by ` (2)`, ` (3)` and so on, see [Sheet names](#sheet-names). Pass it to `WriteSheet` or as view title to `WriteViewSheet`. |
 | `(wb) Close() error` | Releases the workbook, including the temporary files that large sheets are streamed to. Afterwards `WriteTo` and adding sheets return an error. |
 
 Sheets appear in the order they were added. A `Workbook` is not safe for
@@ -286,6 +287,23 @@ case like Excel does. A match returns `ErrDuplicateSheetName` and leaves the
 workbook unchanged. Names that differ before sanitizing can collide after it:
 `a/b` and `a?b` both become `a_b`, and two names that differ only after their
 30th character get the same truncated name.
+
+For names from data, like cost center numbers, `Workbook.UniqueSheetName(name)`
+returns a name that does not collide, compared the same way. Without a
+collision it is the sanitized name. With one it appends ` (2)`, ` (3)` and so on
+to the trimmed name, `UNNAMED (2)` for an empty one, and cuts the name before the
+number to whole characters so that the number always fits into the 31 units and
+is never replaced by `…`. A sheet written with the returned name gets exactly
+that name.
+
+| Existing sheets | Input | `UniqueSheetName` |
+| --- | --- | --- |
+| none | `" a/b "` | `a_b` |
+| `4711` | `"4711"` | `4711 (2)` |
+| `Overview` | `"OVERVIEW"` | `OVERVIEW (2)` |
+| `X`, `X (2)` | `"X"` | `X (3)` |
+| `UNNAMED` | `""` | `UNNAMED (2)` |
+| one written as 40 × `a` | 40 × `a` | 27 × `a` followed by ` (2)` |
 
 ## Errors
 

@@ -1193,3 +1193,92 @@ func TestWriter_WritePanics(t *testing.T) {
 	require.ErrorContains(t, err, `sheet "S": exceltable: panic: boom`)
 	require.Zero(t, buf.Len(), "nothing is written to dest")
 }
+
+func TestWorkbook_UniqueSheetName(t *testing.T) {
+	a27 := strings.Repeat("a", 27)
+	a40 := strings.Repeat("a", 40)
+	emoji16 := strings.Repeat("😀", 16) // 32 UTF-16 code units
+	numbered := func(base string, upTo int) []string {
+		names := []string{base}
+		for n := 2; n <= upTo; n++ {
+			names = append(names, fmt.Sprintf("%s (%d)", base, n))
+		}
+		return names
+	}
+	tests := []struct {
+		name     string
+		existing []string
+		sheet    string
+		want     string
+	}{
+		{name: "no sheets", sheet: "Overview", want: "Overview"},
+		{name: "no clash", existing: []string{"Overview"}, sheet: "Details", want: "Details"},
+		{name: "sanitized without clash", sheet: " a/b ", want: "a_b"},
+		{name: "equal name", existing: []string{"4711"}, sheet: "4711", want: "4711 (2)"},
+		{name: "name with surrounding whitespace", existing: []string{"4711"}, sheet: " 4711\t", want: "4711 (2)"},
+		{name: "clash ignoring case", existing: []string{"Overview"}, sheet: "OVERVIEW", want: "OVERVIEW (2)"},
+		{name: "clash after sanitizing", existing: []string{"a_b"}, sheet: "a/b", want: "a_b (2)"},
+		{name: "numbered name exists too", existing: []string{"X", "x (2)"}, sheet: "X", want: "X (3)"},
+		{name: "two digit number", existing: numbered("X", 9), sheet: "X", want: "X (10)"},
+		{name: "empty name", sheet: "", want: "UNNAMED"},
+		{name: "empty name clash", existing: []string{"UNNAMED"}, sheet: "  ", want: "UNNAMED (2)"},
+		{name: "long name", sheet: a40, want: strings.Repeat("a", 30) + "…"},
+		{name: "long name clash", existing: []string{a40}, sheet: a40, want: a27 + " (2)"},
+		{name: "long name clash with two digits", existing: append([]string{a40}, numbered(a27, 9)[1:]...), sheet: a40, want: a27[1:] + " (10)"},
+		{name: "cut to whole runes", existing: []string{emoji16}, sheet: emoji16, want: strings.Repeat("😀", 13) + " (2)"},
+		{name: "apostrophe at the start", existing: []string{"'Q1'"}, sheet: "'Q1'", want: "_Q1' (2)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wb := NewWorkbook()
+			defer wb.Close()
+			for _, existing := range tt.existing {
+				_, err := wb.addSheet(existing)
+				require.NoError(t, err)
+			}
+
+			got := wb.UniqueSheetName(tt.sheet)
+			require.Equal(t, tt.want, got)
+			require.LessOrEqual(t, utf16Len(got), excelize.MaxSheetNameLength)
+			require.Equal(t, got, sanitizeSheetName(got), "WriteSheet must use the returned name unchanged")
+		})
+	}
+}
+
+// TestWorkbook_UniqueSheetNameWrite covers that sheets written with names
+// from UniqueSheetName get exactly those names and that Excel accepts them.
+func TestWorkbook_UniqueSheetNameWrite(t *testing.T) {
+	rows := []overviewRow{{"a", 1}}
+	long := strings.Repeat("ä", 20) + strings.Repeat("😀", 10)
+	wb := NewWorkbook()
+	defer wb.Close()
+
+	var names []string
+	writer := NewWriter[[]overviewRow]()
+	for _, sheet := range []string{"4711", "4711", " 4711 ", "", "", long, long} {
+		name := wb.UniqueSheetName(sheet)
+		require.NoError(t, writer.WriteSheet(t.Context(), wb, rows, name))
+		names = append(names, name)
+	}
+	stringsWriter := NewWriter[[][]string]()
+	view := retable.NewStringsView("4711", [][]string{{"A"}, {"1"}})
+	name := wb.UniqueSheetName(view.Title())
+	require.NoError(t, stringsWriter.WriteViewSheet(t.Context(), wb, retable.ViewWithTitle(view, name)))
+	names = append(names, name)
+
+	require.Equal(t, []string{
+		"4711",
+		"4711 (2)",
+		"4711 (3)",
+		"UNNAMED",
+		"UNNAMED (2)",
+		strings.Repeat("ä", 20) + strings.Repeat("😀", 5) + "…",
+		strings.Repeat("ä", 20) + strings.Repeat("😀", 3) + " (2)",
+		"4711 (4)",
+	}, names)
+
+	var buf bytes.Buffer
+	_, err := wb.WriteTo(&buf)
+	require.NoError(t, err)
+	require.Equal(t, names, openWritten(t, buf.Bytes()).GetSheetList())
+}

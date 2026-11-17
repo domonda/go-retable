@@ -28,6 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   mark `csvtable.UTF8BOM`, so that Excel opens the file as UTF-8. With an
   encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
   because the mark would misdeclare the encoded output.
+- `exceltable.Workbook.UniqueSheetName` returns a sheet name that does not
+  collide with the sheets of the workbook, for names from data like cost
+  center numbers: the sanitized name, or the trimmed name followed by " (2)",
+  " (3)" and so on, cut to whole runes so that the number always fits into
+  Excel's 31 UTF-16 code units. `WriteSheet` and `WriteViewSheet` keep
+  returning `ErrDuplicateSheetName` for a colliding name.
 
 ### Fixed
 

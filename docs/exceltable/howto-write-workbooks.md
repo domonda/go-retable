@@ -156,25 +156,23 @@ returns an error at runtime instead of failing to compile. See
 ### When two sheet names collide
 
 `WriteSheet` returns `exceltable.ErrDuplicateSheetName` when the sanitized
-name equals an existing sheet name, ignoring case. The workbook is unchanged,
-so you can retry with another name:
+name equals an existing sheet name, ignoring case. The workbook is unchanged.
+For names from data, let the workbook number them instead:
 
 ```go
-name := center.Number
-for i := 2; ; i++ {
-    err = bookingWriter.WriteSheet(ctx, wb, bookings[center.Number], name)
-    if !errors.Is(err, exceltable.ErrDuplicateSheetName) {
-        break
-    }
-    name = fmt.Sprintf("%s (%d)", center.Number, i)
-}
+name := wb.UniqueSheetName(center.Number) // "4711", then "4711 (2)", ...
+err = bookingWriter.WriteSheet(ctx, wb, bookings[center.Number], name)
 if err != nil {
     return err
 }
+
+// A view is named by its title
+view = retable.ViewWithTitle(view, wb.UniqueSheetName(view.Title()))
+err = summaryWriter.WriteViewSheet(ctx, wb, view)
 ```
 
-Keep the suffix short when names can be long: a name cut at 30 characters
-loses the suffix and collides again.
+`UniqueSheetName` cuts a long name before the number, so the number is never
+lost at the 31 character limit.
 
 ## Serve a workbook as an HTTP download
 

@@ -1,6 +1,7 @@
 package exceltable
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -109,16 +110,77 @@ func (wb *Workbook) poisonedError() error {
 	return fmt.Errorf("exceltable: workbook unusable after a failed sheet: %w", wb.err)
 }
 
+// UniqueSheetName returns the name that WriteSheet and WriteViewSheet
+// would give a sheet named name, sanitized for Excel, see Writer.WriteSheet,
+// if that does not equal the name of an existing sheet of wb, ignoring case.
+// Otherwise it appends " (2)", " (3)" and so on to name without surrounding
+// whitespace, or to "UNNAMED" for an empty name, until the sanitized result
+// is unique, and returns it. Before the number the name is cut to whole
+// runes so that the number always fits into Excel's limit of 31 UTF-16
+// code units and is never cut off.
+//
+// Pass the result to WriteSheet, or as view title to WriteViewSheet,
+// to add a sheet with a name from user data, like a cost center number,
+// that must not fail with ErrDuplicateSheetName.
+// The sheet then has exactly the returned name.
+//
+// Example:
+//
+//	name := wb.UniqueSheetName(center.Number) // "4711", then "4711 (2)", ...
+//	err := writer.WriteSheet(ctx, wb, bookings, name)
+//
+//	view = retable.ViewWithTitle(view, wb.UniqueSheetName(view.Title()))
+//	err = writer.WriteViewSheet(ctx, wb, view)
+func (wb *Workbook) UniqueSheetName(name string) string {
+	unique := sanitizeSheetName(name)
+	for n := 2; wb.existingSheet(unique) != ""; n++ {
+		// Every number is another name, so the loop ends
+		// after at most one iteration per sheet of wb
+		unique = sanitizeSheetName(numberedSheetName(name, n))
+	}
+	return unique
+}
+
+// numberedSheetName returns name without surrounding whitespace,
+// or "UNNAMED" for an empty name, followed by " (n)",
+// with the name cut to whole runes so that the result has at most
+// 31 UTF-16 code units, which sanitizeSheetName keeps unchanged.
+func numberedSheetName(name string, n int) string {
+	name = cmp.Or(strings.TrimSpace(name), "UNNAMED")
+	suffix := " (" + strconv.Itoa(n) + ")"
+	maxUnits := excelize.MaxSheetNameLength - len(suffix) // suffix is ASCII
+	var (
+		b     strings.Builder
+		units int
+	)
+	for _, r := range name {
+		units += utf16.RuneLen(r)
+		if units > maxUnits {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + suffix
+}
+
+// existingSheet returns the name of the sheet of wb that equals name,
+// ignoring case like Excel does, or "" if there is none.
+func (wb *Workbook) existingSheet(name string) string {
+	for _, existing := range wb.sheets {
+		if strings.EqualFold(existing, name) {
+			return existing
+		}
+	}
+	return ""
+}
+
 // addSheet sanitizes name, checks it against the existing sheet names
 // and adds the sheet. The first sheet replaces the default sheet
 // that excelize creates.
 func (wb *Workbook) addSheet(name string) (string, error) {
 	name = sanitizeSheetName(name)
-	for _, existing := range wb.sheets {
-		// Excel compares sheet names case-insensitively
-		if strings.EqualFold(existing, name) {
-			return "", fmt.Errorf("%w: %q (existing sheet %q)", ErrDuplicateSheetName, name, existing)
-		}
+	if existing := wb.existingSheet(name); existing != "" {
+		return "", fmt.Errorf("%w: %q (existing sheet %q)", ErrDuplicateSheetName, name, existing)
 	}
 	var err error
 	if len(wb.sheets) == 0 {
@@ -316,6 +378,8 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 // a name longer than 31 UTF-16 code units is cut to 30 units plus "…".
 // If the sanitized name equals an existing sheet name, ignoring case,
 // ErrDuplicateSheetName is returned and wb is left unchanged.
+// Use Workbook.UniqueSheetName for names from user data.
+//
 // A panic, for example of a CellFormatter or of the Viewer, is returned
 // as error and fails wb like an error if the sheet was already added,
 // see WriteViewSheet.

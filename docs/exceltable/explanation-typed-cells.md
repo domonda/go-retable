@@ -233,7 +233,8 @@ Two names that sanitize to the same name, ignoring case like Excel does, are an
 error, `ErrDuplicateSheetName`. Silently appending the rows of the second sheet
 to the first, or renaming it to `Overview (2)`, would produce a file whose
 structure differs from what the code asked for. The caller knows which suffix
-makes sense, so the writer leaves the choice to it.
+makes sense, so the writer leaves the choice to it. A caller that wants the
+numbered names asks for them explicitly with `Workbook.UniqueSheetName`.
 
 ## A failed sheet makes the workbook unusable
 
