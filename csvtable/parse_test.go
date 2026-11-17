@@ -504,6 +504,14 @@ func TestParseDetectFormat_MultiLineFields(t *testing.T) {
 			want: [][]string{{"A", "one\ntwo;three", "B"}},
 		},
 		{
+			// Joining the multi-line value moves the row on to its closing
+			// line, where the next value is split by a separator within its
+			// quotes and has to be joined on that line.
+			name: "value split by a separator after a multi-line value",
+			csv:  "A;\"x\ny\";\"p;q\";B",
+			want: [][]string{{"A", "x\ny", "p;q", "B"}},
+		},
+		{
 			name: "value that is only a quote and a newline",
 			csv:  "A;\"\"\"\n\"\"\";B",
 			want: [][]string{{"A", "\"\n\"", "B"}},
@@ -1161,13 +1169,50 @@ func Test_bestSeparator(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			// Every candidate separates one of the two records into two
-			// columns and the other into one. Taking the more common column
-			// count of a candidate as one instead of two would discard both
-			// candidates as non-separating.
+			// The comma splits half of the records into two columns and the
+			// other half into three, so its most common column count is a tie
+			// that has to go to the three columns every time.
 			name:    "most common column count of a candidate breaks its tie towards more columns",
-			csv:     "a,b\nc;d\n",
+			csv:     "a,b\nc,d,e\nf,g\nh,i,j\n",
 			wantSep: ",",
+			wantOK:  true,
+		},
+		{
+			// Each candidate separates only one of the two records, which is
+			// too little to tell a table from a value containing it.
+			name:   "a candidate separating a single record does not score",
+			csv:    "a,b\nc;d\n",
+			wantOK: false,
+		},
+		{
+			// The semicolon is part of one value in a single column file,
+			// splitting on it would lose the rest of that value.
+			name:   "semicolon in one value of a single column file",
+			csv:    "Reference\nINV-1001\nINV-1002; INV-1003\nINV-1004\n",
+			wantOK: false,
+		},
+		{
+			name:   "tab in one value of a single column file",
+			csv:    "Name\nAlice\nBob\nCarol\tDave\nEve\n",
+			wantOK: false,
+		},
+		{
+			name:   "pipe in one value of a single column file",
+			csv:    "Name\nAlice\nBob\nCarol | Dave\nEve\n",
+			wantOK: false,
+		},
+		{
+			// Two separated records are enough on their own,
+			// but not when they are fewer than a fifth of all records.
+			name:   "separated records below a fifth of all records do not score",
+			csv:    "a;b\nc;d\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+			wantOK: false,
+		},
+		{
+			// Exactly a fifth of all records is enough.
+			name:    "separated records at a fifth of all records score",
+			csv:     "a;b\nc;d\n1\n2\n3\n4\n5\n6\n7\n8\n",
+			wantSep: ";",
 			wantOK:  true,
 		},
 	}
@@ -1222,4 +1267,42 @@ func TestParseDetectFormat_UnterminatedQuoteLinesAreNotQuadratic(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("parsing lines with unterminated quotes took longer than 5s, the closing field search across lines is quadratic again")
 	}
+}
+
+// TestParseDetectFormat_SingleColumnValueWithSeparator covers that a
+// separator candidate inside one value of a single column file does not
+// become the separator: the value has to stay whole instead of losing
+// everything after the candidate without an error.
+func TestParseDetectFormat_SingleColumnValueWithSeparator(t *testing.T) {
+	for _, value := range []string{"INV-1002; INV-1003", "INV-1002\tINV-1003", "INV-1002 | INV-1003"} {
+		t.Run(strconv.Quote(value), func(t *testing.T) {
+			// given
+			csv := "Reference\nINV-1001\n" + value + "\nINV-1004\n"
+
+			// when
+			rows, format, err := ParseDetectFormat([]byte(csv), nil)
+
+			// then
+			require.NoError(t, err)
+			require.Equal(t, ",", format.Separator, "default separator")
+			require.Equal(t, [][]string{{"Reference"}, {"INV-1001"}, {value}, {"INV-1004"}}, RemoveEmptyRows(rows))
+		})
+	}
+}
+
+// TestReadLines_JoinedRowsKeepNoSpareCapacity covers that a row whose
+// quoted value was split on many separators and joined back together is
+// returned without a slot for every split, which would keep memory alive
+// many times the size of the value for as long as the caller holds the rows.
+func TestReadLines_JoinedRowsKeepNoSpareCapacity(t *testing.T) {
+	// given
+	line := []byte(`a,"` + strings.Repeat("x,", 1000) + `y",b`)
+
+	// when
+	rows, err := readLines([][]byte{line}, []byte{','}, "\n")
+
+	// then
+	require.NoError(t, err)
+	require.Len(t, rows[0], 3)
+	require.LessOrEqual(t, cap(rows[0]), 2*len(rows[0]), "capacity of the joined row")
 }

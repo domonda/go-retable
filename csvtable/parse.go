@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 )
 
 // ParseDetectFormat parses CSV data with automatic format detection.
@@ -375,6 +376,15 @@ func splitLines(csv []byte, newline string) [][]byte {
 	return lines
 }
 
+// A candidate that bestSeparator only scores by leaving out the records it
+// does not separate has to separate at least minSeparatedRecords records
+// with its most common column count, and at least one in minSeparatedShare
+// of all records.
+const (
+	minSeparatedRecords = 2
+	minSeparatedShare   = 5
+)
+
 // separatorCandidates are the separators that can be detected from the data,
 // ordered by preference so that the earlier one wins a tie in bestSeparator.
 var separatorCandidates = []byte{',', ';', '\t', '|'}
@@ -494,12 +504,13 @@ func (s *csvStructure) bestSeparator() (separator string, ok bool) {
 		// more columns win a tie.
 		//
 		// Records that the candidate does not separate at all are left out of
-		// that vote unless it separates no record, because the header and
-		// trailer lines of a table are single column records that must not
-		// outvote the actual table rows even when there are more of them.
-		// A bank statement with more preamble and trailer lines than data rows
-		// is the common case, and counting those made the most common column
-		// count one, which discarded the real separator below.
+		// that vote unless it separates no record, wherever they are in the
+		// data, because the header and trailer lines of a table are single
+		// column records that must not outvote the actual table rows even
+		// when there are more of them. A bank statement with more preamble
+		// and trailer lines than data rows is the common case, and counting
+		// those made the most common column count one, which discarded the
+		// real separator below.
 		var columns, records int
 		for c, r := range s.columnsPerRecord[candidate] {
 			if c < 2 && len(s.columnsPerRecord[candidate]) > 1 {
@@ -511,6 +522,15 @@ func (s *csvStructure) bestSeparator() (separator string, ok bool) {
 		}
 		if columns < 2 {
 			// The candidate doesn't separate anything in the typical record
+			continue
+		}
+		if s.columnsPerRecord[candidate][1] > 0 &&
+			(records < minSeparatedRecords || records*minSeparatedShare < s.numRecords) {
+			// Leaving out the records the candidate does not separate lets a
+			// few lines decide, so it only counts when those lines can be a
+			// table. A single value containing a semicolon, tab or pipe in an
+			// otherwise single column file would else become the separator
+			// and lose the rest of that value.
 			continue
 		}
 		uniformity := float64(records) / float64(s.numRecords)
@@ -784,6 +804,13 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 			row = append(row, string(field))
 		}
 
+		if cap(row) > 2*len(row) {
+			// Joining split fields left most of the capacity unused,
+			// which the returned rows would keep alive as long as the caller
+			// holds them: one quoted value with a million separators would
+			// keep a slot for every one of them.
+			row = slices.Clone(row)
+		}
 		rows[lineIndex] = row
 	}
 
