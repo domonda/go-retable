@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/domonda/go-retable"
 )
 
 func ExampleWriter() {
@@ -178,4 +180,22 @@ func TestWriter_PointerToNullValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, dest.String(), "<td><i>null</i></td>")
 	require.NotContains(t, dest.String(), "0001-01-01")
+}
+
+// TestWriter_NilColumnFormatterFuncRemoves: WithColumnFormatterFunc(i, nil)
+// removes the column formatter as documented, instead of storing a nil func
+// that panicked on the first cell.
+func TestWriter_NilColumnFormatterFuncRemoves(t *testing.T) {
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{42}}}
+	writer := NewWriter[any]().
+		WithColumnFormatterFunc(0, func(context.Context, retable.View, int, int) (string, bool, error) {
+			return "FORMATTED", false, nil
+		}).
+		WithColumnFormatterFunc(0, nil)
+	var dest bytes.Buffer
+	require.NotPanics(t, func() {
+		require.NoError(t, writer.WriteView(context.Background(), &dest, view))
+	})
+	require.Contains(t, dest.String(), "<td>42</td>")
+	require.NotContains(t, dest.String(), "FORMATTED")
 }

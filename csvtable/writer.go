@@ -368,12 +368,22 @@ func (w *Writer[T]) WithColumnFormatter(columnIndex int, formatter retable.CellF
 	mod := w.clone()
 	mod.columnFormatters = make(map[int]retable.CellFormatter)
 	maps.Copy(mod.columnFormatters, w.columnFormatters)
-	if formatter != nil {
-		mod.columnFormatters[columnIndex] = formatter
-	} else {
+	if isNilFormatter(formatter) {
 		delete(mod.columnFormatters, columnIndex)
+	} else {
+		mod.columnFormatters[columnIndex] = formatter
 	}
 	return mod
+}
+
+// isNilFormatter reports whether formatter is nil or a nil func, like a nil
+// retable.CellFormatterFunc, which is a non-nil interface that panics when called.
+func isNilFormatter(formatter retable.CellFormatter) bool {
+	if formatter == nil {
+		return true
+	}
+	v := reflect.ValueOf(formatter)
+	return v.Kind() == reflect.Func && v.IsNil()
 }
 
 // WithColumnFormatterFunc returns a new writer with the passed formatterFunc registered for columnIndex.

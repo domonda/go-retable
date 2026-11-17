@@ -588,3 +588,20 @@ func TestWriter_NilFormatterFuncRemoves(t *testing.T) {
 		})
 	}
 }
+
+// TestWriter_NilColumnFormatterFuncRemoves: WithColumnFormatterFunc(i, nil)
+// removes the column formatter as documented, instead of storing a nil func
+// that panicked on the first cell.
+func TestWriter_NilColumnFormatterFuncRemoves(t *testing.T) {
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{42}}}
+	writer := NewWriter[any]().
+		WithColumnFormatterFunc(0, func(context.Context, retable.View, int, int) (string, bool, error) {
+			return "FORMATTED", false, nil
+		}).
+		WithColumnFormatterFunc(0, nil)
+	var dest bytes.Buffer
+	require.NotPanics(t, func() {
+		require.NoError(t, writer.WithNewLine("\n").WriteView(context.Background(), &dest, view))
+	})
+	require.Equal(t, "42\n", dest.String())
+}
