@@ -1209,6 +1209,37 @@ func Test_bestSeparator(t *testing.T) {
 			wantOK: false,
 		},
 		{
+			// The thresholds count every record the candidate separates,
+			// not only those with its most common column count, so ragged
+			// rows next to a single column record keep their separator.
+			name:    "ragged rows with a single column record",
+			csv:     "Name;Alter;Notiz\nJohn;30\nJane\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			name:    "title line above ragged rows",
+			csv:     "Mitglieder\nName;Alter;Notiz\nJohn;30\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			// No column count occurs more than twice, but most records
+			// are separated.
+			name:    "variable length lists with a single column record",
+			csv:     "alice;x\nbob\ncarol;a;b\ndave;a;b;c\nerin;a;b;c;d\nfrank;x\ngrace;a;b\nheidi;a;b;c\nivan;a;b;c;d\njudy;a;b;c;d;e\nkim;a;b;c;d;e\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			// A title line above a single separated line has the shape of a
+			// single column file with one value containing the candidate,
+			// and is decided the same way: the line is not split.
+			name:   "title line above a single separated line",
+			csv:    "Kontoauszug\nDatum;Text;Betrag\n",
+			wantOK: false,
+		},
+		{
 			// Exactly a fifth of all records is enough.
 			name:    "separated records at a fifth of all records score",
 			csv:     "a;b\nc;d\n1\n2\n3\n4\n5\n6\n7\n8\n",

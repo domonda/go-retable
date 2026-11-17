@@ -377,9 +377,9 @@ func splitLines(csv []byte, newline string) [][]byte {
 }
 
 // A candidate that bestSeparator only scores by leaving out the records it
-// does not separate has to separate at least minSeparatedRecords records
-// with its most common column count, and at least one in minSeparatedShare
-// of all records.
+// does not separate has to separate at least minSeparatedRecords records,
+// into any number of columns, and at least one in minSeparatedShare of all
+// records.
 const (
 	minSeparatedRecords = 2
 	minSeparatedShare   = 5
@@ -511,8 +511,11 @@ func (s *csvStructure) bestSeparator() (separator string, ok bool) {
 		// and trailer lines than data rows is the common case, and counting
 		// those made the most common column count one, which discarded the
 		// real separator below.
-		var columns, records int
+		var columns, records, separated int
 		for c, r := range s.columnsPerRecord[candidate] {
+			if c >= 2 {
+				separated += r
+			}
 			if c < 2 && len(s.columnsPerRecord[candidate]) > 1 {
 				continue
 			}
@@ -525,12 +528,13 @@ func (s *csvStructure) bestSeparator() (separator string, ok bool) {
 			continue
 		}
 		if s.columnsPerRecord[candidate][1] > 0 &&
-			(records < minSeparatedRecords || records*minSeparatedShare < s.numRecords) {
+			(separated < minSeparatedRecords || separated*minSeparatedShare < s.numRecords) {
 			// Leaving out the records the candidate does not separate lets a
-			// few lines decide, so it only counts when those lines can be a
-			// table. A single value containing a semicolon, tab or pipe in an
-			// otherwise single column file would else become the separator
-			// and lose the rest of that value.
+			// few lines decide, so it only counts when the records it does
+			// separate, with any number of columns, can be a table. A single
+			// value containing a semicolon, tab or pipe in an otherwise single
+			// column file would else become the separator and lose the rest
+			// of that value.
 			continue
 		}
 		uniformity := float64(records) / float64(s.numRecords)
