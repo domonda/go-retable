@@ -368,6 +368,9 @@ writer := exceltable.NewWriter[[]Row]().WithNilValue("NULL")
 ```
 
 A zero `time.Time` stays an empty cell. A nil `*time.Time` gets the nil value.
+The zero of a number type with an `IsZero` method, such as an amount type,
+is null too and gets the nil value instead of `0`; register a type formatter
+for the type to write `0`.
 
 ## Change the header font
 
@@ -461,6 +464,16 @@ parses back.
 **`exceltable: workbook has no sheets`.**
 `WriteTo` was called before any `WriteSheet` succeeded. An Excel file needs at
 least one sheet.
+
+**`exceltable: workbook is closed`.**
+`Close` was called before `WriteTo` or before another `WriteSheet`. `Close`
+releases the sheet data, so call it last, for example with `defer wb.Close()`
+right after `NewWorkbook`.
+
+**`exceltable: sheet "Invoices" has 1048577 rows, more than Excel's 1048576`.**
+An Excel sheet holds at most 1,048,576 rows, the header row included, and
+16,384 columns. The size is checked before any cell is converted, so the
+workbook stays usable and you can write the rows as several smaller sheets.
 
 **Excel shows a large ID with the last digits changed.**
 Excel holds numbers as doubles with 15 significant digits. Write IDs and

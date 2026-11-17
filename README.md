@@ -795,7 +795,8 @@ output reads back both here and in `encoding/csv`. Formatting is controlled with
 the same `retable` formatters used elsewhere: `WithTypeFormatter`,
 `WithKindFormatter`, `WithInterfaceTypeFormatter`, `WithColumnFormatter` and their
 `…Func` variants. Column formatters apply to cell values only, never to the column
-titles of the header row.
+titles of the header row. Passing `nil`, or a nil `…Func`, removes a registered
+formatter.
 
 `WithPadding` aligns columns for human-readable output:
 

@@ -198,6 +198,15 @@ hour, 1/24 of a day, would become `0.0416666666666666`, and Excel's `HOUR`
 function would read 0:59:59 as 0. Rounded, it is `0.0416666666666667`, a
 full hour.
 
+For a date serial of a current date, 15 digits leave ten decimal places of a
+day, about 9 µs. The rounding never moves a date into the next day: when it
+would carry a time just before midnight past it, the serial keeps its value
+within the day.
+
+A `float32` is written as its shortest decimal, so `float32(19.99)` is stored
+as `19.99`, not as the `19.989999771118164` that converting it to a float64
+gives.
+
 Integers are written exactly, but Excel rounds anything beyond 2^53 when it
 opens the file. IDs and account numbers that long belong in text cells.
 
@@ -241,8 +250,9 @@ remembers the error and returns it from every later `WriteSheet`,
 failed and wraps the cause, so `errors.Is(err, context.Canceled)` still works.
 
 Errors found before a sheet is added do not have this effect: a duplicate
-name, a table the viewer can't handle, or a context that was already done
-leave the workbook unchanged and usable.
+name, a table the viewer can't handle, a table with more rows or columns than
+an Excel sheet holds, or a context that was already done leave the workbook
+unchanged and usable. The size is checked before any cell is converted.
 
 `Writer.Write` and `Writer.WriteView` build the whole workbook before writing
 its bytes to `dest`, so they write nothing on error. That is what makes it safe

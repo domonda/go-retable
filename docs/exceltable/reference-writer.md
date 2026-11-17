@@ -97,6 +97,10 @@ sheet.
 `Write` and `WriteView` write nothing to `dest` when a sheet fails: the
 workbook is built completely before its bytes are written.
 
+A nil `CellFormatterFunc` counts as `nil` too: passing one removes the
+registration instead of storing a formatter that would panic when called.
+csvtable and htmltable treat a nil formatter and a nil `…Func` the same way.
+
 ### Defaults
 
 | Setting | Default |
@@ -121,13 +125,13 @@ field. For `[][]string` the first row holds the column names; with
 | --- | --- |
 | `NewWorkbook() *Workbook` | An empty workbook. |
 | `(wb) WriteTo(dest io.Writer) (int64, error)` | Writes the workbook as `.xlsx` to `dest`. Can be called more than once, with sheets added in between. |
-| `(wb) Close() error` | Releases the workbook, including the temporary files that large sheets are streamed to. |
+| `(wb) Close() error` | Releases the workbook, including the temporary files that large sheets are streamed to. Afterwards `WriteTo` and adding sheets return an error. |
 
 Sheets appear in the order they were added. A `Workbook` is not safe for
 concurrent use.
 
-`WriteTo` returns an error when the workbook has no sheets or when a sheet
-failed while it was written, see [Errors](#errors).
+`WriteTo` returns an error when the workbook has no sheets, when a sheet
+failed while it was written, or after `Close`, see [Errors](#errors).
 
 ### Cell
 
@@ -179,7 +183,8 @@ the dynamic value.
 
 `StringCellFormatter` adapts a csvtable or htmltable formatter: its string
 result becomes a `StringCell`, its `raw` flag is ignored, and its errors,
-including `errors.ErrUnsupported`, pass through.
+including `errors.ErrUnsupported`, pass through. A nil `f`, also a nil func,
+returns nil.
 
 ### Constants and errors
 
@@ -199,11 +204,11 @@ cell decides what is written.
 | 2 | Type, interface and kind formatters | the cell's type: exact type, then interfaces in registration order, then kind; then the same for the pointed-to type of a non-nil pointer; then for the dynamic type of a non-nil interface value | the formatter's `Cell` |
 | 3 | `time.Time` | also `*time.Time` and interfaces holding one | date serial with the time format; zero time: empty cell; before 1900 or after 9999: text `2006-01-02T15:04:05.999999999` |
 | 4 | `time.Duration` | also through pointers and interfaces | number of days (`d / 24h`) with the duration format; negative: text `-H:MM:SS[.fraction]` |
-| 5 | Null-like | `retable.IsNullLike`: nil pointers, nil interfaces, an interface holding a typed nil pointer, values with `IsNull() bool` or `IsZero() bool` returning true, `driver.Valuer` returning nil, and pointers to any of these | the nil value text, an empty cell by default |
+| 5 | Null-like | `retable.IsNullLike`: nil pointers, interfaces, slices, maps, channels and funcs, an interface holding a typed nil pointer, `struct{}{}`, values with `IsNull() bool` or `IsZero() bool` returning true (pointer receivers included), `driver.Valuer` returning nil, and pointers to any of these | the nil value text, an empty cell by default |
 | 6 | `bool` kind | | Excel boolean |
 | 6 | `string` kind | named string types too, even with a `String` method | text |
 | 6 | Integer kinds | `int*`, `uint*`, `uintptr`, named types too | number, stored exactly |
-| 6 | Float kinds | `float32`, `float64`, named types too | number with General format, rounded to 15 significant digits; NaN and ±Inf as text |
+| 6 | Float kinds | `float32`, `float64`, named types too | number with General format, rounded to 15 significant digits; a `float32` as its shortest decimal, so `float32(19.99)` is `19.99`, not `19.989999771118164`; NaN and ±Inf as text |
 | 7 | `fmt.Stringer` | the value, then its address (a struct field whose `String` has a pointer receiver), then the dereferenced value | text |
 | 8 | `[]byte` | | text |
 | 9 | Everything else | | text of `fmt.Sprint` |
@@ -218,6 +223,9 @@ Notes on the table:
   amount type, is a number (step 6 comes before step 7). csvtable and htmltable
   write the `String` result, so `time.Month(3)` is `March` there and `3` here.
   Register a type or kind formatter to write the text instead.
+- A number type with an `IsZero` method is null-like when it is zero (step 5
+  comes before step 6), so its zero gets the nil value, not `0`. Register a
+  type formatter to write `0`.
 - Integers are stored exactly in the file. Excel and LibreOffice hold every
   number as an IEEE 754 double, so integers beyond 2^53 lose precision when the
   file is opened.
