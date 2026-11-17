@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime/debug"
+	"slices"
 )
 
 // ParseDetectFormat parses CSV data with automatic format detection.
@@ -44,7 +46,13 @@ import (
 //	// format.Encoding == "UTF-8"
 //	// format.Newline == "\r\n"
 //	// rows == [][]string{{"Name", "Age"}, {"John", "30"}, {"Jane", "25"}}
+//
+// ParseDetectFormat never panics on malformed input: a panic while parsing
+// is returned as an error with the prefix "csvtable: panic"
+// followed by the stack trace of the panic.
 func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]string, format *Format, err error) {
+	defer recoverParsePanic(&err)
+
 	if config == nil {
 		config = NewDefaultFormatDetectionConfig()
 	}
@@ -96,7 +104,13 @@ func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]stri
 //	csvData := []byte("Name,Age\r\nJohn,30\r\nJane,25")
 //	rows, err := ParseWithFormat(csvData, format)
 //	// rows == [][]string{{"Name", "Age"}, {"John", "30"}, {"Jane", "25"}}
+//
+// ParseWithFormat never panics on malformed input: a panic while parsing
+// is returned as an error with the prefix "csvtable: panic"
+// followed by the stack trace of the panic.
 func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
+	defer recoverParsePanic(&err)
+
 	err = format.Validate()
 	if err != nil {
 		return nil, err
@@ -128,6 +142,35 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 	}
 
 	return readLines(lines, []byte(format.Separator), "\n")
+}
+
+// recoverParsePanic is the backstop that keeps the exported parse and read
+// functions from panicking on malformed input, which would take down the
+// whole process parsing an uploaded file instead of rejecting that file.
+// It has to be deferred directly by the function whose named error result
+// err points to, because recover only stops a panic there.
+//
+// A recovered panic is assigned to *err with the prefix "csvtable: panic",
+// wrapping the panic value with %w if it is an error so that errors.Is and
+// errors.As still find it, and formatting it with %v otherwise.
+// The stack trace of the panic follows on the next lines of the message,
+// as with github.com/domonda/go-errs.AsErrorWithDebugStack, because a panic
+// that reaches this backstop is a bug and the stack is what locates it.
+// Any error already assigned to *err is replaced, the panic is the more
+// important one to report.
+func recoverParsePanic(err *error) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	// Still the stack of the panicking goroutine,
+	// deferred functions run before it is unwound
+	stack := debug.Stack()
+	if pErr, ok := p.(error); ok {
+		*err = fmt.Errorf("csvtable: panic: %w\n%s", pErr, stack)
+	} else {
+		*err = fmt.Errorf("csvtable: panic: %v\n%s", p, stack)
+	}
 }
 
 // detectFormatAndSplitLines implements the automatic format detection algorithm.
@@ -333,6 +376,15 @@ func splitLines(csv []byte, newline string) [][]byte {
 	return lines
 }
 
+// A candidate that bestSeparator only scores by leaving out the records it
+// does not separate has to separate at least minSeparatedRecords records,
+// into any number of columns, and at least one in minSeparatedShare of all
+// records.
+const (
+	minSeparatedRecords = 2
+	minSeparatedShare   = 5
+)
+
 // separatorCandidates are the separators that can be detected from the data,
 // ordered by preference so that the earlier one wins a tie in bestSeparator.
 var separatorCandidates = []byte{',', ';', '\t', '|'}
@@ -449,15 +501,40 @@ func (s *csvStructure) bestSeparator() (separator string, ok bool) {
 	)
 	for candidate, sep := range separatorCandidates {
 		// The most common number of columns of this candidate,
-		// more columns win a tie
-		var columns, records int
+		// more columns win a tie.
+		//
+		// Records that the candidate does not separate at all are left out of
+		// that vote unless it separates no record, wherever they are in the
+		// data, because the header and trailer lines of a table are single
+		// column records that must not outvote the actual table rows even
+		// when there are more of them. A bank statement with more preamble
+		// and trailer lines than data rows is the common case, and counting
+		// those made the most common column count one, which discarded the
+		// real separator below.
+		var columns, records, separated int
 		for c, r := range s.columnsPerRecord[candidate] {
+			if c >= 2 {
+				separated += r
+			}
+			if c < 2 && len(s.columnsPerRecord[candidate]) > 1 {
+				continue
+			}
 			if r > records || (r == records && c > columns) {
 				columns, records = c, r
 			}
 		}
 		if columns < 2 {
 			// The candidate doesn't separate anything in the typical record
+			continue
+		}
+		if s.columnsPerRecord[candidate][1] > 0 &&
+			(separated < minSeparatedRecords || separated*minSeparatedShare < s.numRecords) {
+			// Leaving out the records the candidate does not separate lets a
+			// few lines decide, so it only counts when the records it does
+			// separate, with any number of columns, can be a table. A single
+			// value containing a semicolon, tab or pipe in an otherwise single
+			// column file would else become the separator and lose the rest
+			// of that value.
 			continue
 		}
 		uniformity := float64(records) / float64(s.numRecords)
@@ -563,6 +640,14 @@ func parseSepHeaderLine(line []byte) (sep string) {
 //	"John","He said ""Hello"""
 //	// Becomes: [["John", `He said "Hello"`]]
 func readLines(lines [][]byte, separator []byte, newlineReplacement string) (rows [][]string, err error) {
+	// noClosingFieldInLaterLines caches that no line after the last searched
+	// one holds a field closing an unterminated quoted field. The searches
+	// begin at ever later lines and lines are only emptied while parsing, so
+	// a search that reached the end without a match can never find one in a
+	// later line again. Without the cache every field of a file whose lines
+	// all begin an unterminated quoted field re-scans the whole rest.
+	noClosingFieldInLaterLines := false
+
 	rows = make([][]string, len(lines))
 	for lineIndex, line := range lines {
 		if len(line) == 0 {
@@ -570,16 +655,33 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 		}
 
 		fields := bytes.Split(line, separator)
+		// Line that the current field begins on. Joining a field across lines
+		// continues this line with the fields of the closing line, so every
+		// following field of the same row begins on that line and not on
+		// lineIndex anymore.
+		curLine := lineIndex
+		// noClosingFieldInRow caches the same for the fields of the current
+		// row that follow the searched one. A later field searches a subset
+		// of the fields already searched, and the fields are only rebuilt by
+		// a search that found a closing field, so once a search failed every
+		// later search of the same row fails too. Without the cache a single
+		// line whose fields all open an unterminated quoted field re-scans
+		// the rest of the line for every one of them, which is quadratic in
+		// the number of fields. A file with bare carriage return line
+		// endings is one such line, because those are not detected as a
+		// newline and the whole file stays a single line.
+		noClosingFieldInRow := false
+		// The row is built forward instead of the joined fields being cut out
+		// of the split line, because compacting in place moves the whole tail
+		// of the row per join, which is quadratic in the number of fields.
+		row := make([]string, 0, len(fields))
 		for i := 0; i < len(fields); i++ {
 			field := fields[i]
-			if len(field) == 0 {
-				continue
-			}
 
 			// Only a field beginning with a quote needs quote handling.
-			// Every other field's quotes are literal and are just
-			// unescaped below, so counting them would be wasted work.
-			if leftQuotes := countQuotesLeft(field); leftQuotes > 0 {
+			// An empty field and every other field's quotes are literal and
+			// are just unescaped below, so counting them would be wasted work.
+			if leftQuotes := countQuotesLeft(field); len(field) > 0 && leftQuotes > 0 {
 				totalQuotes := bytes.Count(field, []byte{'"'})
 				switch {
 				case totalQuotes == len(field) && len(field)%2 == 0:
@@ -610,10 +712,15 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 						closeFields [][]byte
 					)
 				findClosingField:
-					for l := lineIndex; l < len(lines); l++ {
+					for l := curLine; l < len(lines); l++ {
 						lineFields, r := fields, i+1
-						if l > lineIndex {
+						if l > curLine {
+							if noClosingFieldInLaterLines {
+								break
+							}
 							lineFields, r = bytes.Split(lines[l], separator), 0
+						} else if noClosingFieldInRow {
+							continue
 						}
 						for ; r < len(lineFields); r++ {
 							if closesQuotedField(lineFields[r]) {
@@ -622,24 +729,32 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 							}
 						}
 					}
+					if closeLine == -1 {
+						// The fields following this one and every later line
+						// were searched without a match, so neither can hold
+						// a closing field for a later field of this row.
+						noClosingFieldInRow = true
+						noClosingFieldInLaterLines = true
+					}
 
 					switch {
-					case closeLine == lineIndex:
+					case closeLine == curLine:
 						// Only fields of this line were split off by a separator,
 						// so join the fields [i..closeField] back together
 						field = bytes.Join(fields[i:closeField+1], separator)
 						// Remove quotes
 						field = field[1 : len(field)-1]
-						// Shift remaining slice fields over the ones joined into fields[i]
-						copy(fields[i+1:], fields[closeField+1:])
-						fields = fields[:len(fields)-(closeField-i)]
+						// Continue after the fields joined into this one. They are
+						// skipped rather than cut out of the slice, so joining costs
+						// nothing beyond the join itself.
+						i = closeField
 
-					case closeLine > lineIndex:
+					case closeLine > curLine:
 						// The field was also split off by a newline, so join the
 						// remaining fields of this line, the lines in between and
 						// the fields of the closing line up to closeField
 						joined := bytes.Join(fields[i:], separator)
-						for l := lineIndex + 1; l < closeLine; l++ {
+						for l := curLine + 1; l < closeLine; l++ {
 							joined = append(joined, newlineReplacement...)
 							joined = append(joined, lines[l]...)
 						}
@@ -652,15 +767,19 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 						}
 						field = joined[1 : len(joined)-1]
 
-						// Continue this line with the fields
-						// following the closing field
-						fields = append(fields[:i+1], closeFields[closeField+1:]...)
+						// Continue this row with the fields of the closing
+						// line that follow the closing field
+						fields, i = closeFields, closeField
 
 						// Empty lines that have been joined
 						// so line indices are still correct
-						for l := lineIndex + 1; l <= closeLine; l++ {
+						for l := curLine + 1; l <= closeLine; l++ {
 							lines[l] = nil
 						}
+
+						// The fields following the closing field begin
+						// on the closing line, not on lineIndex
+						curLine = closeLine
 
 					case totalQuotes == len(field):
 						// Nothing to join the unterminated field with,
@@ -686,12 +805,15 @@ func readLines(lines [][]byte, separator []byte, newlineReplacement string) (row
 			if bytes.Contains(field, []byte(`""`)) {
 				field = bytes.ReplaceAll(field, []byte(`""`), []byte{'"'})
 			}
-			fields[i] = field
+			row = append(row, string(field))
 		}
 
-		row := make([]string, len(fields))
-		for i := range fields {
-			row[i] = string(fields[i])
+		if cap(row) > 2*len(row) {
+			// Joining split fields left most of the capacity unused,
+			// which the returned rows would keep alive as long as the caller
+			// holds them: one quoted value with a million separators would
+			// keep a slot for every one of them.
+			row = slices.Clone(row)
 		}
 		rows[lineIndex] = row
 	}

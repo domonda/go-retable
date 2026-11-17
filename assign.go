@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 )
@@ -119,6 +120,10 @@ import (
 //     the strategies above continue on it, and the parse error, which
 //     is what distinguishes a malformed cell from a destination type
 //     that no strategy fits.
+//     A panic, from package reflect or from the passed dstScanner, parser
+//     or srcFormatter, is returned as an error with the prefix
+//     "retable: panic" followed by the stack trace of the panic, wrapping
+//     the panic value with %w if it is an error.
 //
 // Example:
 //
@@ -174,11 +179,19 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	)
 
 	// Package reflect might panic in some edge cases
-	// like converting a slice to an array with non matching length.
-	// Recover and return as error instead to make code more robust.
+	// like converting a slice to an array with non matching length,
+	// and so might the passed dstScanner, parser or srcFormatter.
+	// Recover and return as error instead to make code more robust,
+	// keeping the panic value for errors.Is and errors.As and the stack
+	// trace that locates the bug, which is gone once this returns.
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.Join(err, fmt.Errorf("%+v", r))
+			stack := debug.Stack()
+			if rErr, ok := r.(error); ok {
+				err = errors.Join(err, fmt.Errorf("retable: panic: %w\n%s", rErr, stack))
+			} else {
+				err = errors.Join(err, fmt.Errorf("retable: panic: %v\n%s", r, stack))
+			}
 		}
 	}()
 

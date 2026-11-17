@@ -3,11 +3,16 @@ package csvtable
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testRows = map[string][]string{
@@ -499,6 +504,14 @@ func TestParseDetectFormat_MultiLineFields(t *testing.T) {
 			want: [][]string{{"A", "one\ntwo;three", "B"}},
 		},
 		{
+			// Joining the multi-line value moves the row on to its closing
+			// line, where the next value is split by a separator within its
+			// quotes and has to be joined on that line.
+			name: "value split by a separator after a multi-line value",
+			csv:  "A;\"x\ny\";\"p;q\";B",
+			want: [][]string{{"A", "x\ny", "p;q", "B"}},
+		},
+		{
 			name: "value that is only a quote and a newline",
 			csv:  "A;\"\"\"\n\"\"\";B",
 			want: [][]string{{"A", "\"\n\"", "B"}},
@@ -671,6 +684,17 @@ func TestParseDetectFormat_Detection(t *testing.T) {
 			wantFirstRow: []string{"a", "b"},
 		},
 		{
+			// The preamble and trailer lines of a bank statement are single
+			// column records and outnumber the table rows here. Counting them
+			// made the most common column count of the semicolon one, which
+			// discarded it and left the comma default, splitting the table on
+			// the decimal commas of the amounts instead.
+			name:         "single column preamble does not outvote the table",
+			csv:          "Kontoauszug Nr. 4\nErstellt von: Musterbank AG\nKonto: AT12 3456\nStichtag: 01.01.2025\nDatum;Text;Betrag\n01.01.2025;Miete;-500,00\n02.01.2025;Lohn;2000,00\nEnde des Auszugs\nSeite 1 von 1\n",
+			wantSep:      ";",
+			wantNewline:  "\n",
+			wantFirstRow: []string{"Kontoauszug Nr. 4"},
+		}, {
 			// Unbalanced quotes make the quoted state useless for everything
 			// after them, so every byte is counted instead.
 			name:         "unbalanced quote still detects",
@@ -772,4 +796,544 @@ func TestParseWithFormat_InvalidSeparator(t *testing.T) {
 			assert.NoError(t, NewFormat(sep).Validate())
 		})
 	}
+}
+
+// fuzzSeeds are the inputs every fuzz target of this package starts from:
+// the rows of the table tests plus the shapes that exercise the joining of
+// quoted fields across separators and lines.
+func fuzzSeeds() []string {
+	seeds := []string{
+		"",
+		"\n",
+		"\"",
+		"\"\"\"",
+		"sep=;\r\nA;B\r\n",
+		"\"sep=,\"\n\"A\",\"B\"",
+		"a;\"oops\nr2c1;r2c2\n\"r3c1\";r3c2\n",
+		"A;\"one;two\nthree;four\";B",
+		"Name;Amount;Paid\r\nMeier;1,50;true\r\nHuber;-2;false\r\n",
+		"\xEF\xBB\xBFName,Amount\nMeier,1\n",
+		"\xFF\xFEN\x00a\x00m\x00e\x00",
+	}
+	for csvRow := range testRows {
+		seeds = append(seeds, csvRow)
+	}
+	return seeds
+}
+
+// requireNoRecoveredPanic fails the test if err is a panic that an entry
+// point of this package recovered, so the fuzz targets keep finding the
+// inputs that panic although the entry points return them as errors.
+func requireNoRecoveredPanic(t *testing.T, err error) {
+	t.Helper()
+	// retable.SmartAssign recovers panics during the cell conversions itself
+	if err != nil && (strings.HasPrefix(err.Error(), "csvtable: panic") || strings.HasPrefix(err.Error(), "retable: panic")) {
+		require.Fail(t, "recovered panic", "%+v", err)
+	}
+}
+
+// requireRecoveredPanic fails the test unless err is a panic recovered by
+// recoverParsePanic: wantMsg on the first line followed by the stack trace
+// of the panic, which has to show the panic and the frame wantFrame where it
+// happened, so that the stack can't be one captured after the panic unwound.
+func requireRecoveredPanic(t *testing.T, err error, wantMsg, wantFrame string) {
+	t.Helper()
+	require.Error(t, err)
+	msg, stack, hasStack := strings.Cut(err.Error(), "\n")
+	require.Equal(t, wantMsg, msg, "first line of the error message")
+	require.True(t, hasStack, "the stack trace has to follow the message")
+	require.Contains(t, stack, "panic(", "stack trace of the panic")
+	require.Contains(t, stack, wantFrame, "stack trace of the panic")
+}
+
+// fuzzEncodings are the encodings FuzzParseWithFormat picks from,
+// covering the charmap and every Unicode decoder with and without BOM.
+var fuzzEncodings = []string{"UTF-8", "UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "ISO 8859-1", "Windows 1252", "Macintosh"}
+
+// fuzzNewlines are the newlines FuzzParseWithFormat picks from.
+var fuzzNewlines = []string{"\n", "\r\n", "\n\r"}
+
+func FuzzParseDetectFormat(f *testing.F) {
+	for _, seed := range fuzzSeeds() {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// when
+		_, format, err := ParseDetectFormat(data, nil)
+
+		// then
+		requireNoRecoveredPanic(t, err)
+		if err == nil {
+			// Callers re-use the detected format for parsing and writing
+			require.NoError(t, format.Validate(), "detected format must be valid")
+		}
+	})
+}
+
+func FuzzParseWithFormat(f *testing.F) {
+	for _, seed := range fuzzSeeds() {
+		for _, sep := range separatorCandidates {
+			f.Add([]byte(seed), sep, uint8(0), uint8(0))
+		}
+		f.Add([]byte(seed), byte(';'), uint8(1), uint8(1))
+	}
+	f.Fuzz(func(t *testing.T, data []byte, separator byte, encodingIndex, newlineIndex uint8) {
+		// given
+		format := &Format{
+			Encoding:  fuzzEncodings[int(encodingIndex)%len(fuzzEncodings)],
+			Separator: string([]byte{separator}),
+			Newline:   fuzzNewlines[int(newlineIndex)%len(fuzzNewlines)],
+		}
+
+		// when
+		rows, err := ParseWithFormat(data, format)
+
+		// then
+		requireNoRecoveredPanic(t, err)
+		// Format.Validate accepts single bytes above 0x7f as separator, which
+		// split multi-byte UTF-8 characters, so only an ASCII separator can
+		// be required to leave every field valid UTF-8.
+		if err == nil && separator < utf8.RuneSelf {
+			for _, row := range rows {
+				for _, field := range row {
+					require.True(t, utf8.ValidString(field), "field %q must be valid UTF-8", field)
+				}
+			}
+		}
+	})
+}
+
+// Test_recoverParsePanic covers the conversion of the recovered panic value,
+// which the entry points only reach on inputs that panic, so it is tested
+// directly here instead of through an input that has to stay broken.
+func Test_recoverParsePanic(t *testing.T) {
+	panicErr := errors.New("index out of range")
+	earlierErr := errors.New("earlier error")
+
+	tests := []struct {
+		name    string
+		panic   func()
+		wantMsg string
+		wantErr error
+	}{
+		{
+			name:    "error value is wrapped",
+			panic:   func() { panic(panicErr) },
+			wantMsg: "csvtable: panic: index out of range",
+			wantErr: panicErr,
+		},
+		{
+			name:    "non-error value is formatted",
+			panic:   func() { panic(42) },
+			wantMsg: "csvtable: panic: 42",
+		},
+		{
+			name: "runtime error is wrapped",
+			panic: func() {
+				var s []int
+				_ = s[len(s)] // index out of range
+			},
+			wantMsg: "csvtable: panic: runtime error: index out of range [0] with length 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			parse := func() (err error) {
+				defer recoverParsePanic(&err)
+				err = earlierErr // replaced by the panic
+				tt.panic()
+				return nil
+			}
+
+			// when
+			err := parse()
+
+			// then
+			requireRecoveredPanic(t, err, tt.wantMsg, "Test_recoverParsePanic")
+			require.NotErrorIs(t, err, earlierErr)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			}
+		})
+	}
+
+	t.Run("no panic keeps the result", func(t *testing.T) {
+		// given
+		parse := func() (err error) {
+			defer recoverParsePanic(&err)
+			return earlierErr
+		}
+
+		// when
+		err := parse()
+
+		// then
+		require.Equal(t, earlierErr, err)
+	})
+
+	t.Run("runtime error stays reachable with errors.As", func(t *testing.T) {
+		// given
+		parse := func() (err error) {
+			defer recoverParsePanic(&err)
+			var m map[string]int
+			m["x"] = 1 // assignment to entry in nil map
+			return nil
+		}
+
+		// when
+		err := parse()
+
+		// then
+		var runtimeErr runtime.Error
+		require.ErrorAs(t, err, &runtimeErr)
+	})
+}
+
+// TestParseDetectFormat_TwoMultiLineFieldsInOneRow covers a row in which two
+// separate quoted fields each contain a newline. Joining the first field
+// continues the row with the fields of the closing line, so the search for the
+// second field's closing part must start on that line and not on the line the
+// row started on. Starting over from the row's first line walked back over the
+// lines already joined, which are empty by then, and inserted one spurious
+// newline into the second field for each of them.
+func TestParseDetectFormat_TwoMultiLineFieldsInOneRow(t *testing.T) {
+	rows, format, err := ParseDetectFormat([]byte("A;\"one\ntwo\";\"three\nfour\";B\n"), nil)
+	assert.NoError(t, err)
+	assert.Equal(t, ";", format.Separator)
+	assert.Equal(t, [][]string{{"A", "one\ntwo", "three\nfour", "B"}}, RemoveEmptyRows(rows))
+}
+
+// TestParseDetectFormat_SeveralUnterminatedQuotes verifies that every line of a
+// file whose lines all open a quoted field that is never closed is still parsed
+// on its own. Remembering that no later line closes a field is only allowed to
+// save the repeated search, it must not change the result.
+func TestParseDetectFormat_SeveralUnterminatedQuotes(t *testing.T) {
+	rows, _, err := ParseDetectFormat([]byte("a;\"oops\nb;\"nope\nc;d\n"), nil)
+	assert.NoError(t, err)
+	assert.Equal(t, [][]string{
+		{"a", `"oops`},
+		{"b", `"nope`},
+		{"c", "d"},
+	}, RemoveEmptyRows(rows))
+}
+
+// TestReadLines_UnterminatedQuotesInOneRow pins the values the per-row
+// "no closing field" cache produces. The cache lets a field that opens a
+// quoted field nothing closes skip re-scanning the rest of the row, and the
+// timing guard below only asserts that parsing finishes, so without this test
+// a wrong skip would silently change field values.
+func TestReadLines_UnterminatedQuotesInOneRow(t *testing.T) {
+	// Every field opens a quoted field and none of them closes one, so every
+	// search fails and every search after the first one is served by the cache.
+	// An unterminated field is kept as it is, including its opening quote.
+	rows, err := readLines([][]byte{[]byte(`"a,"b,"c`)}, []byte(","), "\n")
+	assert.NoError(t, err)
+	assert.Equal(t, [][]string{{`"a`, `"b`, `"c`}}, rows, "every unterminated field is kept verbatim")
+
+	// A row whose first field closes within the row, followed by fields that
+	// never close. The first search succeeds and rebuilds the fields, only the
+	// searches after the first failed one are served by the cache.
+	rows, err = readLines([][]byte{[]byte(`"a,a","b,"c`)}, []byte(","), "\n")
+	assert.NoError(t, err)
+	assert.Equal(t, [][]string{{`a,a`, `"b`, `"c`}}, rows, "the closed field is joined, the unterminated ones are kept")
+}
+
+// TestParseDetectFormat_BareCarriageReturnFileIsNotQuadratic guards the search
+// for the field closing an unterminated quoted field against re-scanning the
+// rest of the row for every field that opens one.
+//
+// A file with bare carriage return line endings is the realistic trigger: \r
+// alone is not one of the detected newlines, so the whole file stays a single
+// line and every mis-quoted field on it starts a fresh scan over all the
+// following ones. Before the per-row cache this input took 10.6s, after it
+// 42ms, and the gap grows with the square of the file size.
+//
+// Both shapes of such a row are covered, because they hit different costs:
+// a field that never finds a closing field re-scans the rest of the row, and
+// a field that DOES close is joined, which used to shift the whole tail of
+// the row per join.
+//
+// The bound is deliberately far above the real runtime so that a slow or busy
+// machine cannot fail it. Only a return of the quadratic behaviour can.
+func TestParseDetectFormat_BareCarriageReturnFileIsNotQuadratic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing guard, skipped in short mode")
+	}
+	// One leading quote and an odd total number of quotes opens a quoted
+	// field that nothing ever closes. A quoted field holding the separator
+	// closes within the row and is joined back together.
+	t.Run("field never closes", func(t *testing.T) {
+		// An unterminated field is kept verbatim, quote and all.
+		assertNotQuadratic(t, `"John "Johnny Doe"`, `"John "Johnny Doe"`)
+	})
+	t.Run("field closes in the same row", func(t *testing.T) {
+		// The separator inside the quotes split the field, so it is joined
+		// back together and its outer quotes are removed.
+		assertNotQuadratic(t, `"John;Doe"`, `John;Doe`)
+	})
+}
+
+func assertNotQuadratic(t *testing.T, quotedField, wantQuotedField string) {
+	t.Helper()
+	const (
+		rows    = 32000
+		columns = 20
+	)
+	var b strings.Builder
+	for r := 0; r < rows; r++ {
+		for c := 0; c < columns; c++ {
+			if c > 0 {
+				b.WriteByte(';')
+			}
+			if c == 3 {
+				b.WriteString(quotedField)
+			} else {
+				b.WriteString("val")
+			}
+		}
+		b.WriteByte('\r')
+	}
+
+	type result struct {
+		rows [][]string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		parsed, _, err := ParseDetectFormat([]byte(b.String()), nil)
+		done <- result{parsed, err}
+	}()
+
+	select {
+	case got := <-done:
+		assert.NoError(t, got.err)
+		// The bare carriage returns are not a detected newline, so the whole
+		// file is one row. Asserting the shape keeps the guard from passing
+		// on a parse that finished quickly by dropping the data.
+		parsed := RemoveEmptyRows(got.rows)
+		if assert.Len(t, parsed, 1, "a bare carriage return is not a detected newline, so the file is one row") {
+			// Every line contributes its columns, and the carriage return
+			// joins the last field of a line with the first of the next one,
+			// so every line after the first contributes one field less.
+			// Asserting the exact count is what keeps the guard from passing
+			// on a parse that finished quickly by losing most of the fields.
+			assert.Len(t, parsed[0], rows*columns-(rows-1), "every field of the file is in the row")
+			assert.Equal(t, "val", parsed[0][0], "the row holds the parsed fields, not the raw file")
+			assert.Equal(t, wantQuotedField, parsed[0][3], "the quoted field")
+			assert.Equal(t, "val\rval", parsed[0][columns-1], "the carriage return stays inside the field spanning two lines")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("parsing a bare carriage return file took longer than 5s, the closing field search is quadratic again")
+	}
+}
+
+// Test_bestSeparator documents how a candidate is picked when the uniformity
+// of the column count alone does not decide it. The tie-breaks matter because
+// without them a candidate that separates nothing can win, which hands the
+// caller a Format that shreds every row.
+func Test_bestSeparator(t *testing.T) {
+	tests := []struct {
+		name    string
+		csv     string
+		wantSep string
+		wantOK  bool
+	}{
+		{
+			// Nothing was scanned, so there is nothing to detect from
+			// and the caller has to keep its default separator.
+			name:   "no records",
+			csv:    "",
+			wantOK: false,
+		},
+		{
+			// No candidate occurs, so none of them separates anything.
+			name:   "no candidate separates",
+			csv:    "abc\ndef\n",
+			wantOK: false,
+		},
+		{
+			// Both split every record uniformly, the semicolon into more
+			// columns, so it describes the structure better.
+			name:    "more columns win a tie in uniformity",
+			csv:     "a,b;c;d\ne,f;g;h\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			// Same uniformity and same column count, so only the
+			// candidate order is left to decide.
+			name:    "candidate order wins a complete tie",
+			csv:     "a,b;c\nd,e;f\n",
+			wantSep: ",",
+			wantOK:  true,
+		},
+		{
+			// The comma splits half of the records into two columns and the
+			// other half into three, so its most common column count is a tie
+			// that has to go to the three columns every time.
+			name:    "most common column count of a candidate breaks its tie towards more columns",
+			csv:     "a,b\nc,d,e\nf,g\nh,i,j\n",
+			wantSep: ",",
+			wantOK:  true,
+		},
+		{
+			// Each candidate separates only one of the two records, which is
+			// too little to tell a table from a value containing it.
+			name:   "a candidate separating a single record does not score",
+			csv:    "a,b\nc;d\n",
+			wantOK: false,
+		},
+		{
+			// The semicolon is part of one value in a single column file,
+			// splitting on it would lose the rest of that value.
+			name:   "semicolon in one value of a single column file",
+			csv:    "Reference\nINV-1001\nINV-1002; INV-1003\nINV-1004\n",
+			wantOK: false,
+		},
+		{
+			name:   "tab in one value of a single column file",
+			csv:    "Name\nAlice\nBob\nCarol\tDave\nEve\n",
+			wantOK: false,
+		},
+		{
+			name:   "pipe in one value of a single column file",
+			csv:    "Name\nAlice\nBob\nCarol | Dave\nEve\n",
+			wantOK: false,
+		},
+		{
+			// Two separated records are enough on their own,
+			// but not when they are fewer than a fifth of all records.
+			name:   "separated records below a fifth of all records do not score",
+			csv:    "a;b\nc;d\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+			wantOK: false,
+		},
+		{
+			// The thresholds count every record the candidate separates,
+			// not only those with its most common column count, so ragged
+			// rows next to a single column record keep their separator.
+			name:    "ragged rows with a single column record",
+			csv:     "Name;Alter;Notiz\nJohn;30\nJane\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			name:    "title line above ragged rows",
+			csv:     "Mitglieder\nName;Alter;Notiz\nJohn;30\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			// No column count occurs more than twice, but most records
+			// are separated.
+			name:    "variable length lists with a single column record",
+			csv:     "alice;x\nbob\ncarol;a;b\ndave;a;b;c\nerin;a;b;c;d\nfrank;x\ngrace;a;b\nheidi;a;b;c\nivan;a;b;c;d\njudy;a;b;c;d;e\nkim;a;b;c;d;e\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+		{
+			// A title line above a single separated line has the shape of a
+			// single column file with one value containing the candidate,
+			// and is decided the same way: the line is not split.
+			name:   "title line above a single separated line",
+			csv:    "Kontoauszug\nDatum;Text;Betrag\n",
+			wantOK: false,
+		},
+		{
+			// Exactly a fifth of all records is enough.
+			name:    "separated records at a fifth of all records score",
+			csv:     "a;b\nc;d\n1\n2\n3\n4\n5\n6\n7\n8\n",
+			wantSep: ";",
+			wantOK:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// bestSeparator ranges over maps, whose iteration order Go
+			// randomizes per run, so a tie that is not broken deterministically
+			// only shows up in a fraction of the runs. Repeating the call makes
+			// such a tie fail the test reliably instead of occasionally.
+			for range 20 {
+				sep, ok := scanStructure([]byte(tt.csv), true).bestSeparator()
+				assert.Equal(t, tt.wantOK, ok, "bestSeparator ok")
+				assert.Equal(t, tt.wantSep, sep, "bestSeparator separator")
+			}
+		})
+	}
+}
+
+// TestParseDetectFormat_UnterminatedQuoteLinesAreNotQuadratic guards the
+// cache of a failed search for the field closing an unterminated quoted
+// field across the following lines. Without it every line that opens a quote
+// and never closes it re-scans all the lines after it, so an uploaded file of
+// such lines takes time quadratic in its length: 16000 lines took 3.7s.
+//
+// The bound is deliberately far above the real runtime of a few milliseconds
+// so that a slow or busy machine cannot fail it.
+//
+// Value: protects=linear parse time of lines that each open an unterminated quote; fails_when=readLines stops remembering that no later line closes the field; why_new=TestParseDetectFormat_BareCarriageReturnFileIsNotQuadratic covers one long row, not many lines; seam=none; no_claim=parse results of such lines beyond the row count
+func TestParseDetectFormat_UnterminatedQuoteLinesAreNotQuadratic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing guard, skipped in short mode")
+	}
+	const lines = 32000
+	csvData := []byte("a;b\n" + strings.Repeat("\"x;y\n", lines))
+
+	type result struct {
+		rows [][]string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		rows, _, err := ParseDetectFormat(csvData, nil)
+		done <- result{rows, err}
+	}()
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		// Asserting the row count keeps the guard from passing
+		// on a parse that finished quickly by dropping the lines
+		assert.Len(t, RemoveEmptyRows(got.rows), lines+1, "every line is a row")
+	case <-time.After(5 * time.Second):
+		t.Fatal("parsing lines with unterminated quotes took longer than 5s, the closing field search across lines is quadratic again")
+	}
+}
+
+// TestParseDetectFormat_SingleColumnValueWithSeparator covers that a
+// separator candidate inside one value of a single column file does not
+// become the separator: the value has to stay whole instead of losing
+// everything after the candidate without an error.
+func TestParseDetectFormat_SingleColumnValueWithSeparator(t *testing.T) {
+	for _, value := range []string{"INV-1002; INV-1003", "INV-1002\tINV-1003", "INV-1002 | INV-1003"} {
+		t.Run(strconv.Quote(value), func(t *testing.T) {
+			// given
+			csv := "Reference\nINV-1001\n" + value + "\nINV-1004\n"
+
+			// when
+			rows, format, err := ParseDetectFormat([]byte(csv), nil)
+
+			// then
+			require.NoError(t, err)
+			require.Equal(t, ",", format.Separator, "default separator")
+			require.Equal(t, [][]string{{"Reference"}, {"INV-1001"}, {value}, {"INV-1004"}}, RemoveEmptyRows(rows))
+		})
+	}
+}
+
+// TestReadLines_JoinedRowsKeepNoSpareCapacity covers that a row whose
+// quoted value was split on many separators and joined back together is
+// returned without a slot for every split, which would keep memory alive
+// many times the size of the value for as long as the caller holds the rows.
+func TestReadLines_JoinedRowsKeepNoSpareCapacity(t *testing.T) {
+	// given
+	line := []byte(`a,"` + strings.Repeat("x,", 1000) + `y",b`)
+
+	// when
+	rows, err := readLines([][]byte{line}, []byte{','}, "\n")
+
+	// then
+	require.NoError(t, err)
+	require.Len(t, rows[0], 3)
+	require.LessOrEqual(t, cap(rows[0]), 2*len(rows[0]), "capacity of the joined row")
 }
