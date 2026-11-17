@@ -1,6 +1,10 @@
 package csvtable
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/domonda/go-retable"
+)
 
 // TableBounds locates the actual table within rows that can also contain
 // header lines before and trailer lines after it, as produced by exports
@@ -59,6 +63,10 @@ func (b TableBounds) Rows(rows [][]string) [][]string {
 // A trailer row that has as many columns as the table, like a total, can't be
 // told apart from a data row and is therefore included. Validate the scanned
 // values to reject it.
+//
+// To require every column title of a struct instead of the best match,
+// regardless of the number of columns of the rows,
+// use retable.StructFieldNaming.FindTitleRow.
 func DetectTableBounds(rows [][]string, expectedTitles ...string) TableBounds {
 	numColumns := majorityRowColumns(rows)
 	if numColumns == 0 {
@@ -118,7 +126,7 @@ func hasEmptyField(row []string) bool {
 func countMatchingTitles(row, expectedTitles []string) (matches int) {
 	for _, title := range expectedTitles {
 		for _, field := range row {
-			if strings.EqualFold(strings.TrimSpace(field), strings.TrimSpace(title)) {
+			if retable.TrimEqualFold(field, title) {
 				matches++
 				break
 			}

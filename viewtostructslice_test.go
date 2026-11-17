@@ -254,3 +254,58 @@ func TestViewToStructSlice_RaggedRows(t *testing.T) {
 		{Name: "Ann", Count: 0},
 	}, rows)
 }
+
+func TestViewToStructSlice_MatchTitle(t *testing.T) {
+	type person struct {
+		Name string `col:"Name"`
+		Age  int    `col:"Age"`
+	}
+	view := NewStringsView("", [][]string{{" name ", "AGE"}, {"Alice", "30"}})
+	tests := []struct {
+		name         string
+		naming       *StructFieldNaming
+		requiredCols []string
+		want         []person
+		wantErr      string
+	}{
+		{
+			name:   "exact matching assigns no column",
+			naming: &StructFieldNaming{Tag: "col"},
+			want:   []person{{}},
+		},
+		{
+			name:         "exact matching misses required column",
+			naming:       &StructFieldNaming{Tag: "col"},
+			requiredCols: []string{"Name"},
+			wantErr:      `required column "Name" not found in View columns`,
+		},
+		{
+			name:   "TrimEqualFold assigns all columns",
+			naming: &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold},
+			want:   []person{{Name: "Alice", Age: 30}},
+		},
+		{
+			name:         "TrimEqualFold finds required columns in view and struct",
+			naming:       &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold},
+			requiredCols: []string{"NAME", "age"},
+			want:         []person{{Name: "Alice", Age: 30}},
+		},
+		{
+			name:         "TrimEqualFold missing required column",
+			naming:       &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold},
+			requiredCols: []string{"City"},
+			wantErr:      `required column "City" not found in View columns`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := ViewToStructSlice[person](view, tt.naming, nil, nil, nil, nil, tt.requiredCols...)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, rows)
+		})
+	}
+}

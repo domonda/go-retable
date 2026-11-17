@@ -4,6 +4,49 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `StructFieldNaming.MatchTitle` matches view column titles to struct field
+  titles with a function instead of exact equality, and `TrimEqualFold` is the
+  function for titles typed by people: surrounding whitespace trimmed, case
+  ignored. `ColumnStructFieldValue`, `ViewToStructSlice` including its
+  `requiredCols`, and the `csvtable` `Read*ToStructSlice` functions use it
+  through the new `StructFieldNaming.TitlesMatch`. A nil `MatchTitle` keeps
+  the exact matching, so existing namings are unchanged. `WithMatchTitle` sets
+  it on a copy.
+- `StructFieldNaming.FindTitleRow` finds the column titles row in raw rows as
+  the first row containing every column title of a struct, in any order and
+  with any number of cells, and returns the cell index of each title.
+  `csvtable.DetectTableBounds` instead takes the best match among the rows of
+  the majority column count.
+- `StructFieldNaming.CheckUniqueColumns` reports two fields whose column titles
+  match each other with `ErrDuplicateColumnTitle`.
+- `csvtable.Writer.WithUTF8BOM` starts the output of `Write`,
+  `WriteWithViewer` and `WriteView`, padded or not, with the UTF-8 byte order
+  mark `csvtable.UTF8BOM`, so that Excel opens the file as UTF-8. The mark is
+  written together with the first row, so an error before it leaves the
+  destination untouched, as without the mark. With an
+  encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
+  because the mark would misdeclare the encoded output.
+- `exceltable.Workbook.UniqueSheetName` returns a sheet name that does not
+  collide with the sheets of the workbook, for names from data like cost
+  center numbers: the sanitized name, or the trimmed name followed by " (2)",
+  " (3)" and so on, cut to whole runes so that the number always fits into
+  Excel's 31 UTF-16 code units. `WriteSheet` and `WriteViewSheet` keep
+  returning `ErrDuplicateSheetName` for a colliding name.
+
+### Fixed
+
+- `exceltable`: a panic while writing a sheet, for example of a
+  `CellFormatter` or the `Viewer`, is returned as error by `Write`,
+  `WriteView`, `WriteSheet` and `WriteViewSheet` with the prefix
+  `exceltable: panic`, wrapping an error value with `%w`, followed by the stack
+  trace, like the `csvtable` parse functions. A panic after the sheet was added
+  fails the `Workbook` like an error, so that `WriteTo` never writes the
+  incomplete sheet; a panic before leaves it usable.
+
 ## [1.0.0-beta.3] - 2026-11-17
 
 Makes `csvtable` safe to replace `github.com/domonda/go-structtable/csv`

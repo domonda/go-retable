@@ -125,6 +125,7 @@ field. For `[][]string` the first row holds the column names; with
 | --- | --- |
 | `NewWorkbook() *Workbook` | An empty workbook. |
 | `(wb) WriteTo(dest io.Writer) (int64, error)` | Writes the workbook as `.xlsx` to `dest`. Can be called more than once, with sheets added in between. |
+| `(wb) UniqueSheetName(name string) string` | The sanitized `name`, or, if a sheet of that name exists, `name` followed by ` (2)`, ` (3)` and so on, see [Sheet names](#sheet-names). Pass it to `WriteSheet` or as view title to `WriteViewSheet`. |
 | `(wb) Close() error` | Releases the workbook, including the temporary files that large sheets are streamed to. Afterwards `WriteTo` and adding sheets return an error. |
 
 Sheets appear in the order they were added. A `Workbook` is not safe for
@@ -287,6 +288,23 @@ workbook unchanged. Names that differ before sanitizing can collide after it:
 `a/b` and `a?b` both become `a_b`, and two names that differ only after their
 30th character get the same truncated name.
 
+For names from data, like cost center numbers, `Workbook.UniqueSheetName(name)`
+returns a name that does not collide, compared the same way. Without a
+collision it is the sanitized name. With one it appends ` (2)`, ` (3)` and so on
+to the trimmed name, `UNNAMED (2)` for an empty one, and cuts the name before the
+number to whole characters so that the number always fits into the 31 units and
+is never replaced by `…`. A sheet written with the returned name gets exactly
+that name.
+
+| Existing sheets | Input | `UniqueSheetName` |
+| --- | --- | --- |
+| none | `" a/b "` | `a_b` |
+| `4711` | `"4711"` | `4711 (2)` |
+| `Overview` | `"OVERVIEW"` | `OVERVIEW (2)` |
+| `X`, `X (2)` | `"X"` | `X (3)` |
+| `UNNAMED` | `""` | `UNNAMED (2)` |
+| one written as 40 × `a` | 40 × `a` | 27 × `a` followed by ` (2)` |
+
 ## Errors
 
 | Situation | Error | Workbook afterwards |
@@ -296,13 +314,15 @@ workbook unchanged. Names that differ before sanitizing can collide after it:
 | Duplicate sheet name | wraps `ErrDuplicateSheetName`: `duplicate sheet name: "Overview" (existing sheet "OVERVIEW")` | unchanged, usable |
 | More than 1,048,576 rows (header included) or 16,384 columns | `exceltable: sheet "Invoices" has 1048577 rows, more than Excel's 1048576` | unchanged, usable |
 | A formatter error, a cancelled `ctx` or an excelize error while rows are written | `sheet "Invoices": row 1, column "Total": <cause>` | unusable |
+| A panic before the sheet is added, for example of the viewer or of `view.Title()` | `exceltable: panic: <value>` followed by the stack trace | unchanged, usable |
+| A panic after the sheet is added, for example of a formatter | `sheet "Invoices": exceltable: panic: <value>` followed by the stack trace | unusable |
 | Any write to an unusable workbook, including `WriteTo` | `exceltable: workbook unusable after a failed sheet: sheet "Invoices": ...` | unusable |
 | `WriteTo` without sheets | `exceltable: workbook has no sheets` | unchanged, usable |
 | Any use after `Close` | `exceltable: workbook is closed` | closed |
 
 Every error wraps its cause, so `errors.Is(err, context.Canceled)` and
 `errors.Is(err, yourFormatterErr)` work, also on the errors of an unusable
-workbook. A workbook becomes unusable because the failed sheet holds only part
+workbook. A panic value that is an error is wrapped too. A workbook becomes unusable because the failed sheet holds only part
 of its rows and cannot be removed again; refusing every further write makes it
 impossible to deliver that truncated file. See
 [Why exceltable writes typed cells](explanation-typed-cells.md#a-failed-sheet-makes-the-workbook-unusable).

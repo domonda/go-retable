@@ -33,6 +33,18 @@ func PassthroughEncoder() Encoder {
 	})
 }
 
+// UTF8BOM is the UTF-8 encoded Unicode byte order mark that
+// Writer.WithUTF8BOM writes at the start of the output.
+const UTF8BOM = string(bomUTF8)
+
+// ErrUTF8BOMWithEncoder is returned by the write methods of a Writer
+// configured with both WithUTF8BOM(true) and a non-nil WithEncoder,
+// because the encoder converts the output to another encoding than UTF-8,
+// which a UTF-8 byte order mark in front of it would misdeclare.
+// Write the byte order mark of the target encoding to the destination
+// before calling the writer instead.
+var ErrUTF8BOMWithEncoder = errors.New("csvtable: UTF-8 byte order mark can't be combined with an encoder")
+
 type Padding int
 
 const (
@@ -55,6 +67,7 @@ type Writer[T any] struct {
 	delimiter        rune
 	newLine          string
 	encoder          Encoder
+	utf8BOM          bool
 }
 
 func NewWriter[T any]() *Writer[T] {
@@ -103,7 +116,30 @@ func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer 
 }
 
 // WriteView writes the view to dest as formatted as CSV.
-func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) error {
+//
+// With WithUTF8BOM(true) the output starts with UTF8BOM,
+// see WithUTF8BOM for the combination with an encoder.
+func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
+	if w.utf8BOM {
+		if w.encoder != nil {
+			return ErrUTF8BOMWithEncoder
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// The mark goes out with the first row, so that an error before
+		// it, like of a formatter, leaves dest untouched as without the mark,
+		// for example an http.ResponseWriter that can still send an error
+		bom := &utf8BOMWriter{dest: dest}
+		dest = bom
+		defer func() {
+			if err == nil {
+				// A table without rows still starts with the mark
+				err = bom.writeBOM()
+			}
+		}()
+	}
+
 	if w.padding != NoPadding {
 		return w.writeViewPadded(ctx, dest, view)
 	}
@@ -115,6 +151,30 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 		}
 	}
 	return w.writeView(ctx, dest, view)
+}
+
+// utf8BOMWriter writes UTF8BOM to dest in front of the first written bytes.
+type utf8BOMWriter struct {
+	dest    io.Writer
+	written bool
+}
+
+func (b *utf8BOMWriter) Write(p []byte) (int, error) {
+	err := b.writeBOM()
+	if err != nil {
+		return 0, err
+	}
+	return b.dest.Write(p)
+}
+
+// writeBOM writes UTF8BOM to dest unless it was already written.
+func (b *utf8BOMWriter) writeBOM() error {
+	if b.written {
+		return nil
+	}
+	b.written = true
+	_, err := io.WriteString(b.dest, UTF8BOM)
+	return err
 }
 
 // headerWriter returns a clone for writing the header row.
@@ -504,6 +564,35 @@ func (w *Writer[T]) WithNewLine(newLine string) *Writer[T] {
 	mod := w.clone()
 	mod.newLine = newLine
 	return mod
+}
+
+// WithUTF8BOM returns a new writer that starts the output of Write,
+// WriteWithViewer and WriteView with the UTF-8 byte order mark UTF8BOM
+// when utf8BOM is true, before the header row, also with padding
+// and also for a table without rows. Excel needs it to open a CSV file
+// as UTF-8 instead of the legacy code page of the system.
+// The default is false. ViewStrings returns cells and is not affected.
+//
+// The byte order mark is only valid for UTF-8 output, so writing returns
+// ErrUTF8BOMWithEncoder without writing anything if an encoder is also
+// set with WithEncoder, because it converts the output to another encoding.
+//
+// Example:
+//
+//	writer := csvtable.NewWriter[[]Invoice]().
+//	    WithHeaderRow(true).
+//	    WithUTF8BOM(true)
+//	err := writer.Write(ctx, dest, invoices) // "\xEF\xBB\xBFNumber;Total\r\n..."
+func (w *Writer[T]) WithUTF8BOM(utf8BOM bool) *Writer[T] {
+	mod := w.clone()
+	mod.utf8BOM = utf8BOM
+	return mod
+}
+
+// UTF8BOM reports whether the writer starts its output
+// with the UTF-8 byte order mark, see WithUTF8BOM.
+func (w *Writer[T]) UTF8BOM() bool {
+	return w.utf8BOM
 }
 
 func (w *Writer[T]) WithEncoder(encoder Encoder) *Writer[T] {

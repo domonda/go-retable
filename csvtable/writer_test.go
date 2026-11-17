@@ -605,3 +605,138 @@ func TestWriter_NilColumnFormatterFuncRemoves(t *testing.T) {
 	})
 	require.Equal(t, "42\n", dest.String())
 }
+
+func TestWriter_WithUTF8BOM(t *testing.T) {
+	type row struct {
+		Name  string `col:"Name"`
+		Count int    `col:"Count"`
+	}
+	rows := []row{{Name: "Müller", Count: 1}}
+	view := retable.NewStringsView("", [][]string{{"Name", "Count"}, {"Müller", "1"}})
+
+	tests := []struct {
+		name  string
+		write func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error
+		w     *Writer[[]row]
+		want  string
+	}{
+		{
+			name:  "Write with header row",
+			w:     NewWriter[[]row]().WithHeaderRow(true).WithUTF8BOM(true),
+			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error { return w.Write(ctx, buf, rows) },
+			want:  "\xEF\xBB\xBFName;Count\r\nMüller;1\r\n",
+		},
+		{
+			name: "WriteWithViewer without header row",
+			w:    NewWriter[[]row]().WithUTF8BOM(true),
+			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error {
+				return w.WriteWithViewer(ctx, buf, &retable.DefaultStructFieldNaming, rows)
+			},
+			want: "\xEF\xBB\xBFMüller;1\r\n",
+		},
+		{
+			name: "WriteView",
+			w:    NewWriter[[]row]().WithHeaderRow(true).WithUTF8BOM(true),
+			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error {
+				return w.WriteView(ctx, buf, view)
+			},
+			want: "\xEF\xBB\xBFName;Count\r\nMüller;1\r\n",
+		},
+		{
+			name: "padded",
+			w:    NewWriter[[]row]().WithHeaderRow(true).WithPadding(AlignLeft).WithUTF8BOM(true),
+			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error {
+				return w.WriteView(ctx, buf, view)
+			},
+			want: "\xEF\xBB\xBFName  ;Count\r\nMüller;1    \r\n",
+		},
+		{
+			name:  "no rows",
+			w:     NewWriter[[]row]().WithUTF8BOM(true),
+			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error { return w.Write(ctx, buf, nil) },
+			want:  UTF8BOM,
+		},
+		{
+			name: "switched off again",
+			w:    NewWriter[[]row]().WithHeaderRow(true).WithUTF8BOM(true).WithUTF8BOM(false),
+			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error {
+				return w.WriteView(ctx, buf, view)
+			},
+			want: "Name;Count\r\nMüller;1\r\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, tt.write(t.Context(), tt.w, &buf))
+			require.Equal(t, tt.want, buf.String())
+		})
+	}
+}
+
+// TestWriter_WithUTF8BOMAndEncoder covers that a UTF-8 byte order mark
+// is never written in front of output an encoder converts to another
+// encoding, where it would misdeclare the encoding of the file.
+func TestWriter_WithUTF8BOMAndEncoder(t *testing.T) {
+	view := retable.NewStringsView("", [][]string{{"a"}, {"x"}})
+	for _, encoder := range []Encoder{
+		PassthroughEncoder(),
+		EncoderFunc(func(b []byte) ([]byte, error) { return bytes.ToUpper(b), nil }),
+	} {
+		var buf bytes.Buffer
+		w := NewWriter[[][]string]().WithHeaderRow(true).WithUTF8BOM(true).WithEncoder(encoder)
+		err := w.WriteView(t.Context(), &buf, view)
+		require.ErrorIs(t, err, ErrUTF8BOMWithEncoder)
+		require.Empty(t, buf.String(), "nothing must be written")
+
+		err = w.WithPadding(AlignLeft).WriteView(t.Context(), &buf, view)
+		require.ErrorIs(t, err, ErrUTF8BOMWithEncoder)
+		require.Empty(t, buf.String(), "nothing must be written")
+	}
+}
+
+// TestWriter_WithUTF8BOMFormatterError covers that the byte order mark
+// goes out with the first row: an error before it leaves dest untouched,
+// so that for example an http.ResponseWriter can still send an error status.
+func TestWriter_WithUTF8BOMFormatterError(t *testing.T) {
+	view := retable.NewStringsView("", [][]string{{"a"}, {"x"}})
+	errFormat := errors.New("format failed")
+	w := NewWriter[[][]string]().
+		WithUTF8BOM(true).
+		WithColumnFormatterFunc(0, func(context.Context, retable.View, int, int) (string, bool, error) {
+			return "", false, errFormat
+		})
+	for name, w := range map[string]*Writer[[][]string]{
+		"unpadded": w,
+		"padded":   w.WithPadding(AlignLeft),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := w.WriteView(t.Context(), &buf, view)
+			require.ErrorIs(t, err, errFormat)
+			require.Empty(t, buf.String(), "nothing must be written")
+		})
+	}
+}
+
+func TestWriter_WithUTF8BOMOptions(t *testing.T) {
+	base := NewWriter[[][]string]()
+	require.False(t, base.UTF8BOM(), "default")
+	withBOM := base.WithUTF8BOM(true)
+	require.True(t, withBOM.UTF8BOM())
+	require.False(t, base.UTF8BOM(), "the original must be untouched")
+
+	// ViewStrings returns cells, not output, and has no byte order mark
+	view := retable.NewStringsView("", [][]string{{"a"}, {"x"}})
+	rows, err := withBOM.WithHeaderRow(true).ViewStrings(t.Context(), view)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"a"}, {"x"}}, rows)
+
+	// The output parses back without the byte order mark in the first title
+	var buf bytes.Buffer
+	require.NoError(t, withBOM.WithHeaderRow(true).WriteView(t.Context(), &buf, view))
+	parsed, _, err := ParseDetectFormat(buf.Bytes(), nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"a"}, parsed[0])
+	require.Equal(t, []string{"x"}, parsed[1])
+}
