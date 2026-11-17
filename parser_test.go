@@ -458,3 +458,64 @@ func TestDefaultsAcceptCommonSpellings(t *testing.T) {
 		}
 	})
 }
+
+// TestStringParser_ParseDuration covers both accepted forms: Go's duration
+// syntax, which must parse exactly as time.ParseDuration does, and the
+// clock form [-]H:MM:SS[.fraction] that exceltable writes for durations.
+func TestStringParser_ParseDuration(t *testing.T) {
+	parser := NewStringParser()
+	valid := []struct {
+		input string
+		want  time.Duration
+	}{
+		// Go syntax, unchanged
+		{"1h30m", 90 * time.Minute},
+		{"5s", 5 * time.Second},
+		{"100ms", 100 * time.Millisecond},
+		{"-1.5h", -90 * time.Minute},
+		{"0", 0},
+		// Clock form
+		{"30:00:00", 30 * time.Hour},
+		{"1:30:02", time.Hour + 30*time.Minute + 2*time.Second},
+		{"01:30:02", time.Hour + 30*time.Minute + 2*time.Second},
+		{"1:30:02.5", time.Hour + 30*time.Minute + 2500*time.Millisecond},
+		{"0:00:00.000000001", time.Nanosecond},
+		{"0:00:00", 0},
+		{"-1:00:00", -time.Hour},
+		{"1000:59:59", 1000*time.Hour + 59*time.Minute + 59*time.Second},
+	}
+	for _, tc := range valid {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := parser.ParseDuration(tc.input)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+
+	invalid := []string{
+		"",
+		"invalid",
+		"5",       // no unit, as time.ParseDuration
+		"30:00",   // two parts are ambiguous with MM:SS
+		"1:60:00", // minutes out of range
+		"1:00:60", // seconds out of range
+		"1:2:3",   // minutes and seconds need two digits
+		"1:02:3",
+		":00:00",
+		"1:00:00.",
+		"1:00:00.1234567890", // more than nanoseconds
+		"1:00:00:00",
+		"+1:00:00",
+		"1:0a:00",
+		"99999999999:00:00", // overflows time.Duration
+	}
+	for _, input := range invalid {
+		t.Run("invalid "+input, func(t *testing.T) {
+			_, err := parser.ParseDuration(input)
+			require.Error(t, err)
+			// The error is the one of time.ParseDuration
+			_, stdErr := time.ParseDuration(input)
+			require.EqualError(t, err, stdErr.Error())
+		})
+	}
+}

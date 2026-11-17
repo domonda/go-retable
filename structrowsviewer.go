@@ -138,8 +138,17 @@ func (v *StructRowsViewer) NewView(title string, table any) (View, error) {
 	for rows.Kind() == reflect.Pointer && !rows.IsNil() {
 		rows = rows.Elem()
 	}
-	if rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array {
+	if rows.Kind() != reflect.Slice && rows.Kind() != reflect.Array {
 		return nil, fmt.Errorf("table must be slice or array kind but is %T", table)
+	}
+	if rows.Kind() == reflect.Array && !rows.CanAddr() {
+		// An array passed by value is not addressable, and neither are
+		// its fields, so methods with pointer receivers like String or
+		// IsNull would be skipped. Copy it to make it addressable like
+		// the elements of a slice.
+		addressable := reflect.New(rows.Type()).Elem()
+		addressable.Set(rows)
+		rows = addressable
 	}
 	rowType := rows.Type().Elem()
 	if rowType.Kind() == reflect.Pointer {

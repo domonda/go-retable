@@ -52,6 +52,8 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 // StructFieldReflectValues returns the reflect.Value of exported struct fields,
 // including the inlined fields of any anonymously embedded structs.
 // If structValue is a pointer, it automatically dereferences to the underlying struct value.
+// A nil pointer, like a nil row or a nil embedded struct pointer, has no
+// field values and yields an invalid reflect.Value for each of its fields.
 //
 // The function recursively processes embedded structs, flattening their field values into the result.
 // Only exported fields (those starting with an uppercase letter) are included.
@@ -72,6 +74,10 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 //	// Returns reflect.Values for: ["John", "Main St", "NYC"]
 func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 	if structValue.Kind() == reflect.Pointer {
+		if structValue.IsNil() {
+			// A nil row or nil embedded struct has no field values
+			return make([]reflect.Value, len(StructFieldTypes(structValue.Type())))
+		}
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
@@ -127,6 +133,11 @@ func IndexedStructFieldReflectValues(structValue reflect.Value, numVals int, ind
 // can report the total number of fields.
 func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue reflect.Value, indices []int, fieldIndex int) int {
 	if structValue.Kind() == reflect.Pointer {
+		if structValue.IsNil() {
+			// A nil row or nil embedded struct has no field values,
+			// its fields keep the invalid zero reflect.Value
+			return fieldIndex + len(StructFieldTypes(structValue.Type()))
+		}
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
@@ -148,6 +159,8 @@ func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue ref
 // StructFieldAnyValues returns the values of exported struct fields as []any,
 // including the inlined fields of any anonymously embedded structs.
 // If structValue is a pointer, it automatically dereferences to the underlying struct value.
+// A nil pointer, like a nil row or a nil embedded struct pointer, has no
+// field values and yields nil for each of its fields.
 //
 // This is similar to StructFieldReflectValues but returns the values as any interfaces
 // instead of reflect.Value, making it easier to work with in non-reflection contexts.
@@ -166,6 +179,10 @@ func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue ref
 //	// Returns: []any{"John", 30}
 func StructFieldAnyValues(structValue reflect.Value) []any {
 	if structValue.Kind() == reflect.Pointer {
+		if structValue.IsNil() {
+			// A nil row or nil embedded struct has no field values
+			return make([]any, len(StructFieldTypes(structValue.Type())))
+		}
 		structValue = structValue.Elem()
 	}
 	structType := structValue.Type()
@@ -468,51 +485,91 @@ func UseTitle(columnTitle string) func(fieldName string) (columnTitle string) {
 	return func(string) string { return columnTitle }
 }
 
-// IsNullLike returns true if the passed reflect.Value should be treated as null-like.
+// IsNullLike reports whether val is a null-like value: a cell that
+// carries no meaningful value. It is the one null predicate of this
+// module: csvtable, htmltable and exceltable render a null-like cell
+// as their nil value, and TryFormattersOrSprint as an empty string.
 //
-// A value is considered null-like if it fulfills any of the following conditions:
-//   - Is not valid (zero value of reflect.Value)
-//   - Is nil (for pointer, interface, slice, map, channel, func, or unsafe pointer types)
-//   - Is of type struct{} (empty struct)
-//   - Implements IsNull() bool method which returns true
-//   - Implements IsZero() bool method which returns true
-//   - Implements driver.Valuer interface which returns (nil, nil)
+// The rules, in evaluation order:
 //
-// This function is useful for determining whether a value should be rendered as NULL
-// or empty in table output, supporting various nullable type conventions used in Go.
+//  1. Pointers and interfaces are unwrapped first, one level at a time.
+//     A nil anywhere in that chain is null-like:
+//     (*int)(nil), a **int pointing to a nil *int, and an any holding
+//     a typed nil pointer all are. A non-nil pointer is judged by the
+//     value it points to, so a pointer to a zero time.Time is null-like.
+//     A chain longer than maxPointerDepth, which only a self referential
+//     value like an any holding a pointer to itself has, is not null-like.
+//  2. The zero reflect.Value is null-like (also what an unwrapped
+//     nil interface yields).
+//  3. A nil slice, map, channel, func or unsafe.Pointer is null-like.
+//     An empty but non-nil slice or map is not.
+//  4. struct{}{} is null-like.
+//  5. A value that cannot be passed to reflect.Value.Interface, because it
+//     was read from an unexported struct field, is not null-like:
+//     its methods cannot be called.
+//  6. The methods IsNull() bool, IsZero() bool and the driver.Valuer
+//     interface are looked up on the value, through its address when the
+//     value is addressable, so pointer-receiver methods count too.
+//     In this order, the value is null-like if
+//     IsNull() returns true (go-types nullable types),
+//     IsZero() returns true (a zero time.Time, a nil UUID), or
+//     Value() returns (nil, nil) (sql.NullString{} and the other sql.Null types).
+//     IsZero() counts even when IsNull() returned false, which is the one
+//     difference to nullable.ReflectIsNull of github.com/domonda/go-types.
+//
+// Anything else is not null-like, including 0, false and "".
 //
 // Example:
 //
 //	var ptr *string
-//	IsNullLike(reflect.ValueOf(ptr))  // true (nil pointer)
+//	IsNullLike(reflect.ValueOf(ptr))              // true (nil pointer)
+//	IsNullLike(reflect.ValueOf(&time.Time{}))     // true (points to a zero time)
+//	IsNullLike(reflect.ValueOf(sql.NullString{})) // true (Value returns nil)
 //
 //	type Nullable struct{}
 //	func (n Nullable) IsNull() bool { return true }
-//	IsNullLike(reflect.ValueOf(Nullable{}))  // true
+//	IsNullLike(reflect.ValueOf(Nullable{}))       // true
 //
-//	IsNullLike(reflect.ValueOf(42))  // false
+//	IsNullLike(reflect.ValueOf(42))               // false
 func IsNullLike(val reflect.Value) bool {
-	// Treat zero value of reflect.Value as nil
+	for depth := 0; val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface; depth++ {
+		if val.IsNil() {
+			return true
+		}
+		if depth == maxPointerDepth {
+			// Self referential, would loop forever
+			return false
+		}
+		val = val.Elem()
+	}
 	if !val.IsValid() {
 		return true
 	}
 	switch val.Kind() {
-	case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map,
-		reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		return val.IsNil()
+	case reflect.Slice, reflect.Map, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		if val.IsNil() {
+			return true
+		}
 	}
-	// Treat struct{}{} as nil
 	if val.Type() == typeOfEmptyStruct {
 		return true
 	}
-	if nullable, ok := val.Interface().(interface{ IsNull() bool }); ok && nullable.IsNull() {
+	if !val.CanInterface() {
+		return false
+	}
+	// The method set of the pointer includes value and pointer receivers
+	if val.CanAddr() {
+		val = val.Addr()
+	}
+	x := val.Interface()
+	if nullable, ok := x.(interface{ IsNull() bool }); ok && nullable.IsNull() {
 		return true
 	}
-	if zeroable, ok := val.Interface().(interface{ IsZero() bool }); ok && zeroable.IsZero() {
+	if zeroable, ok := x.(interface{ IsZero() bool }); ok && zeroable.IsZero() {
 		return true
 	}
-	if valuer, ok := val.Interface().(driver.Valuer); ok {
-		if v, e := valuer.Value(); v == nil && e == nil {
+	if valuer, ok := x.(driver.Valuer); ok {
+		if v, err := valuer.Value(); v == nil && err == nil {
 			return true
 		}
 	}

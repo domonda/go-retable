@@ -520,3 +520,88 @@ func TestWriter_WithTypeFormattersAndReflectFuncs(t *testing.T) {
 		require.Contains(t, buf.String(), "raw:x")
 	})
 }
+
+// TestWriter_PointerToNullValue pins the csv side of the IsNullLike change:
+// a non-nil pointer to a null-like value is written as the nil value.
+// Before, IsNullLike reported every non-nil pointer as not null and the
+// writer printed the pointed-to value, "0001-01-01 00:00:00 +0000 UTC"
+// for a pointer to a zero time.
+func TestWriter_PointerToNullValue(t *testing.T) {
+	type row struct {
+		Time *time.Time
+		Text *string
+	}
+	var zeroTime time.Time
+	empty := ""
+	var dest bytes.Buffer
+	err := NewWriter[[]row]().
+		WithNewLine("\n").
+		WithNilValue("NULL").
+		Write(context.Background(), &dest, []row{{Time: &zeroTime, Text: &empty}})
+	require.NoError(t, err)
+	// The empty string is a value, the zero time is null-like
+	require.Equal(t, "NULL;\n", dest.String())
+}
+
+// TestWriter_NilRow: a nil element of a slice of struct pointers is a row
+// of null cells written as the nil value. It used to panic in reflect.
+func TestWriter_NilRow(t *testing.T) {
+	type row struct {
+		Name  string
+		Count int
+	}
+	var dest bytes.Buffer
+	err := NewWriter[[]*row]().
+		WithNewLine("\n").
+		WithNilValue("NULL").
+		Write(context.Background(), &dest, []*row{{"a", 1}, nil, {"c", 3}})
+	require.NoError(t, err)
+	require.Equal(t, "a;1\nNULL;NULL\nc;3\n", dest.String())
+}
+
+// TestWriter_NilFormatterFuncRemoves: passing nil to a With*FormatterFunc
+// method removes the registration like passing nil to With*Formatter,
+// instead of storing a nil func that panics when the table is written.
+func TestWriter_NilFormatterFuncRemoves(t *testing.T) {
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{42}}}
+	formatter := func(context.Context, retable.View, int, int) (string, bool, error) {
+		return "FORMATTED", false, nil
+	}
+	writers := map[string]*Writer[any]{
+		"type": NewWriter[any]().
+			WithTypeFormatterFunc(reflect.TypeFor[int](), formatter).
+			WithTypeFormatterFunc(reflect.TypeFor[int](), nil),
+		"interface": NewWriter[any]().
+			WithInterfaceTypeFormatterFunc(reflect.TypeFor[fmt.Stringer](), formatter).
+			WithInterfaceTypeFormatterFunc(reflect.TypeFor[fmt.Stringer](), nil),
+		"kind": NewWriter[any]().
+			WithKindFormatterFunc(reflect.Int, formatter).
+			WithKindFormatterFunc(reflect.Int, nil),
+	}
+	for name, writer := range writers {
+		t.Run(name, func(t *testing.T) {
+			var dest bytes.Buffer
+			require.NotPanics(t, func() {
+				require.NoError(t, writer.WithNewLine("\n").WriteView(context.Background(), &dest, view))
+			})
+			require.Equal(t, "42\n", dest.String())
+		})
+	}
+}
+
+// TestWriter_NilColumnFormatterFuncRemoves: WithColumnFormatterFunc(i, nil)
+// removes the column formatter as documented, instead of storing a nil func
+// that panicked on the first cell.
+func TestWriter_NilColumnFormatterFuncRemoves(t *testing.T) {
+	view := &retable.AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{42}}}
+	writer := NewWriter[any]().
+		WithColumnFormatterFunc(0, func(context.Context, retable.View, int, int) (string, bool, error) {
+			return "FORMATTED", false, nil
+		}).
+		WithColumnFormatterFunc(0, nil)
+	var dest bytes.Buffer
+	require.NotPanics(t, func() {
+		require.NoError(t, writer.WithNewLine("\n").WriteView(context.Background(), &dest, view))
+	})
+	require.Equal(t, "42\n", dest.String())
+}

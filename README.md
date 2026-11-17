@@ -8,7 +8,7 @@ A powerful Go library for working with tabular data using reflection. `go-retabl
 ## Features
 
 - **Unified Table Interface**: Work with all tabular data through a single `View` interface
-- **Multiple Format Support**: Read/write CSV, Excel (XLSX), HTML tables, and SQL result sets
+- **Multiple Format Support**: Read/write CSV and Excel (XLSX) with typed cells, write HTML tables, read SQL result sets
 - **Type-Safe Conversions**: Convert between struct slices, string slices, and generic values
 - **Smart Type Conversion**: Intelligent value assignment across different Go types
 - **Configurable Parsing**: Locale number formats, custom time layouts and null-value spellings, with scanners for your own types
@@ -122,6 +122,38 @@ for _, sheet := range sheets {
 // Read first sheet only
 firstSheet, err := exceltable.ReadLocalFileFirstSheet("data.xlsx", false)
 ```
+
+Writing keeps cells typed, so numbers stay numbers and dates stay Excel dates
+that can be sorted, filtered and summed:
+
+```go
+type Invoice struct {
+    Number string    `col:"Invoice"`
+    Date   time.Time `col:"Date"`
+    Total  float64   `col:"Total"`
+}
+
+writer := exceltable.NewWriter[[]Invoice]().
+    WithHeaderRow(true).
+    WithTimeFormat("dd.mm.yyyy").
+    WithColumnFormatter(2, exceltable.CellFormatterFunc(
+        func(ctx context.Context, view retable.View, row, col int) (exceltable.Cell, error) {
+            return exceltable.NumberCell(view.Cell(row, col).(float64), "#,##0.00"), nil
+        },
+    ))
+
+// One sheet
+err := writer.Write(ctx, w, invoices, "Invoices")
+
+// Several sheets, each with its own row type
+wb := exceltable.NewWorkbook()
+defer wb.Close()
+err = overviewWriter.WriteSheet(ctx, wb, overview, "Overview")
+err = writer.WriteSheet(ctx, wb, invoices, "Invoices")
+_, err = wb.WriteTo(w) // w.Header().Set("Content-Type", exceltable.ContentType)
+```
+
+More in [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md).
 
 ### Generating HTML Tables
 
@@ -763,7 +795,8 @@ output reads back both here and in `encoding/csv`. Formatting is controlled with
 the same `retable` formatters used elsewhere: `WithTypeFormatter`,
 `WithKindFormatter`, `WithInterfaceTypeFormatter`, `WithColumnFormatter` and their
 `…Func` variants. Column formatters apply to cell values only, never to the column
-titles of the header row.
+titles of the header row. Passing `nil`, or a nil `…Func`, removes a registered
+formatter.
 
 `WithPadding` aligns columns for human-readable output:
 
@@ -837,11 +870,23 @@ joined back together afterwards, so the parser has no quote state while splittin
 
 ### exceltable
 
-Excel file reading using excelize:
-- Read XLSX files from filesystem or `io.Reader`
-- Multiple sheet support
-- Raw or formatted cell values
-- Automatic empty row/column cleanup
+Excel `.xlsx` reading and writing using excelize:
+- Read XLSX files from filesystem or `io.Reader`, all sheets or the first,
+  with raw or formatted cell values and empty rows and columns removed
+- `Writer[T]` writes typed cells, so numbers, dates, durations and booleans
+  stay sortable and summable in Excel; formatters by column, type, interface
+  and kind return an `exceltable.Cell`
+- A `Workbook` takes several sheets of different row types, and a sheet that
+  fails midway makes the workbook refuse to write a truncated file
+
+Documentation:
+- [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md):
+  several sheets, HTTP downloads, money and date columns, enums, troubleshooting
+- [Writer reference](docs/exceltable/reference-writer.md): every method and
+  default, the conversion of each Go type, sheet name rules, errors
+- [Why exceltable writes typed cells](docs/exceltable/explanation-typed-cells.md):
+  date serials, time zones, precision, the unusable workbook, trade-offs
+- API on [pkg.go.dev](https://pkg.go.dev/github.com/domonda/go-retable/exceltable)
 
 ### htmltable
 
@@ -905,7 +950,14 @@ for i := range records {
     records[i].Name = strings.ToUpper(records[i].Name)
 }
 
-// Write to Excel (via another library or export as HTML/CSV)
+// Write to Excel
+xlsxFile, err := os.Create("output.xlsx")
+check(err)
+defer xlsxFile.Close()
+err = exceltable.NewWriter[[]Record]().
+    WithHeaderRow(true).
+    Write(context.Background(), xlsxFile, records, "Data")
+check(err)
 ```
 
 ### Example 2: Data Validation Pipeline

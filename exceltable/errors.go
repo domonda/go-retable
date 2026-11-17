@@ -14,6 +14,13 @@ var (
 	// Empty sheets are automatically skipped when reading multiple sheets
 	// from a file using ReadLocalFile.
 	ErrEmptySheet = errors.New("empty sheet")
+
+	// ErrDuplicateSheetName is returned by Writer.WriteSheet and
+	// Writer.WriteViewSheet when the sanitized sheet name equals the name
+	// of a sheet already in the workbook, compared case-insensitively
+	// like Excel does. The error is wrapped with both names; the workbook
+	// stays unchanged and usable.
+	ErrDuplicateSheetName = errors.New("duplicate sheet name")
 )
 
 // ErrSheetNotExist is re-exported from excelize and indicates that a requested

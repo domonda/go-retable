@@ -4,6 +4,125 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0-beta.2] - 2026-11-17
+
+Adds an `.xlsx` writer to `exceltable`, so that consumers can drop the
+deprecated `github.com/domonda/go-structtable` and its `excel.Renderer`.
+The root module and `exceltable` are tagged in lockstep, as
+`v1.0.0-beta.2` and `exceltable/v1.0.0-beta.2`. `exceltable` beta.2 uses
+root API added in beta.2 (`ReflectTypeDispatcher`), so upgrade both
+together:
+
+```sh
+go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable/exceltable@v1.0.0-beta.2
+```
+
+### Added
+
+- `exceltable.Writer[T]`, `exceltable.Workbook` and `exceltable.Cell`: write
+  tables as sheets with typed cells, so numbers stay numbers and dates stay
+  Excel dates. The writer has the builder shape of `csvtable.Writer` and
+  `htmltable.Writer`: column, type, interface and kind formatters, header row
+  and header font, time format (`dd.mm.yyyy hh:mm:ss`), duration format
+  (`[h]:mm:ss`) and nil value. Formatters implement `exceltable.CellFormatter`
+  and return a `Cell` (`StringCell`, `NumberCell` with a number format code,
+  `BoolCell`, `DateTimeCell`), falling through on `errors.ErrUnsupported`.
+  `StringCellFormatter` adapts a csv/html string formatter.
+  - Several sheets go into one `Workbook`, one after another, each with its
+    own row type. Sheet names are sanitized for Excel: trimmed, empty becomes
+    `UNNAMED`, `\ / ? * [ ] :` and an apostrophe at either end become `_`, and
+    a name longer than 31 UTF-16 units is cut to 30 plus `…`. A name that
+    collides with an existing sheet, ignoring case, returns
+    `exceltable.ErrDuplicateSheetName` instead of merging the rows into it.
+    A table with more rows (1,048,576 including the header) or columns
+    (16,384) than an Excel sheet holds returns an error before any cell is
+    converted, and the workbook stays usable.
+  - Date serials use the 1900 date system and the same arithmetic as
+    `github.com/tealeg/xlsx/v3`, so they equal the ones go-structtable wrote
+    to Excel's 15 significant digits, about 9 µs for current dates. A stored
+    serial never moves into the next day.
+    Every number is stored rounded to those 15 digits; excelize v2.11.1
+    would otherwise cut off the rest and store one hour as slightly less.
+    A time is written as its wall clock in its own location; a zero time is
+    an empty cell. A duration is a fraction of a day. Unlike tealeg/xlsx,
+    dates before 1900-03-01 get Excel's serials (1900-01-01 is 1), and what
+    Excel cannot display is written as text that reads back. A time before
+    1900 or after 9999 becomes `2006-01-02T15:04:05.999999999`, and a
+    negative duration `-H:MM:SS[.fraction]`.
+  - Number kinds come before `fmt.Stringer`, so a number type with a
+    `String` method stays a number that Excel can sum. csvtable and
+    htmltable write the `String` result, so an enum like `time.Month` is
+    `March` there and `3` here unless a formatter is registered for it.
+  - Format codes are stored as given and never mapped onto Excel's built-in
+    formats, which Excel displays per the reader's locale.
+  - After a sheet failed midway, for example by a formatter error or a
+    cancelled context, the workbook returns that error from every further
+    write, so a truncated file is never produced. A closed workbook refuses
+    writes the same way.
+  - `exceltable.ContentType`, the MIME type of `.xlsx` files.
+- `retable.ReflectTypeDispatcher[F]`: the type, interface and kind lookup that
+  `ReflectTypeCellFormatter` and the exceltable writer share. Interfaces are
+  tried in registration order. `CellCandidates` yields the formatters for a
+  view cell together with the view to call each with, looking through
+  pointers and interface-typed fields.
+- `StringParser.ParseDuration` also accepts the clock form
+  `[-]H:MM:SS[.fraction]`, which is how spreadsheets display durations, so
+  durations written by the exceltable writer read back, to the precision
+  of the duration format. The default `[h]:mm:ss` rounds to whole seconds,
+  and `[h]:mm:ss.000` keeps milliseconds. `SmartAssign` parses the clock form
+  only into `time.Duration` and `*time.Duration`, not into other defined
+  `int64` types, so a time of day like `12:30:00` in a `type Bytes int64`
+  column stays an error.
+
+### Changed
+
+- **Breaking:** `retable.IsNullLike`, the null check of csvtable, htmltable,
+  exceltable and `TryFormattersOrSprint`, looks through pointers and
+  interfaces and finds `IsNull`, `IsZero` and `driver.Valuer` methods with
+  pointer receivers. These are now null-like and written as the nil value:
+  a non-nil pointer to a null-like value (a `*time.Time` pointing to the zero
+  time used to be written as `0001-01-01 00:00:00 +0000 UTC`), a `**T`
+  pointing to a nil `*T`, an interface holding a typed nil pointer, and a
+  value whose `IsNull` or `IsZero` has a pointer receiver. A value of an
+  unexported struct field reports false instead of panicking. A self
+  referential value, like an `any` holding a pointer to itself, reports
+  false instead of looping forever.
+- `ReflectTypeCellFormatter` tries interface formatters in registration order;
+  it used to iterate a map, so a type implementing two registered interfaces
+  was formatted by either of them at random. For a struct field of interface
+  type that matched nothing, it now tries the formatters of the dynamic type of
+  the value. A nil formatter passed to `WithTypeFormatter`,
+  `WithInterfaceTypeFormatter` or `WithKindFormatter` (also on the csvtable and
+  htmltable writers) removes the registration instead of making the write
+  panic, and `WithInterfaceTypeFormatter` panics at once for a type that is not
+  an interface.
+- CI runs the tests of every workspace module, including `exceltable`.
+- Dependencies updated: `golang.org/x/text` v0.43.0 to v0.44.0,
+  `github.com/xuri/excelize/v2` v2.11.0 to v2.11.1, and the indirect
+  `go.yaml.in/yaml/v3`, `golang.org/x/crypto`, `golang.org/x/net` and
+  `github.com/xuri/efp` requirements of `exceltable`.
+
+### Removed
+
+- **Breaking:** The exported fields `Types`, `InterfaceTypes` and `Kinds` of
+  `ReflectTypeCellFormatter`. Register formatters with its `With*` methods;
+  `Default` stays.
+
+### Fixed
+
+- A nil element of a slice of struct pointers, like `[]*Invoice{nil}`, and the
+  fields of a nil embedded struct pointer are null cells: `Cell` returns nil and
+  `ReflectCell` an invalid `reflect.Value`, which every writer renders as its
+  nil value. Writing such a table with csvtable, htmltable or exceltable used
+  to panic in `reflect`. `StructFieldReflectValues`, `StructFieldAnyValues` and
+  their `Indexed` variants return nil values for a nil struct pointer.
+- `StructRowsViewer.NewView`, and with it every writer's default viewer,
+  accepts an array of structs, as documented. It returned
+  `table must be slice or array kind` for every array.
+- `csvtable.Writer` and `htmltable.Writer`: `WithColumnFormatterFunc(i, nil)`
+  removes the column formatter, as documented. It stored the nil func, and
+  writing the table panicked on the first cell of the column.
+
 ## [1.0.0-beta.1] - 2026-10-26
 
 The first tagged release, as `v1.0.0-beta.1` for the root module and

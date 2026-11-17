@@ -24,6 +24,10 @@ import (
 //   - The indices slice has one entry per struct field, with values indicating column positions
 //   - An index value of -1 means that field is excluded from the view
 //
+// A nil pointer row of a slice of struct pointers, and the fields of a nil
+// embedded struct pointer, have no values: Cell returns nil and ReflectCell
+// an invalid reflect.Value for them, which the writers treat as null.
+//
 // Performance characteristics:
 //   - Row access is O(1) - direct slice indexing
 //   - Cell access includes reflection overhead on first access per row
@@ -162,7 +166,8 @@ func (view *StructRowsView) NumRows() int { return view.rows.Len() }
 //   - row: Row index (0-based)
 //   - col: Column index (0-based)
 //
-// Returns nil if row or col is out of bounds.
+// Returns nil if row or col is out of bounds, and for the fields of a nil
+// pointer row or of a nil embedded struct pointer.
 //
 // Performance: O(1) for cached rows, O(n) where n is the number of struct fields
 // for the first access to a new row.
@@ -204,7 +209,8 @@ func (view *StructRowsView) Cell(row, col int) any {
 //   - row: Row index (0-based)
 //   - col: Column index (0-based)
 //
-// Returns an invalid reflect.Value (reflect.Value{}) if row or col is out of bounds.
+// Returns an invalid reflect.Value (reflect.Value{}) if row or col is out of bounds,
+// and for the fields of a nil pointer row or of a nil embedded struct pointer.
 // Use reflect.Value.IsValid() to check if the returned value is valid.
 //
 // Performance: O(1) for cached rows, O(n) where n is the number of struct fields
