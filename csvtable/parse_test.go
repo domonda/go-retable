@@ -811,6 +811,20 @@ func requireNoRecoveredPanic(t *testing.T, err error) {
 	}
 }
 
+// requireRecoveredPanic fails the test unless err is a panic recovered by
+// recoverParsePanic: wantMsg on the first line followed by the stack trace
+// of the panic, which has to show the panic and the frame wantFrame where it
+// happened, so that the stack can't be one captured after the panic unwound.
+func requireRecoveredPanic(t *testing.T, err error, wantMsg, wantFrame string) {
+	t.Helper()
+	require.Error(t, err)
+	msg, stack, hasStack := strings.Cut(err.Error(), "\n")
+	require.Equal(t, wantMsg, msg, "first line of the error message")
+	require.True(t, hasStack, "the stack trace has to follow the message")
+	require.Contains(t, stack, "panic(", "stack trace of the panic")
+	require.Contains(t, stack, wantFrame, "stack trace of the panic")
+}
+
 // fuzzEncodings are the encodings FuzzParseWithFormat picks from,
 // covering the charmap and every Unicode decoder with and without BOM.
 var fuzzEncodings = []string{"UTF-8", "UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "ISO 8859-1", "Windows 1252", "Macintosh"}
@@ -915,7 +929,7 @@ func Test_recoverParsePanic(t *testing.T) {
 			err := parse()
 
 			// then
-			require.EqualError(t, err, tt.wantMsg)
+			requireRecoveredPanic(t, err, tt.wantMsg, "Test_recoverParsePanic")
 			require.NotErrorIs(t, err, earlierErr)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)

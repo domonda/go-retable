@@ -11,7 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `csvtable`: the parse and read entry points (`ParseDetectFormat`,
   `ParseWithFormat`, `ReadStringsToStructSlice` and the four
   `Read*ToStructSlice` variants) never panic, they return a panic as an error
-  with the prefix `csvtable: panic`, wrapping an error value with `%w`. This
+  with the prefix `csvtable: panic`, wrapping an error value with `%w`, followed
+  by the stack trace of the panic like `go-errs.AsErrorWithDebugStack`. This
   restores the guard of the `go-structtable/csv` functions they replaced, so
   callers parsing uploaded files no longer have to add their own. A panic of a
   caller-supplied reader, `Scanner`, `Parser`, `Formatter` or validate func is

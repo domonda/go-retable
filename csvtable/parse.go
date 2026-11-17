@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime/debug"
 )
 
 // ParseDetectFormat parses CSV data with automatic format detection.
@@ -46,7 +47,8 @@ import (
 //	// rows == [][]string{{"Name", "Age"}, {"John", "30"}, {"Jane", "25"}}
 //
 // ParseDetectFormat never panics on malformed input: a panic while parsing
-// is returned as an error with the prefix "csvtable: panic".
+// is returned as an error with the prefix "csvtable: panic"
+// followed by the stack trace of the panic.
 func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]string, format *Format, err error) {
 	defer recoverParsePanic(&err)
 
@@ -103,7 +105,8 @@ func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]stri
 //	// rows == [][]string{{"Name", "Age"}, {"John", "30"}, {"Jane", "25"}}
 //
 // ParseWithFormat never panics on malformed input: a panic while parsing
-// is returned as an error with the prefix "csvtable: panic".
+// is returned as an error with the prefix "csvtable: panic"
+// followed by the stack trace of the panic.
 func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 	defer recoverParsePanic(&err)
 
@@ -149,6 +152,9 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 // A recovered panic is assigned to *err with the prefix "csvtable: panic",
 // wrapping the panic value with %w if it is an error so that errors.Is and
 // errors.As still find it, and formatting it with %v otherwise.
+// The stack trace of the panic follows on the next lines of the message,
+// as with github.com/domonda/go-errs.AsErrorWithDebugStack, because a panic
+// that reaches this backstop is a bug and the stack is what locates it.
 // Any error already assigned to *err is replaced, the panic is the more
 // important one to report.
 func recoverParsePanic(err *error) {
@@ -156,10 +162,13 @@ func recoverParsePanic(err *error) {
 	if p == nil {
 		return
 	}
+	// Still the stack of the panicking goroutine,
+	// deferred functions run before it is unwound
+	stack := debug.Stack()
 	if pErr, ok := p.(error); ok {
-		*err = fmt.Errorf("csvtable: panic: %w", pErr)
+		*err = fmt.Errorf("csvtable: panic: %w\n%s", pErr, stack)
 	} else {
-		*err = fmt.Errorf("csvtable: panic: %v", p)
+		*err = fmt.Errorf("csvtable: panic: %v\n%s", p, stack)
 	}
 }
 

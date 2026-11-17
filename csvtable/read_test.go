@@ -122,10 +122,14 @@ func TestReadBytesDetectFormatToStructSlice(t *testing.T) {
 	t.Run("a missing required column is reported", func(t *testing.T) {
 		// Without the column the table cannot be located either, so the
 		// caller has to learn that instead of getting zero valued rows.
-		_, _, err := ReadBytesDetectFormatToStructSlice[booking](
+		_, format, err := ReadBytesDetectFormatToStructSlice[booking](
 			[]byte(csv), nil, bookingNaming, nil, germanCSVParser(), nil, nil, "Waehrung",
 		)
 		require.ErrorContains(t, err, `required column "Waehrung"`)
+		// The format was detected before the conversion failed and is
+		// returned anyway, so the caller can report what it parsed with.
+		require.NotNil(t, format)
+		require.Equal(t, ";", format.Separator)
 	})
 }
 
@@ -196,6 +200,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 		// which has to stay reachable for errors.Is
 		wantErr error
 		wantMsg string
+		// wantFrame is the function that panicked,
+		// which the stack trace in the message has to show
+		wantFrame string
 	}{
 		{
 			name: "ReadStringsToStructSlice with error panic",
@@ -205,8 +212,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, err = ReadStringsToStructSlice[booking](rows, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
 				return err
 			},
-			wantErr: panicErr,
-			wantMsg: "csvtable: panic: caller func is broken",
+			wantErr:   panicErr,
+			wantMsg:   "csvtable: panic: caller func is broken",
+			wantFrame: "retable.ViewToStructSlice",
 		},
 		{
 			name: "ReadStringsToStructSlice with string panic",
@@ -216,7 +224,8 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, err = ReadStringsToStructSlice[booking](rows, bookingNaming, nil, germanCSVParser(), nil, panicStringValidate)
 				return err
 			},
-			wantMsg: "csvtable: panic: validate is broken",
+			wantMsg:   "csvtable: panic: validate is broken",
+			wantFrame: "retable.ViewToStructSlice",
 		},
 		{
 			name: "ReadBytesWithFormatToStructSlice",
@@ -224,8 +233,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, err := ReadBytesWithFormatToStructSlice[booking](csvData, format, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
 				return err
 			},
-			wantErr: panicErr,
-			wantMsg: "csvtable: panic: caller func is broken",
+			wantErr:   panicErr,
+			wantMsg:   "csvtable: panic: caller func is broken",
+			wantFrame: "retable.ViewToStructSlice",
 		},
 		{
 			name: "ReadFileWithFormatToStructSlice with panicking validate",
@@ -233,8 +243,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, err := ReadFileWithFormatToStructSlice[booking](bytes.NewReader(csvData), format, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
 				return err
 			},
-			wantErr: panicErr,
-			wantMsg: "csvtable: panic: caller func is broken",
+			wantErr:   panicErr,
+			wantMsg:   "csvtable: panic: caller func is broken",
+			wantFrame: "retable.ViewToStructSlice",
 		},
 		{
 			name: "ReadFileWithFormatToStructSlice with panicking reader",
@@ -242,7 +253,8 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, err := ReadFileWithFormatToStructSlice[booking](panicReader{"reader is broken"}, format, bookingNaming, nil, nil, nil, nil)
 				return err
 			},
-			wantMsg: "csvtable: panic: reader is broken",
+			wantMsg:   "csvtable: panic: reader is broken",
+			wantFrame: "panicReader.Read",
 		},
 		{
 			name: "ReadBytesDetectFormatToStructSlice",
@@ -250,8 +262,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, _, err := ReadBytesDetectFormatToStructSlice[booking](csvData, nil, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
 				return err
 			},
-			wantErr: panicErr,
-			wantMsg: "csvtable: panic: caller func is broken",
+			wantErr:   panicErr,
+			wantMsg:   "csvtable: panic: caller func is broken",
+			wantFrame: "retable.ViewToStructSlice",
 		},
 		{
 			name: "ReadFileDetectFormatToStructSlice with panicking validate",
@@ -259,8 +272,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, _, err := ReadFileDetectFormatToStructSlice[booking](bytes.NewReader(csvData), nil, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
 				return err
 			},
-			wantErr: panicErr,
-			wantMsg: "csvtable: panic: caller func is broken",
+			wantErr:   panicErr,
+			wantMsg:   "csvtable: panic: caller func is broken",
+			wantFrame: "retable.ViewToStructSlice",
 		},
 		{
 			name: "ReadFileDetectFormatToStructSlice with panicking reader",
@@ -268,8 +282,9 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 				_, _, err := ReadFileDetectFormatToStructSlice[booking](panicReader{panicErr}, nil, bookingNaming, nil, nil, nil, nil)
 				return err
 			},
-			wantErr: panicErr,
-			wantMsg: "csvtable: panic: caller func is broken",
+			wantErr:   panicErr,
+			wantMsg:   "csvtable: panic: caller func is broken",
+			wantFrame: "panicReader.Read",
 		},
 	}
 	for _, tt := range tests {
@@ -279,7 +294,7 @@ func TestReadToStructSliceRecoversPanics(t *testing.T) {
 			require.NotPanics(t, func() { err = tt.read(t) })
 
 			// then
-			require.EqualError(t, err, tt.wantMsg)
+			requireRecoveredPanic(t, err, tt.wantMsg, tt.wantFrame)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 			}
