@@ -4,7 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-beta.3] - 2026-11-17
+
+Makes `csvtable` safe to replace `github.com/domonda/go-structtable/csv`
+with for customer uploads: its parse and read functions return panics as
+errors again, and the parser fixes `go-structtable` made after porting it are
+ported back. The root module and `exceltable` are tagged in lockstep, as
+`v1.0.0-beta.3` and `exceltable/v1.0.0-beta.3`:
+
+```sh
+go get github.com/domonda/go-retable@v1.0.0-beta.3 github.com/domonda/go-retable/exceltable@v1.0.0-beta.3
+```
 
 ### Fixed
 
@@ -24,11 +34,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `csvtable`: three parsing bugs that `go-structtable` v0.1.0 fixed after
   porting this parser, so that replacing `go-structtable/csv` with `csvtable`
   no longer reintroduces them:
-  - Separator detection ignores the single column header and trailer lines of
-    a table when it scores a candidate, unless the candidate separates no line
-    at all. A bank statement with more preamble and trailer lines than data
-    rows was detected as comma separated and split on the decimal commas of
-    its amounts instead of on its semicolons.
+  - Separator detection leaves out the records a candidate does not separate
+    when it scores that candidate, so the single column header and trailer
+    lines of a table no longer outvote it. A bank statement with more
+    preamble and trailer lines than data rows was detected as comma separated
+    and split on the decimal commas of its amounts instead of on its
+    semicolons. A candidate scored that way has to separate at least two
+    records and a fifth of all records, so a `;`, tab or `|` inside one value
+    of a single column file does not become the separator and cut that value.
+    A title line above a single separated line has the same shape and is no
+    longer split either: `Kontoauszug\nDatum;Text;Betrag\n` keeps `,`.
   - A second value with newlines in the same row no longer gains one extra
     newline per line the first value spans: `A;"x\ny";"p\nq"` parsed the
     last value as `"p\n\nq"`.
@@ -37,7 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     in one long row like a file with bare carriage return line endings.
     16,000 lines like `"x;y` took 3.7 s and now take 4 ms. The fields of a
     row are also joined forward instead of being compacted in place, which
-    was quadratic for rows whose quoted values hold the separator.
+    was quadratic for rows whose quoted values hold the separator, and a row
+    no longer keeps a slot for every separator inside its quoted values.
 
 ## [1.0.0-beta.2] - 2026-11-17
 
