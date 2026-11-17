@@ -59,6 +59,10 @@ func (b TableBounds) Rows(rows [][]string) [][]string {
 // A trailer row that has as many columns as the table, like a total, can't be
 // told apart from a data row and is therefore included. Validate the scanned
 // values to reject it.
+//
+// To require every column title of a struct instead of the best match,
+// regardless of the number of columns of the rows,
+// use retable.StructFieldNaming.FindTitleRow.
 func DetectTableBounds(rows [][]string, expectedTitles ...string) TableBounds {
 	numColumns := majorityRowColumns(rows)
 	if numColumns == 0 {

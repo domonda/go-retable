@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `StructFieldNaming.MatchTitle` matches view column titles to struct field
+  titles with a function instead of exact equality, and `TrimEqualFold` is the
+  function for titles typed by people: surrounding whitespace trimmed, case
+  ignored. `ColumnStructFieldValue`, `ViewToStructSlice` including its
+  `requiredCols`, and the `csvtable` `Read*ToStructSlice` functions use it
+  through the new `StructFieldNaming.TitlesMatch`. A nil `MatchTitle` keeps
+  the exact matching, so existing namings are unchanged. `WithMatchTitle` sets
+  it on a copy.
+- `StructFieldNaming.FindTitleRow` finds the column titles row in raw rows as
+  the first row containing every column title of a struct, in any order and
+  with any number of cells, and returns the cell index of each title.
+  `csvtable.DetectTableBounds` instead takes the best match among the rows of
+  the majority column count.
+- `StructFieldNaming.CheckUniqueColumns` reports two fields whose column titles
+  match each other with `ErrDuplicateColumnTitle`.
+
 ## [1.0.0-beta.3] - 2026-11-17
 
 Makes `csvtable` safe to replace `github.com/domonda/go-structtable/csv`

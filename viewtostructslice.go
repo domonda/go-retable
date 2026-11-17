@@ -22,13 +22,19 @@ import (
 // find a corresponding struct field and assigns the value using SmartAssign,
 // which performs intelligent type conversions.
 //
+// Column names are compared with StructFieldNaming.TitlesMatch, exactly by
+// default. Set StructFieldNaming.MatchTitle to TrimEqualFold to ignore
+// surrounding whitespace and case. If several View columns match the same
+// struct field, each of them is assigned and the last one wins; use
+// StructFieldNaming.FindTitleRow with a FilteredView to keep only the first.
+//
 // If a column has no corresponding struct field, it is silently skipped.
 // This allows Views to contain extra columns that aren't needed in the struct.
 //
 // Required Columns:
 //
 // The requiredCols parameter specifies column names that MUST exist both in
-// the View and as struct fields. If any required column is missing from either
+// the View and as struct fields, compared with StructFieldNaming.TitlesMatch. If any required column is missing from either
 // the View or the struct definition, an error is returned immediately before
 // processing any rows.
 //
@@ -134,7 +140,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			v = reflect.New(rowType).Elem()
 		}
 		for _, requiredCol := range requiredCols {
-			if !slices.Contains(viewCols, requiredCol) {
+			if !slices.ContainsFunc(viewCols, func(viewCol string) bool { return naming.TitlesMatch(viewCol, requiredCol) }) {
 				return nil, fmt.Errorf("required column %q not found in View columns", requiredCol)
 			}
 			if !naming.ColumnStructFieldValue(v, requiredCol).IsValid() {

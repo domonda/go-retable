@@ -322,6 +322,37 @@ view, err := naming.NewView("Products", products)
 // Columns: ["Product Code", "Product Name", "Unit Price"]
 ```
 
+Reading matches view column titles to struct fields exactly by default. Column
+titles typed by people come with stray spaces and any case, so set `MatchTitle`
+to `retable.TrimEqualFold` to compare them trimmed and case-insensitively.
+`ColumnStructFieldValue`, `ViewToStructSlice` (including its `requiredCols`) and
+the `csvtable` `Read*ToStructSlice` functions all use it:
+
+```go
+naming := &retable.StructFieldNaming{
+    Tag:        "col",
+    Ignore:     "-",
+    Untagged:   func(string) string { return "" }, // only tagged fields are columns
+    MatchTitle: retable.TrimEqualFold,
+}
+
+// Rejects two fields whose titles match each other, like "Name" and "name"
+err := naming.CheckUniqueColumns(Account{}) // errors.Is(err, retable.ErrDuplicateColumnTitle)
+
+// The first row containing every column title, in any order, with extra cells allowed
+titleRow, columns, err := naming.FindTitleRow(rows, Account{})
+view := &retable.FilteredView{
+    Source:        retable.NewStringsView("", rows[titleRow+1:], rows[titleRow]...),
+    ColumnMapping: columns, // columns[i] is the cell of naming.Columns(Account{})[i]
+}
+accounts, err := retable.ViewToStructSlice[Account](view, naming, nil, nil, nil, nil)
+```
+
+`FindTitleRow` returns `ErrNoColumns`, `ErrDuplicateColumnTitle` or
+`ErrTitleRowNotFound`. Unlike `csvtable.DetectTableBounds`, which takes the row
+matching the most titles among the rows of the majority column count, it requires
+every title and ignores the column count.
+
 ## Advanced Features
 
 ### Smart Type Assignment
