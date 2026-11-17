@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.0.0-beta.2] - Unreleased
+## [1.0.0-beta.2] - 2026-11-17
 
 Adds an `.xlsx` writer to `exceltable`, so that consumers can drop the
 deprecated `github.com/domonda/go-structtable` and its `excel.Renderer`.
@@ -46,9 +46,9 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
     A time is written as its wall clock in its own location; a zero time is
     an empty cell. A duration is a fraction of a day. Unlike tealeg/xlsx,
     dates before 1900-03-01 get Excel's serials (1900-01-01 is 1), and what
-    Excel cannot display is written as text that reads back: a time before
-    1900 or after 9999 as `2006-01-02T15:04:05.999999999`, a negative
-    duration as `-H:MM:SS[.fraction]`.
+    Excel cannot display is written as text that reads back. A time before
+    1900 or after 9999 becomes `2006-01-02T15:04:05.999999999`, and a
+    negative duration `-H:MM:SS[.fraction]`.
   - Number kinds come before `fmt.Stringer`, so a number type with a
     `String` method stays a number that Excel can sum. csvtable and
     htmltable write the `String` result, so an enum like `time.Month` is
@@ -57,7 +57,8 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
     formats, which Excel displays per the reader's locale.
   - After a sheet failed midway, for example by a formatter error or a
     cancelled context, the workbook returns that error from every further
-    write, so a truncated file is never produced.
+    write, so a truncated file is never produced. A closed workbook refuses
+    writes the same way.
   - `exceltable.ContentType`, the MIME type of `.xlsx` files.
 - `retable.ReflectTypeDispatcher[F]`: the type, interface and kind lookup that
   `ReflectTypeCellFormatter` and the exceltable writer share. Interfaces are
@@ -67,8 +68,8 @@ go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable
 - `StringParser.ParseDuration` also accepts the clock form
   `[-]H:MM:SS[.fraction]`, which is how spreadsheets display durations, so
   durations written by the exceltable writer read back, to the precision
-  of the duration format: the default `[h]:mm:ss` rounds to whole seconds,
-  `[h]:mm:ss.000` keeps milliseconds. `SmartAssign` parses the clock form
+  of the duration format. The default `[h]:mm:ss` rounds to whole seconds,
+  and `[h]:mm:ss.000` keeps milliseconds. `SmartAssign` parses the clock form
   only into `time.Duration` and `*time.Duration`, not into other defined
   `int64` types, so a time of day like `12:30:00` in a `type Bytes int64`
   column stays an error.

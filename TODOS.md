@@ -384,18 +384,6 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 **Priority:** P2
 **Depends on:** None
 
-### StructRowsViewer rejects arrays that its error message says it accepts
-
-**What:** `StructRowsViewer.NewView` checks `rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array`, which is true for every array, so `[2]struct{...}` is rejected with "table must be slice or array kind".
-
-**Why:** The doc comment, the error message and `NewStructRowsView`, which accepts arrays, all say arrays work. Reproduced during the API review of 2026-09-06.
-
-**Context:** One-character fix at `structrowsviewer.go:141`: `&&` instead of `||`. Add a test with an array so the message and the check agree.
-
-**Effort:** S
-**Priority:** P2
-**Depends on:** None
-
 ### Wrappers panic where View promises nil
 
 **What:** `View.Cell` documents that out-of-bounds access returns `nil`. At the time of the review, `DerefView.Cell` panicked for an out-of-bounds coordinate ("call of reflect.Value.Elem on zero Value") and for a nil pointer cell ("call of reflect.Value.Interface on zero Value"), `FilteredView.ColumnNames` and `Cell` panicked with an index out of range when `ColumnMapping` held an index the source does not have, and `StringIfTrue` and `RawStringIfTrue` panicked on any non-bool cell. All four reproduced.
@@ -471,6 +459,20 @@ A ~1 MB hostile input wedges the parser for minutes either way.
 **Depends on:** The `ReadOptions`/single-reader entry-point decision above
 
 ## Completed
+
+### StructRowsViewer rejects arrays that its error message says it accepts
+
+**What:** `StructRowsViewer.NewView` checks `rows.Kind() != reflect.Slice || rows.Kind() == reflect.Array`, which is true for every array, so `[2]struct{...}` is rejected with "table must be slice or array kind".
+
+**Why:** The doc comment, the error message and `NewStructRowsView`, which accepts arrays, all say arrays work. Reproduced during the API review of 2026-09-06.
+
+**Context:** One-character fix at `structrowsviewer.go:141`: `&&` instead of `||`. Add a test with an array so the message and the check agree.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** v1.0.0-beta.2 (2026-11-17)
 
 ### A failed string to number parse is reported as an unsupported operation
 
