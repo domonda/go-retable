@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the majority column count.
 - `StructFieldNaming.CheckUniqueColumns` reports two fields whose column titles
   match each other with `ErrDuplicateColumnTitle`.
+- `csvtable.Writer.WithUTF8BOM` starts the output of `Write`,
+  `WriteWithViewer` and `WriteView`, padded or not, with the UTF-8 byte order
+  mark `csvtable.UTF8BOM`, so that Excel opens the file as UTF-8. With an
+  encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
+  because the mark would misdeclare the encoded output.
 
 ## [1.0.0-beta.3] - 2026-11-17
 

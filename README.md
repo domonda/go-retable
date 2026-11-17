@@ -820,6 +820,7 @@ Defaults from `NewWriter`:
 | Quote all fields | off | `WithQuoteAllFields(bool)` |
 | Quote empty fields | off | `WithQuoteEmptyFields(bool)` |
 | Output encoder | none | `WithEncoder(Encoder)` |
+| UTF-8 byte order mark | off | `WithUTF8BOM(bool)` |
 
 A field is quoted when it contains the delimiter, a newline or a quote, so the
 output reads back both here and in `encoding/csv`. Formatting is controlled with
@@ -828,6 +829,11 @@ the same `retable` formatters used elsewhere: `WithTypeFormatter`,
 `…Func` variants. Column formatters apply to cell values only, never to the column
 titles of the header row. Passing `nil`, or a nil `…Func`, removes a registered
 formatter.
+
+`WithUTF8BOM(true)` starts the output with `\xEF\xBB\xBF`, once, before the header
+row, so that Excel opens the file as UTF-8. Combined with an encoder, which converts
+the output to another encoding, writing returns `ErrUTF8BOMWithEncoder`; write the
+byte order mark of that encoding to the destination yourself.
 
 `WithPadding` aligns columns for human-readable output:
 
