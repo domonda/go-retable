@@ -13,7 +13,13 @@ import (
 // titles via DetectTableBounds, so header and trailer lines around the table
 // are not mistaken for column titles or data. Without requiredCols the first
 // non-empty row is used as column titles.
-func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
+//
+// ReadStringsToStructSlice never panics: a panic while converting the rows,
+// including one from the passed dstScanner, parser, srcFormatter or validate,
+// is returned as an error with the prefix "csvtable: panic".
+func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, err error) {
+	defer recoverParsePanic(&err)
+
 	if len(requiredCols) > 0 {
 		// Only cut the table out when there are titles to find it by,
 		// guessing the column titles row without them would change
@@ -34,7 +40,16 @@ func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFiel
 	)
 }
 
-func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
+// ReadBytesWithFormatToStructSlice parses csvData with the passed format
+// using ParseWithFormat and converts the rows into a slice of structs
+// using ReadStringsToStructSlice.
+//
+// ReadBytesWithFormatToStructSlice never panics: a panic while parsing or
+// converting, including one from the passed dstScanner, parser, srcFormatter
+// or validate, is returned as an error with the prefix "csvtable: panic".
+func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, err error) {
+	defer recoverParsePanic(&err)
+
 	rows, err := ParseWithFormat(csvData, format)
 	if err != nil {
 		return nil, err
@@ -42,7 +57,16 @@ func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, nam
 	return ReadStringsToStructSlice[T](rows, naming, dstScanner, parser, srcFormatter, validate, requiredCols...)
 }
 
-func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, error) {
+// ReadFileWithFormatToStructSlice reads all data from csvReader and passes
+// it to ReadBytesWithFormatToStructSlice.
+//
+// ReadFileWithFormatToStructSlice never panics: a panic while reading,
+// parsing or converting, including one from the passed csvReader, dstScanner,
+// parser, srcFormatter or validate, is returned as an error with the prefix
+// "csvtable: panic".
+func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, err error) {
+	defer recoverParsePanic(&err)
+
 	data, err := io.ReadAll(csvReader)
 	if err != nil {
 		return nil, err
@@ -50,16 +74,34 @@ func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format,
 	return ReadBytesWithFormatToStructSlice[T](data, format, naming, dstScanner, parser, srcFormatter, validate, requiredCols...)
 }
 
-func ReadBytesDetectFormatToStructSlice[T any](csvData []byte, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, *Format, error) {
+// ReadBytesDetectFormatToStructSlice parses csvData with ParseDetectFormat
+// and converts the rows into a slice of structs using ReadStringsToStructSlice.
+// The detected format is returned even when the conversion fails.
+//
+// ReadBytesDetectFormatToStructSlice never panics: a panic while parsing or
+// converting, including one from the passed dstScanner, parser, srcFormatter
+// or validate, is returned as an error with the prefix "csvtable: panic".
+func ReadBytesDetectFormatToStructSlice[T any](csvData []byte, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, format *Format, err error) {
+	defer recoverParsePanic(&err)
+
 	rows, format, err := ParseDetectFormat(csvData, detectConfig)
 	if err != nil {
 		return nil, format, err
 	}
-	slice, err := ReadStringsToStructSlice[T](rows, naming, dstScanner, parser, srcFormatter, validate, requiredCols...)
+	slice, err = ReadStringsToStructSlice[T](rows, naming, dstScanner, parser, srcFormatter, validate, requiredCols...)
 	return slice, format, err
 }
 
-func ReadFileDetectFormatToStructSlice[T any](csvReader io.Reader, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) ([]T, *Format, error) {
+// ReadFileDetectFormatToStructSlice reads all data from csvReader and passes
+// it to ReadBytesDetectFormatToStructSlice.
+//
+// ReadFileDetectFormatToStructSlice never panics: a panic while reading,
+// parsing or converting, including one from the passed csvReader, dstScanner,
+// parser, srcFormatter or validate, is returned as an error with the prefix
+// "csvtable: panic".
+func ReadFileDetectFormatToStructSlice[T any](csvReader io.Reader, detectConfig *FormatDetectionConfig, naming *retable.StructFieldNaming, dstScanner retable.Scanner, parser retable.Parser, srcFormatter retable.Formatter, validate func(reflect.Value) error, requiredCols ...string) (slice []T, format *Format, err error) {
+	defer recoverParsePanic(&err)
+
 	data, err := io.ReadAll(csvReader)
 	if err != nil {
 		return nil, nil, err

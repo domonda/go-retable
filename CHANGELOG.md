@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `csvtable`: the parse and read entry points (`ParseDetectFormat`,
+  `ParseWithFormat`, `ReadStringsToStructSlice` and the four
+  `Read*ToStructSlice` variants) never panic, they return a panic as an error
+  with the prefix `csvtable: panic`, wrapping an error value with `%w`. This
+  restores the guard of the `go-structtable/csv` functions they replaced, so
+  callers parsing uploaded files no longer have to add their own. A panic of a
+  caller-supplied reader, `Scanner`, `Parser`, `Formatter` or validate func is
+  returned the same way.
+
 ## [1.0.0-beta.2] - 2026-11-17
 
 Adds an `.xlsx` writer to `exceltable`, so that consumers can drop the

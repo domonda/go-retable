@@ -44,7 +44,12 @@ import (
 //	// format.Encoding == "UTF-8"
 //	// format.Newline == "\r\n"
 //	// rows == [][]string{{"Name", "Age"}, {"John", "30"}, {"Jane", "25"}}
+//
+// ParseDetectFormat never panics on malformed input: a panic while parsing
+// is returned as an error with the prefix "csvtable: panic".
 func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]string, format *Format, err error) {
+	defer recoverParsePanic(&err)
+
 	if config == nil {
 		config = NewDefaultFormatDetectionConfig()
 	}
@@ -96,7 +101,12 @@ func ParseDetectFormat(csv []byte, config *FormatDetectionConfig) (rows [][]stri
 //	csvData := []byte("Name,Age\r\nJohn,30\r\nJane,25")
 //	rows, err := ParseWithFormat(csvData, format)
 //	// rows == [][]string{{"Name", "Age"}, {"John", "30"}, {"Jane", "25"}}
+//
+// ParseWithFormat never panics on malformed input: a panic while parsing
+// is returned as an error with the prefix "csvtable: panic".
 func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
+	defer recoverParsePanic(&err)
+
 	err = format.Validate()
 	if err != nil {
 		return nil, err
@@ -128,6 +138,29 @@ func ParseWithFormat(csv []byte, format *Format) (rows [][]string, err error) {
 	}
 
 	return readLines(lines, []byte(format.Separator), "\n")
+}
+
+// recoverParsePanic is the backstop that keeps the exported parse and read
+// functions from panicking on malformed input, which would take down the
+// whole process parsing an uploaded file instead of rejecting that file.
+// It has to be deferred directly by the function whose named error result
+// err points to, because recover only stops a panic there.
+//
+// A recovered panic is assigned to *err with the prefix "csvtable: panic",
+// wrapping the panic value with %w if it is an error so that errors.Is and
+// errors.As still find it, and formatting it with %v otherwise.
+// Any error already assigned to *err is replaced, the panic is the more
+// important one to report.
+func recoverParsePanic(err *error) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	if pErr, ok := p.(error); ok {
+		*err = fmt.Errorf("csvtable: panic: %w", pErr)
+	} else {
+		*err = fmt.Errorf("csvtable: panic: %v", p)
+	}
 }
 
 // detectFormatAndSplitLines implements the automatic format detection algorithm.

@@ -3,11 +3,15 @@ package csvtable
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testRows = map[string][]string{
@@ -772,4 +776,181 @@ func TestParseWithFormat_InvalidSeparator(t *testing.T) {
 			assert.NoError(t, NewFormat(sep).Validate())
 		})
 	}
+}
+
+// fuzzSeeds are the inputs every fuzz target of this package starts from:
+// the rows of the table tests plus the shapes that exercise the joining of
+// quoted fields across separators and lines.
+func fuzzSeeds() []string {
+	seeds := []string{
+		"",
+		"\n",
+		"\"",
+		"\"\"\"",
+		"sep=;\r\nA;B\r\n",
+		"\"sep=,\"\n\"A\",\"B\"",
+		"a;\"oops\nr2c1;r2c2\n\"r3c1\";r3c2\n",
+		"A;\"one;two\nthree;four\";B",
+		"Name;Amount;Paid\r\nMeier;1,50;true\r\nHuber;-2;false\r\n",
+		"\xEF\xBB\xBFName,Amount\nMeier,1\n",
+		"\xFF\xFEN\x00a\x00m\x00e\x00",
+	}
+	for csvRow := range testRows {
+		seeds = append(seeds, csvRow)
+	}
+	return seeds
+}
+
+// requireNoRecoveredPanic fails the test if err is a panic that an entry
+// point of this package recovered, so the fuzz targets keep finding the
+// inputs that panic although the entry points return them as errors.
+func requireNoRecoveredPanic(t *testing.T, err error) {
+	t.Helper()
+	if err != nil && strings.HasPrefix(err.Error(), "csvtable: panic") {
+		require.Fail(t, "recovered panic", "%+v", err)
+	}
+}
+
+// fuzzEncodings are the encodings FuzzParseWithFormat picks from,
+// covering the charmap and every Unicode decoder with and without BOM.
+var fuzzEncodings = []string{"UTF-8", "UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "ISO 8859-1", "Windows 1252", "Macintosh"}
+
+// fuzzNewlines are the newlines FuzzParseWithFormat picks from.
+var fuzzNewlines = []string{"\n", "\r\n", "\n\r"}
+
+func FuzzParseDetectFormat(f *testing.F) {
+	for _, seed := range fuzzSeeds() {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// when
+		_, format, err := ParseDetectFormat(data, nil)
+
+		// then
+		requireNoRecoveredPanic(t, err)
+		if err == nil {
+			// Callers re-use the detected format for parsing and writing
+			require.NoError(t, format.Validate(), "detected format must be valid")
+		}
+	})
+}
+
+func FuzzParseWithFormat(f *testing.F) {
+	for _, seed := range fuzzSeeds() {
+		for _, sep := range separatorCandidates {
+			f.Add([]byte(seed), sep, uint8(0), uint8(0))
+		}
+		f.Add([]byte(seed), byte(';'), uint8(1), uint8(1))
+	}
+	f.Fuzz(func(t *testing.T, data []byte, separator byte, encodingIndex, newlineIndex uint8) {
+		// given
+		format := &Format{
+			Encoding:  fuzzEncodings[int(encodingIndex)%len(fuzzEncodings)],
+			Separator: string([]byte{separator}),
+			Newline:   fuzzNewlines[int(newlineIndex)%len(fuzzNewlines)],
+		}
+
+		// when
+		rows, err := ParseWithFormat(data, format)
+
+		// then
+		requireNoRecoveredPanic(t, err)
+		// Format.Validate accepts single bytes above 0x7f as separator, which
+		// split multi-byte UTF-8 characters, so only an ASCII separator can
+		// be required to leave every field valid UTF-8.
+		if err == nil && separator < utf8.RuneSelf {
+			for _, row := range rows {
+				for _, field := range row {
+					require.True(t, utf8.ValidString(field), "field %q must be valid UTF-8", field)
+				}
+			}
+		}
+	})
+}
+
+// Test_recoverParsePanic covers the conversion of the recovered panic value,
+// which the entry points only reach on inputs that panic, so it is tested
+// directly here instead of through an input that has to stay broken.
+func Test_recoverParsePanic(t *testing.T) {
+	panicErr := errors.New("index out of range")
+	earlierErr := errors.New("earlier error")
+
+	tests := []struct {
+		name    string
+		panic   func()
+		wantMsg string
+		wantErr error
+	}{
+		{
+			name:    "error value is wrapped",
+			panic:   func() { panic(panicErr) },
+			wantMsg: "csvtable: panic: index out of range",
+			wantErr: panicErr,
+		},
+		{
+			name:    "non-error value is formatted",
+			panic:   func() { panic(42) },
+			wantMsg: "csvtable: panic: 42",
+		},
+		{
+			name: "runtime error is wrapped",
+			panic: func() {
+				var s []int
+				_ = s[len(s)] // index out of range
+			},
+			wantMsg: "csvtable: panic: runtime error: index out of range [0] with length 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// given
+			parse := func() (err error) {
+				defer recoverParsePanic(&err)
+				err = earlierErr // replaced by the panic
+				tt.panic()
+				return nil
+			}
+
+			// when
+			err := parse()
+
+			// then
+			require.EqualError(t, err, tt.wantMsg)
+			require.NotErrorIs(t, err, earlierErr)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			}
+		})
+	}
+
+	t.Run("no panic keeps the result", func(t *testing.T) {
+		// given
+		parse := func() (err error) {
+			defer recoverParsePanic(&err)
+			return earlierErr
+		}
+
+		// when
+		err := parse()
+
+		// then
+		require.Equal(t, earlierErr, err)
+	})
+
+	t.Run("runtime error stays reachable with errors.As", func(t *testing.T) {
+		// given
+		parse := func() (err error) {
+			defer recoverParsePanic(&err)
+			var m map[string]int
+			m["x"] = 1 // assignment to entry in nil map
+			return nil
+		}
+
+		// when
+		err := parse()
+
+		// then
+		var runtimeErr runtime.Error
+		require.ErrorAs(t, err, &runtimeErr)
+	})
 }

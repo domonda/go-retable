@@ -3,6 +3,7 @@ package csvtable
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"testing"
 	"testing/iotest"
 
@@ -168,5 +169,152 @@ func TestReadFileToStructSliceReadError(t *testing.T) {
 		require.ErrorIs(t, err, readErr)
 		require.Nil(t, bookings)
 		require.Nil(t, format)
+	})
+}
+
+// panicReader is an io.Reader that panics with value on the first Read,
+// standing in for a broken reader a caller passes to the Read*File functions.
+type panicReader struct{ value any }
+
+func (r panicReader) Read([]byte) (int, error) { panic(r.value) }
+
+// TestReadToStructSliceRecoversPanics covers that every exported read entry
+// point returns a panic of a caller-supplied func or reader as an error
+// instead of passing it on, because a panic while importing an uploaded file
+// takes down the whole worker process instead of rejecting that file.
+func TestReadToStructSliceRecoversPanics(t *testing.T) {
+	panicErr := errors.New("caller func is broken")
+	panicErrValidate := func(reflect.Value) error { panic(panicErr) }
+	panicStringValidate := func(reflect.Value) error { panic("validate is broken") }
+	format := &Format{Encoding: "UTF-8", Separator: ";", Newline: "\r\n"}
+	csvData := []byte(bookingsCSV)
+
+	tests := []struct {
+		name string
+		read func(t *testing.T) error
+		// wantErr is the panic value when it was an error,
+		// which has to stay reachable for errors.Is
+		wantErr error
+		wantMsg string
+	}{
+		{
+			name: "ReadStringsToStructSlice with error panic",
+			read: func(t *testing.T) error {
+				rows, err := ParseWithFormat(csvData, format)
+				require.NoError(t, err)
+				_, err = ReadStringsToStructSlice[booking](rows, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
+				return err
+			},
+			wantErr: panicErr,
+			wantMsg: "csvtable: panic: caller func is broken",
+		},
+		{
+			name: "ReadStringsToStructSlice with string panic",
+			read: func(t *testing.T) error {
+				rows, err := ParseWithFormat(csvData, format)
+				require.NoError(t, err)
+				_, err = ReadStringsToStructSlice[booking](rows, bookingNaming, nil, germanCSVParser(), nil, panicStringValidate)
+				return err
+			},
+			wantMsg: "csvtable: panic: validate is broken",
+		},
+		{
+			name: "ReadBytesWithFormatToStructSlice",
+			read: func(t *testing.T) error {
+				_, err := ReadBytesWithFormatToStructSlice[booking](csvData, format, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
+				return err
+			},
+			wantErr: panicErr,
+			wantMsg: "csvtable: panic: caller func is broken",
+		},
+		{
+			name: "ReadFileWithFormatToStructSlice with panicking validate",
+			read: func(t *testing.T) error {
+				_, err := ReadFileWithFormatToStructSlice[booking](bytes.NewReader(csvData), format, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
+				return err
+			},
+			wantErr: panicErr,
+			wantMsg: "csvtable: panic: caller func is broken",
+		},
+		{
+			name: "ReadFileWithFormatToStructSlice with panicking reader",
+			read: func(t *testing.T) error {
+				_, err := ReadFileWithFormatToStructSlice[booking](panicReader{"reader is broken"}, format, bookingNaming, nil, nil, nil, nil)
+				return err
+			},
+			wantMsg: "csvtable: panic: reader is broken",
+		},
+		{
+			name: "ReadBytesDetectFormatToStructSlice",
+			read: func(t *testing.T) error {
+				_, _, err := ReadBytesDetectFormatToStructSlice[booking](csvData, nil, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
+				return err
+			},
+			wantErr: panicErr,
+			wantMsg: "csvtable: panic: caller func is broken",
+		},
+		{
+			name: "ReadFileDetectFormatToStructSlice with panicking validate",
+			read: func(t *testing.T) error {
+				_, _, err := ReadFileDetectFormatToStructSlice[booking](bytes.NewReader(csvData), nil, bookingNaming, nil, germanCSVParser(), nil, panicErrValidate)
+				return err
+			},
+			wantErr: panicErr,
+			wantMsg: "csvtable: panic: caller func is broken",
+		},
+		{
+			name: "ReadFileDetectFormatToStructSlice with panicking reader",
+			read: func(t *testing.T) error {
+				_, _, err := ReadFileDetectFormatToStructSlice[booking](panicReader{panicErr}, nil, bookingNaming, nil, nil, nil, nil)
+				return err
+			},
+			wantErr: panicErr,
+			wantMsg: "csvtable: panic: caller func is broken",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// when
+			var err error
+			require.NotPanics(t, func() { err = tt.read(t) })
+
+			// then
+			require.EqualError(t, err, tt.wantMsg)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// fuzzRecord is a small struct with a column of every kind of cell
+// conversion that customer uploads go through.
+type fuzzRecord struct {
+	Name   string  `csv:"Name"`
+	Amount float64 `csv:"Amount"`
+	Count  int     `csv:"Count"`
+	Paid   bool    `csv:"Paid"`
+}
+
+func FuzzReadBytesDetectFormatToStructSlice(f *testing.F) {
+	for _, seed := range fuzzSeeds() {
+		f.Add([]byte(seed), false)
+		f.Add([]byte(seed), true)
+	}
+	f.Add([]byte("Report\nName;Amount;Count;Paid\nMeier;1,50;3;ja\n\nTotal;1,50\n"), true)
+	f.Fuzz(func(t *testing.T, data []byte, withRequiredCols bool) {
+		// given
+		var requiredCols []string
+		if withRequiredCols {
+			requiredCols = []string{"Name", "Amount"}
+		}
+
+		// when
+		_, _, err := ReadBytesDetectFormatToStructSlice[fuzzRecord](
+			data, nil, bookingNaming, nil, germanCSVParser(), nil, nil, requiredCols...,
+		)
+
+		// then
+		requireNoRecoveredPanic(t, err)
 	})
 }
