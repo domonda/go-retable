@@ -3,6 +3,7 @@ package retable
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -578,4 +579,67 @@ func TestViewToStructSlice_DisallowAmbiguousTitles(t *testing.T) {
 		require.ErrorContains(t, err, `column "Summe" matches both "Betrag" and "Total" of retable.amounts`)
 		require.Nil(t, pointers)
 	})
+}
+
+// TestViewToStructSlice_RequiredColumnMatchesTheField covers that a required
+// column has to match the title of a struct field itself. A TitleMatcher that
+// is no equivalence relation, here a view title containing the field title,
+// can match a view column to a field whose title the required column does
+// not match, which must not count as the required field.
+func TestViewToStructSlice_RequiredColumnMatchesTheField(t *testing.T) {
+	type amount struct {
+		Net string `col:"Net"`
+	}
+	naming := &StructFieldNaming{Tag: "col", TitleMatcher: strings.Contains}
+	view := NewStringsView("", [][]string{{"5"}}, "Net Amount")
+
+	_, err := ViewToStructSlice[amount](view, naming, nil, nil, nil, nil, "Amount")
+	require.EqualError(t, err, `required column "Amount" not found as struct field`)
+
+	rows, err := ViewToStructSlice[amount](view, naming, nil, nil, nil, nil, "Net")
+	require.NoError(t, err)
+	require.Equal(t, []amount{{Net: "5"}}, rows)
+}
+
+// panickingIsZero is a cell value whose IsZero method panics.
+type panickingIsZero struct{}
+
+func (panickingIsZero) IsZero() bool { panic("IsZero must not be called") }
+
+// TestViewToStructSlice_SingleColumnCellMethodsNotCalled covers that the cell
+// of a field with one matching column is assigned without calling methods of
+// the cell value to find out if it has content, which is only needed to
+// choose between several columns and which v1.0.0-beta.3 never did.
+func TestViewToStructSlice_SingleColumnCellMethodsNotCalled(t *testing.T) {
+	type row struct {
+		A any
+	}
+	view := &AnyValuesView{Cols: []string{"A"}, Rows: [][]any{{panickingIsZero{}}}}
+	rows, err := ViewToStructSlice[row](view, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []row{{A: panickingIsZero{}}}, rows)
+}
+
+// embeddedString is a non struct type embedded in a row struct.
+type embeddedString string
+
+// TestViewToStructSlice_EmbeddedNonStructType covers that an embedded type
+// that is no struct, which has no column title, is skipped instead of
+// panicking while the fields are searched for the columns of the view.
+func TestViewToStructSlice_EmbeddedNonStructType(t *testing.T) {
+	type row struct {
+		Name string
+		embeddedString
+	}
+	view := NewStringsView("", [][]string{{"x", "y"}}, "Name", "Other")
+	for name, naming := range map[string]*StructFieldNaming{
+		"nil naming":             nil,
+		"TrimEqualFold matching": {TitleMatcher: TrimEqualFold}, // also checks the titles with CheckUniqueColumns
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows, err := ViewToStructSlice[row](view, naming, nil, nil, nil, nil)
+			require.NoError(t, err)
+			require.Equal(t, []row{{Name: "x"}}, rows)
+		})
+	}
 }

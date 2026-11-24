@@ -58,6 +58,11 @@ func TestStructFieldNaming_DetectTableBounds(t *testing.T) {
 		})
 	}
 
+	// Without titles a header line with as many cells as the table
+	// is no title row if a cell is empty or only whitespace
+	headerWithEmptyCell := [][]string{{"Export", " ", ""}, {"Datum", "Text", "Betrag"}, {"1", "2", "3"}}
+	require.Equal(t, 1, (*StructFieldNaming)(nil).DetectTableBounds(headerWithEmptyCell).TitleRow)
+
 	require.False(t, (*StructFieldNaming)(nil).DetectTableBounds(nil).Valid(), "no rows means no table")
 	require.False(t, TableBounds{}.Valid(), "the zero value is not a table")
 	require.Nil(t, TableBounds{TitleRow: 0, EndRow: 9, NumColumns: 1}.Rows(rows), "bounds of other rows")

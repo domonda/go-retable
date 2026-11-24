@@ -652,3 +652,27 @@ func TestStructFieldNaming_FindTitleRow_FilteredView(t *testing.T) {
 		})
 	}
 }
+
+// TestStructFieldNaming_ColumnStructFieldValue_EmbeddedPointer covers that
+// the fields of an embedded pointer to a struct are found like the fields
+// of an embedded struct, with exact and with loose title matching.
+func TestStructFieldNaming_ColumnStructFieldValue_EmbeddedPointer(t *testing.T) {
+	type withPointer struct {
+		*embeddedAccountNumber
+		Name string `col:"Bezeichnung"`
+	}
+	row := withPointer{embeddedAccountNumber: &embeddedAccountNumber{Number: "120"}, Name: "Software"}
+	for name, tt := range map[string]struct {
+		naming *StructFieldNaming
+		column string
+	}{
+		"exact": {naming: &StructFieldNaming{Tag: "col"}, column: "Konto"},
+		"loose": {naming: onlyTagged, column: " KONTO "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := tt.naming.ColumnStructFieldValue(reflect.ValueOf(row), tt.column)
+			require.True(t, v.IsValid(), "field of the embedded pointer")
+			require.Equal(t, "120", v.Interface())
+		})
+	}
+}

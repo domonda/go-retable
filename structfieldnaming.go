@@ -327,8 +327,9 @@ func (n *StructFieldNaming) appendFieldTitleMatches(matches []fieldTitleMatch, t
 	for i := range t.NumField() {
 		field := t.Field(i)
 		if field.Anonymous {
-			// Recurse into anonymous embedded structs
-			matches = n.appendFieldTitleMatches(matches, field.Type, append(slices.Clip(parentIndex), i), column)
+			if isEmbeddedStruct(field) {
+				matches = n.appendFieldTitleMatches(matches, field.Type, append(slices.Clip(parentIndex), i), column)
+			}
 			continue
 		}
 		title := n.StructFieldColumn(field)
@@ -344,6 +345,17 @@ func (n *StructFieldNaming) appendFieldTitleMatches(matches []fieldTitleMatch, t
 		}
 	}
 	return matches
+}
+
+// isEmbeddedStruct reports whether field is an anonymously embedded
+// struct or pointer to struct, whose fields are inlined as columns.
+// Other embedded types, like a named string type, are no column.
+func isEmbeddedStruct(field reflect.StructField) bool {
+	t := field.Type
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return field.Anonymous && t.Kind() == reflect.Struct
 }
 
 // closestFieldTitleMatch returns the match with the lowest rank,
@@ -448,8 +460,9 @@ func (n *StructFieldNaming) columns(t reflect.Type) []string {
 	for i := range t.NumField() {
 		field := t.Field(i)
 		if field.Anonymous {
-			// Recurse into anonymous embedded structs
-			columns = append(columns, n.columns(field.Type)...)
+			if isEmbeddedStruct(field) {
+				columns = append(columns, n.columns(field.Type)...)
+			}
 			continue
 		}
 		column := n.StructFieldColumn(field)

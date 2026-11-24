@@ -167,26 +167,6 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		parser = NewStringParser()
 	}
 
-	if len(requiredCols) > 0 {
-		var v reflect.Value
-		if rowType.Kind() == reflect.Pointer {
-			v = reflect.New(rowType.Elem()).Elem()
-		} else {
-			v = reflect.New(rowType).Elem()
-		}
-		for _, requiredCol := range requiredCols {
-			viewColIndex := slices.IndexFunc(viewCols, func(viewCol string) bool { return naming.ColumnTitlesMatch(viewCol, requiredCol) })
-			if viewColIndex == -1 {
-				return nil, fmt.Errorf("required column %q not found in View columns", requiredCol)
-			}
-			// Look up the field with the view column, like the rows below,
-			// so that TitleMatcher gets the view title as its first argument
-			if !naming.ColumnStructFieldValue(v, viewCols[viewColIndex]).IsValid() {
-				return nil, fmt.Errorf("required column %q not found as struct field", requiredCol)
-			}
-		}
-	}
-
 	structType := rowType
 	if structType.Kind() == reflect.Pointer {
 		structType = structType.Elem()
@@ -195,6 +175,17 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 	fields, err := naming.fieldSourceColumns(structType, viewCols)
 	if err != nil {
 		return nil, err
+	}
+	for _, requiredCol := range requiredCols {
+		if !slices.ContainsFunc(viewCols, func(viewCol string) bool { return naming.ColumnTitlesMatch(viewCol, requiredCol) }) {
+			return nil, fmt.Errorf("required column %q not found in View columns", requiredCol)
+		}
+		// A field assigned from a view column has to match requiredCol
+		// itself, not only that view column, which a TitleMatcher that is
+		// no equivalence relation could match to a field of another title
+		if !slices.ContainsFunc(fields, func(field fieldSourceColumns) bool { return naming.ColumnTitlesMatch(requiredCol, field.title) }) {
+			return nil, fmt.Errorf("required column %q not found as struct field", requiredCol)
+		}
 	}
 
 	rows := make([]T, view.NumRows())
@@ -226,6 +217,7 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 // that a struct field is assigned from.
 type fieldSourceColumns struct {
 	fieldIndex []int          // of the field, for reflect.Value.FieldByIndex
+	title      string         // column title of the field
 	rank       titleMatchRank // how closely the names of all columns match the field title
 	columns    []int          // indices of the view columns, the preferred one first
 }
@@ -244,7 +236,6 @@ type fieldSourceColumns struct {
 func (n *StructFieldNaming) fieldSourceColumns(structType reflect.Type, viewCols []string) ([]fieldSourceColumns, error) {
 	var (
 		fields  []fieldSourceColumns
-		titles  []string // titles[i] is the title of fields[i]
 		matches []fieldTitleMatch
 	)
 	for colIndex, viewCol := range viewCols {
@@ -264,10 +255,9 @@ func (n *StructFieldNaming) fieldSourceColumns(structType reflect.Type, viewCols
 		})
 		switch {
 		case i == -1:
-			fields = append(fields, fieldSourceColumns{fieldIndex: match.index, rank: match.rank, columns: []int{colIndex}})
-			titles = append(titles, match.title)
+			fields = append(fields, fieldSourceColumns{fieldIndex: match.index, title: match.title, rank: match.rank, columns: []int{colIndex}})
 		case n.disallowAmbiguousTitles():
-			return nil, fmt.Errorf("%w: columns %q and %q both match %q of %s", ErrAmbiguousColumnTitle, viewCols[fields[i].columns[0]], viewCol, titles[i], structType)
+			return nil, fmt.Errorf("%w: columns %q and %q both match %q of %s", ErrAmbiguousColumnTitle, viewCols[fields[i].columns[0]], viewCol, fields[i].title, structType)
 		case match.rank < fields[i].rank:
 			// A closer match replaces all looser ones
 			fields[i].rank = match.rank
@@ -284,7 +274,12 @@ func (n *StructFieldNaming) fieldSourceColumns(structType reflect.Type, viewCols
 // firstCellWithContent returns the cell of the first of columns in the row
 // of view that has content, see cellHasContent. Without such a cell it
 // returns the first valid one, or an invalid value if there is none.
+// The cell of a single column is returned without looking at its content,
+// which calls methods of the cell value, see IsNullLike.
 func firstCellWithContent(view ReflectCellView, row int, columns []int) reflect.Value {
+	if len(columns) == 1 {
+		return view.ReflectCell(row, columns[0])
+	}
 	var firstValid reflect.Value
 	for _, col := range columns {
 		cell := view.ReflectCell(row, col)
