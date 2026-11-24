@@ -347,17 +347,6 @@ func (n *StructFieldNaming) appendFieldTitleMatches(matches []fieldTitleMatch, t
 	return matches
 }
 
-// isEmbeddedStruct reports whether field is an anonymously embedded
-// struct or pointer to struct, whose fields are inlined as columns.
-// Other embedded types, like a named string type, are no column.
-func isEmbeddedStruct(field reflect.StructField) bool {
-	t := field.Type
-	if t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	return field.Anonymous && t.Kind() == reflect.Struct
-}
-
 // closestFieldTitleMatch returns the match with the lowest rank,
 // the first one of several with that rank, or false without matches.
 func closestFieldTitleMatch(matches []fieldTitleMatch) (closest fieldTitleMatch, ok bool) {
@@ -385,6 +374,7 @@ func closestFieldTitleMatch(matches []fieldTitleMatch) (closest fieldTitleMatch,
 // Returns an invalid reflect.Value if:
 //   - The column is ignored (empty or matches Ignore)
 //   - No struct field maps to the given column title
+//   - The field belongs to an embedded struct pointer that is nil
 //   - structVal is not a struct or pointer to struct
 //
 // Panics if structVal is not a struct or pointer to struct type.
@@ -416,7 +406,12 @@ func (n *StructFieldNaming) ColumnStructFieldValue(structVal reflect.Value, colu
 	if !ok {
 		return reflect.Value{}
 	}
-	return structVal.FieldByIndex(match.index)
+	field, err := structVal.FieldByIndexErr(match.index)
+	if err != nil {
+		// A nil pointer to an embedded struct has no field values
+		return reflect.Value{}
+	}
+	return field
 }
 
 // Columns returns the column titles for all non-ignored exported fields

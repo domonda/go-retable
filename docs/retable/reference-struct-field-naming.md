@@ -62,11 +62,11 @@ columns to field names, without the `col` tag.
 
 | Method | Nil receiver | Returns |
 | --- | --- | --- |
-| `Columns(strct any) []string` | yes | The titles of all columns of `strct`, a struct or pointer to struct, in field order. Fields of anonymously embedded structs are inlined at their position. Other embedded types, like a named string type, are no column. Panics for any other type. |
+| `Columns(strct any) []string` | yes | The titles of all columns of `strct`, a struct or pointer to struct, in field order. Fields of anonymously embedded structs are inlined at their position. Other embedded types, like a named string type, are no column, see [Embedded types](#embedded-types). Panics for any other type. |
 | `StructFieldColumn(field reflect.StructField) string` | yes | The title of one field, before `Ignore` is applied. `""` for unexported and anonymous fields. |
 | `IsIgnored(column string) bool` | yes | Whether `column` is `""` or equals `Ignore`. |
 | `ColumnTitlesMatch(viewTitle, fieldTitle string) bool` | yes | `TitleMatcher(viewTitle, fieldTitle)`, or `viewTitle == fieldTitle` when `TitleMatcher` is nil. |
-| `ColumnStructFieldValue(structVal reflect.Value, column string) reflect.Value` | yes | The field of `structVal`, a struct or pointer to struct, whose title matches `column` according to `ColumnTitlesMatch`. If several fields match, the [closest match](#more-than-one-column-matches-a-field) wins, and the first field of equally close ones, searching embedded structs at their position. Returns an invalid `reflect.Value` when `column` is ignored or no field matches. Panics if `structVal` is not a struct or pointer to struct. |
+| `ColumnStructFieldValue(structVal reflect.Value, column string) reflect.Value` | yes | The field of `structVal`, a struct or pointer to struct, whose title matches `column` according to `ColumnTitlesMatch`. If several fields match, the [closest match](#more-than-one-column-matches-a-field) wins, and the first field of equally close ones, searching embedded structs at their position. Returns an invalid `reflect.Value` when `column` is ignored, no field matches, or the field belongs to an embedded struct pointer that is nil. Panics if `structVal` is not a struct or pointer to struct. |
 | `CheckUniqueColumns(strct any) error` | yes | An error wrapping `ErrDuplicateColumnTitle` if two columns of `strct` match each other, nil otherwise. See [Duplicate titles](#duplicate-titles). Panics if `strct` is not a struct or pointer to struct. |
 | `DetectTableBounds(rows [][]string, expectedTitles ...string) TableBounds` | yes | The table within rows that also hold header and trailer lines: the row matching the most `expectedTitles` among the rows of the majority column count, and the end of the table. See [FindTitleRow compared with DetectTableBounds](#findtitlerow-compared-with-detecttablebounds). |
 | `FindTitleRow(rows [][]string, strct any) (titleRow int, columns []int, err error)` | yes | The index of the first row containing every column title of `strct`, and the cell index of each title in it. See [FindTitleRow](#findtitlerow). Panics if `strct` is not a struct or pointer to struct. |
@@ -102,6 +102,35 @@ columns to field names, without the `col` tag.
 | `ErrAmbiguousColumnTitle` | `ViewToStructSlice`, `FindTitleRow` with `DisallowAmbiguousTitles` | `ambiguous column title: columns "Konto" and "KONTO" both match "Konto" of main.Account`, or `ambiguous column title: column "Summe" matches both "Betrag" and "Total" of main.Booking` |
 
 The returned errors wrap these variables, so test them with `errors.Is`.
+
+## Embedded types
+
+Writers and readers treat the fields of an anonymously embedded struct, or
+pointer to struct, as columns of the embedding struct, at the position of the
+embedded field:
+
+```go
+type Address struct {
+    City string
+}
+
+type Customer struct {
+    Name string
+    *Address
+    Count int
+}
+// Columns: Name, City, Count
+```
+
+| Case | Writing (`StructRowsViewer`, `csvtable`, `exceltable`) | Reading (`ViewToStructSlice`, `Read*ToStructSlice`) |
+| --- | --- | --- |
+| Embedded struct, like `Address` | Its fields are columns. | Its fields are assigned. |
+| Nil embedded struct pointer, like `*Address` | Its columns are empty cells. | The pointer is allocated when one of its fields is assigned, and stays nil when the table has none of its columns. |
+| Nil pointer to an unexported embedded struct type, like `*address` | Its columns are empty cells. | An error, because package `reflect` can't set an unexported field. |
+| Embedded type that is not a struct, like `type Code string` or an interface | No column. | No column. |
+
+`ColumnStructFieldValue` returns an invalid `reflect.Value` for a field of a
+nil embedded struct pointer.
 
 ## Title matching
 

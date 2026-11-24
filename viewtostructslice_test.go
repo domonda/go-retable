@@ -663,3 +663,44 @@ func TestViewToStructSlice_SeveralColumnsCellMethodPanics(t *testing.T) {
 	require.ErrorAs(t, err, &panicErr)
 	require.Equal(t, "retable: panic: IsNull panicked", err.Error())
 }
+
+// EmbeddedAccount is an exported struct embedded as nil pointer.
+type EmbeddedAccount struct {
+	Konto string
+}
+
+// embeddedHidden is an unexported struct embedded as nil pointer.
+type embeddedHidden struct {
+	Konto string
+}
+
+// TestViewToStructSlice_NilEmbeddedStructPointer covers that the nil pointer
+// of an embedded struct in a new row is allocated when one of its fields is
+// assigned, instead of panicking, and that an unexported embedded struct
+// pointer, which package reflect can't set, is an error.
+func TestViewToStructSlice_NilEmbeddedStructPointer(t *testing.T) {
+	type row struct {
+		*EmbeddedAccount
+		Name string
+	}
+	view := NewStringsView("", [][]string{{"120", "Software"}}, "Konto", "Name")
+	rows, err := ViewToStructSlice[row](view, nil, nil, nil, nil, nil, "Konto")
+	require.NoError(t, err)
+	require.Equal(t, []row{{EmbeddedAccount: &EmbeddedAccount{Konto: "120"}, Name: "Software"}}, rows)
+
+	pointerRows, err := ViewToStructSlice[*row](view, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []*row{{EmbeddedAccount: &EmbeddedAccount{Konto: "120"}, Name: "Software"}}, pointerRows)
+
+	// Without a column of the embedded struct its pointer stays nil
+	rows, err = ViewToStructSlice[row](NewStringsView("", [][]string{{"Software"}}, "Name"), nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []row{{Name: "Software"}}, rows)
+
+	type hiddenRow struct {
+		*embeddedHidden
+		Name string
+	}
+	_, err = ViewToStructSlice[hiddenRow](view, nil, nil, nil, nil, nil)
+	require.EqualError(t, err, "can't allocate nil pointer to unexported embedded struct retable.embeddedHidden")
+}

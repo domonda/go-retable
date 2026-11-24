@@ -676,3 +676,17 @@ func TestStructFieldNaming_ColumnStructFieldValue_EmbeddedPointer(t *testing.T) 
 		})
 	}
 }
+
+// TestStructFieldNaming_ColumnStructFieldValue_NilEmbeddedPointer covers that
+// a field of a nil embedded struct pointer has no value, like in
+// StructFieldReflectValues, instead of panicking.
+func TestStructFieldNaming_ColumnStructFieldValue_NilEmbeddedPointer(t *testing.T) {
+	type withPointer struct {
+		*embeddedAccountNumber
+		Name string `col:"Bezeichnung"`
+	}
+	naming := &StructFieldNaming{Tag: "col"}
+	v := naming.ColumnStructFieldValue(reflect.ValueOf(withPointer{Name: "Software"}), "Konto")
+	require.False(t, v.IsValid(), "field of a nil embedded pointer")
+	require.Equal(t, "Software", naming.ColumnStructFieldValue(reflect.ValueOf(withPointer{Name: "Software"}), "Bezeichnung").Interface())
+}

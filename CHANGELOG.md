@@ -103,10 +103,19 @@ behaviours of 1.0.0-beta.3 change, see Changed. The root module and
 
 ### Fixed
 
-- `StructFieldNaming.Columns`, `ColumnStructFieldValue` and
-  `ViewToStructSlice` skip an embedded type that is not a struct, like a named
-  string type, instead of panicking with "expected struct or pointer to
-  struct".
+- An embedded type that is not a struct, like a named string type or an
+  interface, is no column. Reading with `StructFieldNaming.Columns`,
+  `ColumnStructFieldValue` and `ViewToStructSlice` skips it instead of
+  panicking with "expected struct or pointer to struct", and writing with
+  `StructRowsViewer` and the `StructFieldTypes`, `StructFieldReflectValues`
+  and `StructFieldAnyValues` functions it uses skips it instead of panicking
+  with "Fields of non-struct type".
+- `ViewToStructSlice` allocates the nil pointer of an embedded struct, like
+  `*Address`, when it assigns one of its fields, instead of panicking with
+  "indirection through nil pointer to embedded struct". The pointer of an
+  unexported embedded struct type can't be set and is an error.
+  `ColumnStructFieldValue` returns an invalid `reflect.Value` for a field of a
+  nil embedded struct pointer instead of panicking.
 - `exceltable`: a panic while writing a sheet, for example of a
   `CellFormatter` or the `Viewer`, is returned as error by `Write`,
   `WriteView`, `WriteSheet` and `WriteViewSheet` as a `retable.PanicError`

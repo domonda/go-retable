@@ -203,7 +203,10 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			if !src.IsValid() {
 				continue
 			}
-			dst := rowStruct.FieldByIndex(field.fieldIndex)
+			dst, err := fieldByIndexAlloc(rowStruct, field.fieldIndex)
+			if err != nil {
+				return nil, err
+			}
 			err = SmartAssign(dst, src, dstScanner, parser, srcFormatter)
 			if err == nil && validate != nil {
 				err = validate(dst)
@@ -214,6 +217,27 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		}
 	}
 	return rows, nil
+}
+
+// fieldByIndexAlloc returns the nested field of the struct v at index
+// like reflect.Value.FieldByIndex, but allocates the nil pointers to
+// embedded structs on the way instead of panicking.
+// A nil pointer to an unexported embedded struct type can't be set
+// with package reflect and is returned as error.
+func fieldByIndexAlloc(v reflect.Value, index []int) (reflect.Value, error) {
+	for i, x := range index {
+		if i > 0 && v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				if !v.CanSet() {
+					return reflect.Value{}, fmt.Errorf("can't allocate nil pointer to unexported embedded struct %s", v.Type().Elem())
+				}
+				v.Set(reflect.New(v.Type().Elem()))
+			}
+			v = v.Elem()
+		}
+		v = v.Field(x)
+	}
+	return v, nil
 }
 
 // fieldSourceColumns are the columns of a view
