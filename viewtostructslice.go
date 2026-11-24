@@ -196,12 +196,15 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			rowStruct = rowStruct.Elem()               // Continue with struct value instead of pointer
 		}
 		for _, field := range fields {
-			src := firstCellWithContent(reflectView, rowIndex, field.columns)
+			src, err := firstCellWithContent(reflectView, rowIndex, field.columns)
+			if err != nil {
+				return nil, err
+			}
 			if !src.IsValid() {
 				continue
 			}
 			dst := rowStruct.FieldByIndex(field.fieldIndex)
-			err := SmartAssign(dst, src, dstScanner, parser, srcFormatter)
+			err = SmartAssign(dst, src, dstScanner, parser, srcFormatter)
 			if err == nil && validate != nil {
 				err = validate(dst)
 			}
@@ -276,21 +279,27 @@ func (n *StructFieldNaming) fieldSourceColumns(structType reflect.Type, viewCols
 // returns the first valid one, or an invalid value if there is none.
 // The cell of a single column is returned without looking at its content,
 // which calls methods of the cell value, see IsNullLike.
-func firstCellWithContent(view ReflectCellView, row int, columns []int) reflect.Value {
+// A panic of such a method is returned as *PanicError like one of SmartAssign.
+func firstCellWithContent(view ReflectCellView, row int, columns []int) (cell reflect.Value, err error) {
 	if len(columns) == 1 {
-		return view.ReflectCell(row, columns[0])
+		return view.ReflectCell(row, columns[0]), nil
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			cell, err = reflect.Value{}, NewPanicError("retable", r)
+		}
+	}()
 	var firstValid reflect.Value
 	for _, col := range columns {
 		cell := view.ReflectCell(row, col)
 		if cellHasContent(cell) {
-			return cell
+			return cell, nil
 		}
 		if cell.IsValid() && !firstValid.IsValid() {
 			firstValid = cell
 		}
 	}
-	return firstValid
+	return firstValid, nil
 }
 
 // cellHasContent reports whether the cell of a view holds a value:

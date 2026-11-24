@@ -7,11 +7,13 @@ import (
 
 // PanicError is a recovered panic returned as an error.
 //
-// SmartAssign, and with it ViewToStructSlice, the parse and read functions
-// of csvtable and the write functions of exceltable recover panics, of
-// package reflect and of the functions passed to them like a Scanner,
-// a validate function or a CellFormatter, and return a PanicError instead,
-// so that one broken cell can't take the whole program down.
+// SmartAssign, and with it ViewToStructSlice, recovers panics of package
+// reflect and of the Scanner, Parser and Formatter passed to it, but not
+// of the validate function of ViewToStructSlice. The parse and read
+// functions of csvtable and the write functions of exceltable recover
+// any panic inside them, also of a validate function or a CellFormatter.
+// They return a PanicError instead, so that one broken cell can't take
+// the whole program down.
 //
 // The message is short and has no stack trace, so it can be shown to
 // a user. The stack trace that locates the bug is in Stack. Get it with

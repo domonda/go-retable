@@ -52,7 +52,7 @@ anywhere else, `Stack` shows where `NewPanicError` was called instead.
 | Function | Recovers a panic of | `Package` | Error returned |
 | --- | --- | --- | --- |
 | `retable.SmartAssign` | package `reflect`, the `dstScanner`, the `parser` and the `srcFormatter` | `retable` | `errors.Join` of any error so far and the `*PanicError` |
-| `retable.ViewToStructSlice` | the same, because it assigns every cell with `SmartAssign` | `retable` | the error of `SmartAssign` |
+| `retable.ViewToStructSlice` | the same, because it assigns every cell with `SmartAssign`, and the `IsNull`, `IsZero` and `Value` methods of the cells when several columns match one field and it looks for the cell with content | `retable` | the error of `SmartAssign`, or the `*PanicError` |
 | `csvtable` `ParseDetectFormat`, `ParseWithFormat`, `ReadStringsToStructSlice` and the four `Read*ToStructSlice` variants | anything inside them, also the `validate` function you pass | `csvtable` | the `*PanicError`, replacing any other error |
 | `exceltable` `Writer` methods `Write`, `WriteView`, `WriteSheet` and `WriteViewSheet` | anything while writing, like a `CellFormatter` or the `Viewer` | `exceltable` | the `*PanicError`, or an error wrapping it when the panic happened after the sheet was added |
 

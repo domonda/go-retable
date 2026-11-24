@@ -643,3 +643,23 @@ func TestViewToStructSlice_EmbeddedNonStructType(t *testing.T) {
 		})
 	}
 }
+
+// panickingIsNull is a cell value whose IsNull method panics.
+type panickingIsNull struct{}
+
+func (panickingIsNull) IsNull() bool { panic("IsNull panicked") }
+
+// TestViewToStructSlice_SeveralColumnsCellMethodPanics covers that a panic
+// of a cell method called to find the cell with content among several
+// columns matching one field is returned as *PanicError, like a panic
+// while assigning the cell, instead of reaching the caller.
+func TestViewToStructSlice_SeveralColumnsCellMethodPanics(t *testing.T) {
+	type row struct {
+		A any
+	}
+	view := &AnyValuesView{Cols: []string{"A", "A"}, Rows: [][]any{{panickingIsNull{}, panickingIsNull{}}}}
+	_, err := ViewToStructSlice[row](view, nil, nil, nil, nil, nil)
+	var panicErr *PanicError
+	require.ErrorAs(t, err, &panicErr)
+	require.Equal(t, "retable: panic: IsNull panicked", err.Error())
+}
