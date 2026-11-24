@@ -115,41 +115,42 @@ func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer 
 //
 // With WithUTF8BOM(true) the output starts with the UTF-8 byte order mark,
 // see WithUTF8BOM for the combination with an encoder.
-func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
-	if w.utf8BOM {
-		if w.encoder != nil {
-			return ErrUTF8BOMWithEncoder
+func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) error {
+	write := func(dest io.Writer) error {
+		if w.padding != NoPadding {
+			return w.writeViewPadded(ctx, dest, view)
 		}
-		// A table without rows and without header row writes nothing
-		// that checks ctx before the deferred function writes the mark,
-		// and a done context must not leave a file of only the mark
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		// The mark goes out with the first row, so that an error before
-		// it, like of a formatter, leaves dest untouched as without the mark,
-		// for example an http.ResponseWriter that can still send an error
-		bom := &utf8BOMWriter{dest: dest}
-		dest = bom
-		defer func() {
-			if err == nil {
-				// A table without rows still starts with the mark
-				err = bom.writeBOM()
+		if w.headerRow {
+			err := w.headerWriter().writeView(ctx, dest, retable.NewHeaderViewFrom(view))
+			if err != nil {
+				return err
 			}
-		}()
-	}
-
-	if w.padding != NoPadding {
-		return w.writeViewPadded(ctx, dest, view)
-	}
-
-	if w.headerRow {
-		err := w.headerWriter().writeView(ctx, dest, retable.NewHeaderViewFrom(view))
-		if err != nil {
-			return err
 		}
+		return w.writeView(ctx, dest, view)
 	}
-	return w.writeView(ctx, dest, view)
+	if !w.utf8BOM {
+		return write(dest)
+	}
+
+	if w.encoder != nil {
+		return ErrUTF8BOMWithEncoder
+	}
+	// A table without rows and without header row writes nothing
+	// that checks ctx before the mark is written at the end,
+	// and a done context must not leave a file of only the mark
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The mark goes out with the first row, so that an error or a panic
+	// before it, like of a formatter, leaves dest untouched as without
+	// the mark, for example an http.ResponseWriter that can still send an error
+	bom := &utf8BOMWriter{dest: dest}
+	err := write(bom)
+	if err != nil {
+		return err
+	}
+	// A table without rows still starts with the mark
+	return bom.writeBOM()
 }
 
 // utf8BOMWriter writes the UTF-8 byte order mark

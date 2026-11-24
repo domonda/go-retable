@@ -375,14 +375,15 @@ func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetNam
 // named after the view's title.
 // A panic is returned as error, see WriteViewSheet.
 func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
-	// WriteViewSheet recovers its own panics,
-	// this one is for writing the workbook to dest
-	defer recoverPanic(&err)
-
 	wb := NewWorkbook()
 	defer func() {
 		err = errors.Join(err, wb.Close())
 	}()
+	// WriteViewSheet recovers its own panics, this one is for writing
+	// the workbook to dest. Deferred after the Close above, so that it
+	// runs before it and the error of Close is joined to the panic.
+	defer recoverPanic(&err)
+
 	err = w.WriteViewSheet(ctx, wb, view)
 	if err != nil {
 		return err

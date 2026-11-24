@@ -761,3 +761,60 @@ func TestWriter_WithUTF8BOMCancelledContext(t *testing.T) {
 		})
 	}
 }
+
+// TestWriter_WithUTF8BOMPanic covers that a panic before the first row,
+// here of a column formatter, leaves dest untouched like an error does,
+// so that for example an http.ResponseWriter can still send an error.
+func TestWriter_WithUTF8BOMPanic(t *testing.T) {
+	view := retable.NewStringsView("", [][]string{{"x"}}, "a")
+	w := NewWriter[[][]string]().
+		WithUTF8BOM(true).
+		WithColumnFormatterFunc(0, func(context.Context, retable.View, int, int) (string, bool, error) {
+			panic("formatter panicked")
+		})
+	for name, w := range map[string]*Writer[[][]string]{
+		"unpadded": w,
+		"padded":   w.WithPadding(AlignLeft),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.PanicsWithValue(t, "formatter panicked", func() {
+				_ = w.WriteView(t.Context(), &buf, view)
+			})
+			require.Empty(t, buf.String(), "nothing must be written")
+		})
+	}
+}
+
+// failFirstWrite is an io.Writer whose first Write fails.
+type failFirstWrite struct {
+	err    error
+	writes int
+	buf    bytes.Buffer
+}
+
+func (f *failFirstWrite) Write(p []byte) (int, error) {
+	f.writes++
+	if f.writes == 1 {
+		return 0, f.err
+	}
+	return f.buf.Write(p)
+}
+
+// TestWriter_WithUTF8BOMDestError covers that an error of dest
+// writing the mark is returned instead of the table going out
+// without the mark, with and without rows.
+func TestWriter_WithUTF8BOMDestError(t *testing.T) {
+	errDest := errors.New("dest failed")
+	for name, view := range map[string]retable.View{
+		"with rows":    retable.NewStringsView("", [][]string{{"x"}}, "a"),
+		"without rows": retable.NewStringsView("", nil, "a"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dest := &failFirstWrite{err: errDest}
+			err := NewWriter[[][]string]().WithUTF8BOM(true).WriteView(t.Context(), dest, view)
+			require.ErrorIs(t, err, errDest)
+			require.Empty(t, dest.buf.String(), "nothing must be written after the failed mark")
+		})
+	}
+}
