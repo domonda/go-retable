@@ -59,6 +59,11 @@ type Workbook struct {
 	styles map[styleKey]int
 	err    error
 	closed bool
+
+	// sheetNumbers maps a name passed to UniqueSheetName, without
+	// surrounding whitespace, to the lowest number of numberedSheetName
+	// that can still be free: all lower numbered names are sheets of wb.
+	sheetNumbers map[string]int
 }
 
 // styleKey identifies a cell style of a workbook.
@@ -125,6 +130,12 @@ func (wb *Workbook) poisonedError() error {
 // that must not fail with ErrDuplicateSheetName.
 // The sheet then has exactly the returned name.
 //
+// The returned name is not reserved: it is only unique among the sheets
+// that wb has at the time of the call, so write the sheet before asking
+// for the next name. Two calls with the same name without a sheet written
+// in between return the same name, and the second WriteSheet with it
+// fails with ErrDuplicateSheetName.
+//
 // Example:
 //
 //	name := wb.UniqueSheetName(center.Number) // "4711", then "4711 (2)", ...
@@ -134,11 +145,26 @@ func (wb *Workbook) poisonedError() error {
 //	err = writer.WriteViewSheet(ctx, wb, view)
 func (wb *Workbook) UniqueSheetName(name string) string {
 	unique := sanitizeSheetName(name)
-	for n := 2; wb.existingSheet(unique) != ""; n++ {
+	if wb.existingSheet(unique) == "" {
+		return unique
+	}
+	// Sheets are never removed, so the numbers found taken by an earlier
+	// call for the same name are still taken. Continuing after them
+	// instead of counting from 2 again keeps many sheets of one name,
+	// like an empty one, from costing a scan of all sheets per number.
+	name = strings.TrimSpace(name)
+	n := max(wb.sheetNumbers[name], 2)
+	unique = sanitizeSheetName(numberedSheetName(name, n))
+	for wb.existingSheet(unique) != "" {
 		// Every number is another name, so the loop ends
 		// after at most one iteration per sheet of wb
+		n++
 		unique = sanitizeSheetName(numberedSheetName(name, n))
 	}
+	if wb.sheetNumbers == nil {
+		wb.sheetNumbers = make(map[string]int)
+	}
+	wb.sheetNumbers[name] = n
 	return unique
 }
 
@@ -395,12 +421,16 @@ func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheet
 // See WriteSheet for how the name is sanitized.
 //
 // A panic while writing, for example of a CellFormatter or of the view,
-// is returned as error starting with "exceltable: panic", wrapping the
-// panic value with %w if it is an error, followed by the stack trace
-// of the panic. If the panic happened after the sheet was added to wb,
+// is returned as error with the message "exceltable: panic: " and the
+// panic value, wrapping the value with %w if it is an error, followed
+// by the stack trace of the panic. If the panic happened after the sheet
+// was added to wb, the message has the sheet in front, see the example,
 // the sheet is incomplete and wb fails with that error like after a
 // returned error: every later WriteSheet, WriteViewSheet and WriteTo
 // returns it. A panic before, such as of view.Title, leaves wb usable.
+//
+// The stack trace is part of the error message, so log such an error
+// instead of showing it to a user, like in the response of an HTTP handler.
 //
 // Example:
 //
@@ -477,8 +507,8 @@ func recoverPanic(err *error) {
 	}
 }
 
-// panicError returns the recovered panic value p as error with the prefix
-// "exceltable: panic", wrapping p with %w if it is an error so that
+// panicError returns the recovered panic value p as error with the message
+// "exceltable: panic: " and p, wrapping p with %w if it is an error so that
 // errors.Is and errors.As still find it, followed by the stack trace,
 // like csvtable does for parse panics. It has to be called by the
 // deferred function that recovered p, while the stack of the panicking

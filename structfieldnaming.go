@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -83,18 +84,52 @@ type StructFieldNaming struct {
 	// of raw cells, matches the column title of a struct field.
 	// It is used by every method that looks up a column by its title:
 	// ColumnStructFieldValue, TitlesMatch, CheckUniqueColumns and
-	// FindTitleRow, and therefore by ViewToStructSlice and the
+	// FindTitleRow, and by ViewToStructSlice and the
 	// csvtable Read*ToStructSlice functions.
 	//
-	// If MatchTitle is nil, titles must be equal.
-	// Use TrimEqualFold to ignore surrounding whitespace and case,
-	// which is what column titles typed by people usually need.
+	// MatchTitle sets how loose the matching is:
+	//   - nil: titles must be equal
+	//   - TrimEqual: equal without surrounding whitespace
+	//   - TrimEqualFold: equal without surrounding whitespace, ignoring
+	//     case, which is what column titles typed by people usually need
+	//   - a custom function, for example to accept alternative titles
+	//
+	// If several columns match the title of one field, the closest match
+	// wins, whatever their order: an equal title before one that is equal
+	// without surrounding whitespace, before one that also differs in case,
+	// before one that only MatchTitle accepts. A field title that fits a
+	// column exactly is therefore never taken over by a looser match.
+	// PreferFirstColumn decides between equally close columns,
+	// and DisallowAmbiguousTitles makes all of these cases an error.
 	//
 	// Example:
 	//
 	//	naming := &StructFieldNaming{Tag: "col", Ignore: "-", MatchTitle: TrimEqualFold}
 	//	naming.TitlesMatch(" first name ", "First Name") // true
 	MatchTitle func(viewTitle, fieldTitle string) bool
+
+	// DisallowAmbiguousTitles makes it an error wrapping
+	// ErrAmbiguousColumnTitle if the columns of a view, or the cells of a
+	// title row, can't be assigned to the struct fields in only one way:
+	// more than one column matches the title of the same field,
+	// or one column matches the titles of more than one field.
+	// ViewToStructSlice, the csvtable Read*ToStructSlice functions and
+	// FindTitleRow return that error instead of choosing a column
+	// by the rules described for MatchTitle.
+	//
+	// The default false resolves these cases by the rules.
+	DisallowAmbiguousTitles bool
+
+	// PreferFirstColumn decides which of several columns wins that match
+	// the title of the same struct field equally closely, see MatchTitle,
+	// like two columns of the same name: the first one if true,
+	// the last one with the default false.
+	//
+	// ViewToStructSlice and the csvtable Read*ToStructSlice functions
+	// decide that for every row among the cells that have content,
+	// see ViewToStructSlice, FindTitleRow decides it for the cells
+	// of the title row.
+	PreferFirstColumn bool
 }
 
 var (
@@ -103,7 +138,8 @@ var (
 	ErrNoColumns = errors.New("struct has no columns")
 
 	// ErrDuplicateColumnTitle is returned by StructFieldNaming.CheckUniqueColumns
-	// and StructFieldNaming.FindTitleRow when two struct fields have column titles
+	// and StructFieldNaming.FindTitleRow, and by ViewToStructSlice for a naming
+	// with a MatchTitle, when two struct fields have column titles
 	// that StructFieldNaming.TitlesMatch reports as matching,
 	// so that a column of a view could not be assigned to one field.
 	ErrDuplicateColumnTitle = errors.New("duplicate column title")
@@ -111,7 +147,30 @@ var (
 	// ErrTitleRowNotFound is returned by StructFieldNaming.FindTitleRow
 	// when no row contains the titles of all columns.
 	ErrTitleRowNotFound = errors.New("no row contains all column titles")
+
+	// ErrAmbiguousColumnTitle is returned by ViewToStructSlice and
+	// StructFieldNaming.FindTitleRow for a naming with
+	// DisallowAmbiguousTitles, when more than one column matches the title
+	// of the same struct field or one column matches the titles of more
+	// than one field. In contrast to ErrDuplicateColumnTitle,
+	// which is a mistake in the struct, it depends on the table that is read.
+	ErrAmbiguousColumnTitle = errors.New("ambiguous column title")
 )
+
+// TrimEqual reports whether a and b are equal after removing their
+// leading and trailing white space, as defined by Unicode.
+// In contrast to TrimEqualFold it is case sensitive.
+//
+// Use it as StructFieldNaming.MatchTitle to only ignore
+// the whitespace around column titles.
+//
+// Example:
+//
+//	TrimEqual(" Name\t", "Name") // true
+//	TrimEqual("Name", "NAME")    // false
+func TrimEqual(a, b string) bool {
+	return strings.TrimSpace(a) == strings.TrimSpace(b)
+}
 
 // TrimEqualFold reports whether a and b are equal after removing their
 // leading and trailing white space, as defined by Unicode,
@@ -204,12 +263,109 @@ func (n *StructFieldNaming) TitlesMatch(viewTitle, fieldTitle string) bool {
 	return n.MatchTitle(viewTitle, fieldTitle)
 }
 
+// titleMatchRank says how closely a view title matches a field title.
+// A lower rank is a closer match.
+type titleMatchRank int
+
+const (
+	titleMatchEqual     titleMatchRank = iota // the titles are equal
+	titleMatchTrimEqual                       // equal without surrounding whitespace
+	titleMatchTrimFold                        // equal without surrounding whitespace and case
+	titleMatchCustom                          // only MatchTitle says that they match
+	titleMatchNone                            // TitlesMatch returns false
+)
+
+// titleMatchRank returns how closely viewTitle matches fieldTitle,
+// or titleMatchNone if TitlesMatch returns false for them.
+// MatchTitle decides if titles match, the rank only orders
+// the titles it accepts.
+func (n *StructFieldNaming) titleMatchRank(viewTitle, fieldTitle string) titleMatchRank {
+	switch {
+	case !n.TitlesMatch(viewTitle, fieldTitle):
+		return titleMatchNone
+	case viewTitle == fieldTitle:
+		return titleMatchEqual
+	case TrimEqual(viewTitle, fieldTitle):
+		return titleMatchTrimEqual
+	case TrimEqualFold(viewTitle, fieldTitle):
+		return titleMatchTrimFold
+	default:
+		return titleMatchCustom
+	}
+}
+
+// disallowAmbiguousTitles returns DisallowAmbiguousTitles, false for nil.
+func (n *StructFieldNaming) disallowAmbiguousTitles() bool {
+	return n != nil && n.DisallowAmbiguousTitles
+}
+
+// preferFirstColumn returns PreferFirstColumn, false for nil.
+func (n *StructFieldNaming) preferFirstColumn() bool {
+	return n != nil && n.PreferFirstColumn
+}
+
+// fieldTitleMatch is a struct field whose column title matches a view title.
+type fieldTitleMatch struct {
+	index []int          // of the field, for reflect.Value.FieldByIndex
+	title string         // column title of the field
+	rank  titleMatchRank // how closely the view title matches title
+}
+
+// appendFieldTitleMatches appends the fields of the struct type t whose
+// column titles match column, in the order of the fields, with the fields
+// of anonymously embedded structs at their position. parentIndex is the
+// index of the embedded struct t within the outermost struct.
+//
+// Panics if t is not a struct or pointer to struct type.
+func (n *StructFieldNaming) appendFieldTitleMatches(matches []fieldTitleMatch, t reflect.Type, parentIndex []int, column string) []fieldTitleMatch {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		panic("expected struct or pointer to struct instead of " + t.String())
+	}
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if field.Anonymous {
+			// Recurse into anonymous embedded structs
+			matches = n.appendFieldTitleMatches(matches, field.Type, append(slices.Clip(parentIndex), i), column)
+			continue
+		}
+		title := n.StructFieldColumn(field)
+		if n.IsIgnored(title) {
+			continue
+		}
+		if rank := n.titleMatchRank(column, title); rank != titleMatchNone {
+			matches = append(matches, fieldTitleMatch{
+				index: append(slices.Clip(parentIndex), i),
+				title: title,
+				rank:  rank,
+			})
+		}
+	}
+	return matches
+}
+
+// closestFieldTitleMatch returns the match with the lowest rank,
+// the first one of several with that rank, or false without matches.
+func closestFieldTitleMatch(matches []fieldTitleMatch) (closest fieldTitleMatch, ok bool) {
+	for i, match := range matches {
+		if i == 0 || match.rank < closest.rank {
+			closest = match
+		}
+	}
+	return closest, len(matches) > 0
+}
+
 // ColumnStructFieldValue returns the reflect.Value of the struct field
 // that is mapped to the given column title.
 //
 // The function searches through all exported struct fields (including
-// those from anonymously embedded structs) to find the first field whose
+// those from anonymously embedded structs) to find the field whose
 // column title matches the given column parameter, see TitlesMatch.
+// If the titles of several fields match, which only a MatchTitle or
+// equal field titles make possible, the closest match wins as described
+// for MatchTitle, and the first field of several equally close ones.
 //
 // Anonymous embedded structs are recursively searched, allowing fields
 // from nested structs to be accessed by their column title.
@@ -244,21 +400,11 @@ func (n *StructFieldNaming) ColumnStructFieldValue(structVal reflect.Value, colu
 	if structType.Kind() != reflect.Struct {
 		panic("expected struct or pointer to struct instead of " + structVal.Type().String())
 	}
-	for i := 0; i < structType.NumField(); i++ {
-		field := structType.Field(i)
-		if field.Anonymous {
-			// Recurse into anonymous embedded structs
-			if v := n.ColumnStructFieldValue(structVal.Field(i), column); v.IsValid() {
-				return v
-			}
-			continue
-		}
-		fieldColumn := n.StructFieldColumn(field)
-		if !n.IsIgnored(fieldColumn) && n.TitlesMatch(column, fieldColumn) {
-			return structVal.Field(i)
-		}
+	match, ok := closestFieldTitleMatch(n.appendFieldTitleMatches(nil, structType, nil, column))
+	if !ok {
+		return reflect.Value{}
 	}
-	return reflect.Value{}
+	return structVal.FieldByIndex(match.index)
 }
 
 // Columns returns the column titles for all non-ignored exported fields
@@ -322,6 +468,9 @@ func (n *StructFieldNaming) columns(t reflect.Type) []string {
 // With the default exact matching that means two equal titles, with
 // TrimEqualFold as MatchTitle also titles like "Name" and " name".
 //
+// FindTitleRow runs this check, and ViewToStructSlice does
+// for a naming with a MatchTitle.
+//
 // Panics if strct is not a struct or pointer to struct type.
 //
 // This method is safe to call with a nil receiver.
@@ -365,7 +514,12 @@ func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error 
 //
 // It returns the index of that row and the index of the cell of each
 // column title within the row: columns[i] is the cell index of the
-// title Columns(strct)[i], the first matching cell of the row.
+// title Columns(strct)[i]. If several cells of the row match a title,
+// it is the closest match as described for MatchTitle, an equal cell
+// before a looser match, and of several equally close cells the last one,
+// or the first one with PreferFirstColumn.
+// With DisallowAmbiguousTitles a title row with several cells matching
+// one title, or one cell matching several titles, is an error instead.
 // A FilteredView with columns as ColumnMapping turns the rows after
 // titleRow into a view with exactly the columns of strct,
 // see the example below.
@@ -383,6 +537,8 @@ func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error 
 //   - ErrNoColumns if strct has no columns
 //   - ErrDuplicateColumnTitle if two columns match, see CheckUniqueColumns
 //   - ErrTitleRowNotFound if no row contains all titles
+//   - ErrAmbiguousColumnTitle if DisallowAmbiguousTitles is set
+//     and the title row has more than one candidate cell for a title
 //
 // Panics if strct is not a struct or pointer to struct type.
 //
@@ -424,23 +580,37 @@ func (n *StructFieldNaming) FindTitleRow(rows [][]string, strct any) (titleRow i
 		return -1, nil, err
 	}
 	for rowIndex, row := range rows {
-		if columns, ok := n.titleCellIndices(row, titles); ok {
-			return rowIndex, columns, nil
+		columns, ok := n.titleCellIndices(row, titles)
+		if !ok {
+			continue
 		}
+		if n.disallowAmbiguousTitles() {
+			err = n.checkUnambiguousTitleCells(row, titles, strct)
+			if err != nil {
+				return -1, nil, err
+			}
+		}
+		return rowIndex, columns, nil
 	}
 	return -1, nil, fmt.Errorf("%w %q of %T", ErrTitleRowNotFound, titles, strct)
 }
 
-// titleCellIndices returns the index of the first cell of row matching
-// each of titles, or false if a title has no matching cell.
+// titleCellIndices returns the index of the cell of row that matches
+// each of titles the closest, of several equally close cells the last
+// one, or the first one with PreferFirstColumn, or false if a title
+// has no matching cell.
 func (n *StructFieldNaming) titleCellIndices(row, titles []string) (indices []int, ok bool) {
 	indices = make([]int, len(titles))
 	for i, title := range titles {
 		indices[i] = -1
+		closest := titleMatchNone
 		for cellIndex, cell := range row {
-			if n.TitlesMatch(cell, title) {
-				indices[i] = cellIndex
-				break
+			rank := n.titleMatchRank(cell, title)
+			if rank == titleMatchNone {
+				continue
+			}
+			if rank < closest || (rank == closest && !n.preferFirstColumn()) {
+				indices[i], closest = cellIndex, rank
 			}
 		}
 		if indices[i] == -1 {
@@ -448,6 +618,38 @@ func (n *StructFieldNaming) titleCellIndices(row, titles []string) (indices []in
 		}
 	}
 	return indices, true
+}
+
+// checkUnambiguousTitleCells returns an error wrapping
+// ErrAmbiguousColumnTitle if more than one cell of row matches one
+// of titles, or if one cell matches more than one of titles.
+// strct is only used in the error.
+func (n *StructFieldNaming) checkUnambiguousTitleCells(row, titles []string, strct any) error {
+	for _, title := range titles {
+		first := -1
+		for cellIndex, cell := range row {
+			if !n.TitlesMatch(cell, title) {
+				continue
+			}
+			if first != -1 {
+				return fmt.Errorf("%w: columns %q and %q both match %q of %T", ErrAmbiguousColumnTitle, row[first], cell, title, strct)
+			}
+			first = cellIndex
+		}
+	}
+	for _, cell := range row {
+		first := ""
+		for _, title := range titles {
+			if !n.TitlesMatch(cell, title) {
+				continue
+			}
+			if first != "" {
+				return fmt.Errorf("%w: column %q matches both %q and %q of %T", ErrAmbiguousColumnTitle, cell, first, title, strct)
+			}
+			first = title
+		}
+	}
+	return nil
 }
 
 // NewView returns a View for a table made up of a slice or array of structs.
@@ -500,6 +702,34 @@ func (n *StructFieldNaming) WithTag(tag string) *StructFieldNaming {
 func (n *StructFieldNaming) WithMatchTitle(match func(viewTitle, fieldTitle string) bool) *StructFieldNaming {
 	mod := *n
 	mod.MatchTitle = match
+	return &mod
+}
+
+// WithDisallowAmbiguousTitles returns a copy of the StructFieldNaming
+// with the DisallowAmbiguousTitles field set to the specified value.
+//
+// Example:
+//
+//	naming := DefaultStructFieldNaming.
+//	    WithMatchTitle(TrimEqualFold).
+//	    WithDisallowAmbiguousTitles(true)
+func (n *StructFieldNaming) WithDisallowAmbiguousTitles(disallow bool) *StructFieldNaming {
+	mod := *n
+	mod.DisallowAmbiguousTitles = disallow
+	return &mod
+}
+
+// WithPreferFirstColumn returns a copy of the StructFieldNaming
+// with the PreferFirstColumn field set to the specified value.
+//
+// Example:
+//
+//	naming := DefaultStructFieldNaming.
+//	    WithMatchTitle(TrimEqualFold).
+//	    WithPreferFirstColumn(true)
+func (n *StructFieldNaming) WithPreferFirstColumn(preferFirst bool) *StructFieldNaming {
+	mod := *n
+	mod.PreferFirstColumn = preferFirst
 	return &mod
 }
 

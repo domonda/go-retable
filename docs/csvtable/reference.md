@@ -3,7 +3,9 @@
 `github.com/domonda/go-retable/csvtable` parses CSV files as real systems
 export them, with the encoding, separator and line ending detected, and
 converts the rows into struct slices. Its `Writer[T]` writes struct slices
-and views as CSV that reads back both here and in `encoding/csv`. Use it for
+and views as CSV that reads back both here and in `encoding/csv`, as long as
+the [UTF-8 byte order mark](#options) is off, which `encoding/csv` does not
+remove. Use it for
 bank statements, accounting exports and spreadsheet downloads, where the input
 does not follow RFC 4180 (the CSV specification) and the output has to open
 in Excel.
@@ -166,7 +168,10 @@ variants read the whole reader into memory first.
 3. It calls `retable.ViewToStructSlice` with a `retable.StringsView` whose
    first row holds the column titles. That function matches each column title
    to a struct field with `naming.TitlesMatch`, so `naming.MatchTitle` decides
-   whether `DATUM` matches `Datum`. It returns an error when a required title
+   whether `DATUM` matches `Datum`. When several columns match one field, the
+   closest title wins, or `naming.DisallowAmbiguousTitles` makes it an error,
+   see the
+   [StructFieldNaming reference](../retable/reference-struct-field-naming.md#more-than-one-column-matches-a-field). It returns an error when a required title
    is not a column or not a field:
    `required column "Datum" not found in View columns`,
    `required column "Datum" not found as struct field`.
@@ -305,7 +310,16 @@ padding. A table without rows and without header row is written as the mark
 alone. When writing fails before the first row, `dest` stays empty, as it
 would without the mark. Combined with an encoder, the write methods return
 `ErrUTF8BOMWithEncoder` and write nothing, because the encoded output is not
-UTF-8.
+UTF-8. That includes `PassthroughEncoder()`: any non-nil encoder is rejected.
+A cancelled `ctx` returns its error before the mark is written, also for a
+table without rows.
+
+The parse and read functions of this package remove the mark. Other readers
+may not: `encoding/csv` returns it as part of the first field,
+`"\ufeffNumber"`, and fails with `bare " in non-quoted-field` when the first
+field is quoted, as with `WithQuoteAllFields(true)`. Strip `UTF8BOM` from the
+data before passing it to such a reader. The mark is written by every
+`WriteView` call, so write a file with one call.
 
 ### Formatters
 

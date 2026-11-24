@@ -740,3 +740,24 @@ func TestWriter_WithUTF8BOMOptions(t *testing.T) {
 	require.Equal(t, []string{"a"}, parsed[0])
 	require.Equal(t, []string{"x"}, parsed[1])
 }
+
+// TestWriter_WithUTF8BOMCancelledContext covers that a cancelled context
+// never produces a file holding only the byte order mark. A table without
+// rows and without header row writes nothing else that could notice the
+// cancelled context before the mark goes out.
+func TestWriter_WithUTF8BOMCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	empty := retable.NewStringsView("", nil, "a")
+	for name, w := range map[string]*Writer[[][]string]{
+		"unpadded": NewWriter[[][]string]().WithUTF8BOM(true),
+		"padded":   NewWriter[[][]string]().WithUTF8BOM(true).WithPadding(AlignLeft),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := w.WriteView(ctx, &buf, empty)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Empty(t, buf.String(), "nothing must be written")
+		})
+	}
+}

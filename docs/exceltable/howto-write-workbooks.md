@@ -172,7 +172,9 @@ err = summaryWriter.WriteViewSheet(ctx, wb, view)
 ```
 
 `UniqueSheetName` cuts a long name before the number, so the number is never
-lost at the 31 character limit.
+lost at the 31 character limit. It does not reserve the name: write the sheet
+before you ask for the next name, as above. Names collected up front for
+several sheets can be equal.
 
 ## Serve a workbook as an HTTP download
 
@@ -191,7 +193,10 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
     defer wb.Close()
     err = invoiceWriter.WriteSheet(r.Context(), wb, invoices, "Invoices")
     if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        // The error of a recovered panic includes its stack trace:
+        // log it, don't send it to the client
+        log.Printf("writing sheet Invoices: %v", err)
+        http.Error(w, "export failed", http.StatusInternalServerError)
         return
     }
 

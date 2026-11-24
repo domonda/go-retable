@@ -1285,3 +1285,45 @@ func TestWorkbook_UniqueSheetNameWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, names, openWritten(t, buf.Bytes()).GetSheetList())
 }
+
+// TestWorkbook_UniqueSheetNameManyEqualNames covers the numbering of many
+// sheets with the same name from data, like an empty cost center number.
+// UniqueSheetName remembers how far it has counted for a name, which must
+// neither skip a number nor return one twice, also when names that share
+// sheet names after sanitizing are mixed.
+func TestWorkbook_UniqueSheetNameManyEqualNames(t *testing.T) {
+	wb := NewWorkbook()
+	defer wb.Close()
+	add := func(name string) string {
+		t.Helper()
+		unique := wb.UniqueSheetName(name)
+		_, err := wb.addSheet(unique)
+		require.NoError(t, err)
+		return unique
+	}
+
+	require.Equal(t, "4711", add("4711"))
+	for n := 2; n <= 150; n++ {
+		require.Equal(t, fmt.Sprintf("4711 (%d)", n), add(" 4711 "))
+	}
+
+	// Asking again without writing the sheet returns the same name
+	require.Equal(t, "4711 (151)", wb.UniqueSheetName("4711"))
+	require.Equal(t, "4711 (151)", wb.UniqueSheetName("4711"))
+
+	// "abc'" and "abc_" are the same sheet name after sanitizing,
+	// but their numbered names differ, so each counts on its own
+	require.Equal(t, "abc_", add("abc'"))
+	require.Equal(t, "abc' (2)", add("abc'"))
+	require.Equal(t, "abc' (3)", add("abc'"))
+	require.Equal(t, "abc_ (2)", add("abc_"))
+	require.Equal(t, "ABC_ (3)", add("ABC_"))
+
+	// A sheet written under a numbered name without UniqueSheetName
+	_, err := wb.addSheet("X")
+	require.NoError(t, err)
+	_, err = wb.addSheet("x (3)")
+	require.NoError(t, err)
+	require.Equal(t, "X (2)", add("X"))
+	require.Equal(t, "X (4)", add("X"))
+}

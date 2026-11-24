@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 )
 
 // ViewToStructSlice converts a View into a strongly-typed slice of structs.
@@ -23,10 +24,34 @@ import (
 // which performs intelligent type conversions.
 //
 // Column names are compared with StructFieldNaming.TitlesMatch, exactly by
-// default. Set StructFieldNaming.MatchTitle to TrimEqualFold to ignore
-// surrounding whitespace and case. If several View columns match the same
-// struct field, each of them is assigned and the last one wins; use
-// StructFieldNaming.FindTitleRow with a FilteredView to keep only the first.
+// default. Set StructFieldNaming.MatchTitle to TrimEqual to ignore
+// surrounding whitespace, or to TrimEqualFold to also ignore case.
+//
+// If several View columns match the same struct field, the field is
+// assigned once per row, from one of them:
+//   - The closest match wins, whatever the order of the columns: a column
+//     name equal to the field title, before one that is equal without
+//     surrounding whitespace, before one that also differs in case,
+//     before one that only MatchTitle accepts.
+//   - Of several equally close columns, like two of the same name, the
+//     cell with content wins over an empty one: a null-like value,
+//     see IsNullLike, or a string of only whitespace. If more than one
+//     of them has content the last one wins, and if none has, the last
+//     one is assigned. With StructFieldNaming.PreferFirstColumn
+//     it is the first one in both cases.
+//
+// A column that matches several struct fields is assigned to the closest
+// match in the same order, and to the first field of equally close ones.
+// With StructFieldNaming.DisallowAmbiguousTitles both cases are an error
+// wrapping ErrAmbiguousColumnTitle instead, returned before any row
+// is processed.
+//
+// With a MatchTitle, two struct fields whose titles match each other are
+// an error wrapping ErrDuplicateColumnTitle, returned before any row is
+// processed, see StructFieldNaming.CheckUniqueColumns: every column
+// matching both titles would be assigned to the first of the fields.
+// Without a MatchTitle equal field titles are accepted as before
+// and the first field is assigned.
 //
 // If a column has no corresponding struct field, it is silently skipped.
 // This allows Views to contain extra columns that aren't needed in the struct.
@@ -34,9 +59,9 @@ import (
 // Required Columns:
 //
 // The requiredCols parameter specifies column names that MUST exist both in
-// the View and as struct fields, compared with StructFieldNaming.TitlesMatch. If any required column is missing from either
-// the View or the struct definition, an error is returned immediately before
-// processing any rows.
+// the View and as struct fields, compared with StructFieldNaming.TitlesMatch.
+// If any required column is missing from either the View or the struct
+// definition, an error is returned immediately before processing any rows.
 //
 // Type Conversion:
 //
@@ -122,6 +147,16 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		return nil, fmt.Errorf("slice element type %s is not a struct or pointer to struct", rowType)
 	}
 
+	if naming != nil && naming.MatchTitle != nil {
+		// A loose MatchTitle can make two fields match the same column,
+		// of which only the first would ever be assigned
+		var row T
+		err := naming.CheckUniqueColumns(row)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	viewCols := view.ColumnNames()
 	reflectView := AsReflectCellView(view)
 
@@ -152,6 +187,16 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		}
 	}
 
+	structType := rowType
+	if structType.Kind() == reflect.Pointer {
+		structType = structType.Elem()
+	}
+	// The columns of every field are the same for all rows
+	fields, err := naming.fieldSourceColumns(structType, viewCols)
+	if err != nil {
+		return nil, err
+	}
+
 	rows := make([]T, view.NumRows())
 	for rowIndex := range rows {
 		rowStruct := reflect.ValueOf(&rows[rowIndex]).Elem()
@@ -159,15 +204,12 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			rowStruct.Set(reflect.New(rowType.Elem())) // Set allocated struct pointer for row
 			rowStruct = rowStruct.Elem()               // Continue with struct value instead of pointer
 		}
-		for colIndex, colName := range viewCols {
-			dst := naming.ColumnStructFieldValue(rowStruct, colName)
-			if !dst.IsValid() {
-				continue
-			}
-			src := reflectView.ReflectCell(rowIndex, colIndex)
+		for _, field := range fields {
+			src := firstCellWithContent(reflectView, rowIndex, field.columns)
 			if !src.IsValid() {
 				continue
 			}
+			dst := rowStruct.FieldByIndex(field.fieldIndex)
 			err := SmartAssign(dst, src, dstScanner, parser, srcFormatter)
 			if err == nil && validate != nil {
 				err = validate(dst)
@@ -178,6 +220,96 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		}
 	}
 	return rows, nil
+}
+
+// fieldSourceColumns are the columns of a view
+// that a struct field is assigned from.
+type fieldSourceColumns struct {
+	fieldIndex []int          // of the field, for reflect.Value.FieldByIndex
+	rank       titleMatchRank // how closely the names of all columns match the field title
+	columns    []int          // indices of the view columns, the preferred one first
+}
+
+// fieldSourceColumns returns for every field of structType that a column
+// of viewCols matches, the columns to assign it from: the ones that match
+// its title the closest, see titleMatchRank, ordered by preference:
+// the last column first, or the first one with PreferFirstColumn.
+// A column matching several fields counts for the closest match,
+// the first field of equally close ones.
+// The fields are in the order of their first matching column.
+//
+// With DisallowAmbiguousTitles it returns an error wrapping
+// ErrAmbiguousColumnTitle if a column matches more than one field
+// or more than one column matches a field.
+func (n *StructFieldNaming) fieldSourceColumns(structType reflect.Type, viewCols []string) ([]fieldSourceColumns, error) {
+	var (
+		fields  []fieldSourceColumns
+		titles  []string // titles[i] is the title of fields[i]
+		matches []fieldTitleMatch
+	)
+	for colIndex, viewCol := range viewCols {
+		if n.IsIgnored(viewCol) {
+			continue
+		}
+		matches = n.appendFieldTitleMatches(matches[:0], structType, nil, viewCol)
+		match, ok := closestFieldTitleMatch(matches)
+		if !ok {
+			continue
+		}
+		if len(matches) > 1 && n.disallowAmbiguousTitles() {
+			return nil, fmt.Errorf("%w: column %q matches both %q and %q of %s", ErrAmbiguousColumnTitle, viewCol, matches[0].title, matches[1].title, structType)
+		}
+		i := slices.IndexFunc(fields, func(field fieldSourceColumns) bool {
+			return slices.Equal(field.fieldIndex, match.index)
+		})
+		switch {
+		case i == -1:
+			fields = append(fields, fieldSourceColumns{fieldIndex: match.index, rank: match.rank, columns: []int{colIndex}})
+			titles = append(titles, match.title)
+		case n.disallowAmbiguousTitles():
+			return nil, fmt.Errorf("%w: columns %q and %q both match %q of %s", ErrAmbiguousColumnTitle, viewCols[fields[i].columns[0]], viewCol, titles[i], structType)
+		case match.rank < fields[i].rank:
+			// A closer match replaces all looser ones
+			fields[i].rank = match.rank
+			fields[i].columns = []int{colIndex}
+		case match.rank == fields[i].rank && n.preferFirstColumn():
+			fields[i].columns = append(fields[i].columns, colIndex)
+		case match.rank == fields[i].rank:
+			fields[i].columns = slices.Insert(fields[i].columns, 0, colIndex)
+		}
+	}
+	return fields, nil
+}
+
+// firstCellWithContent returns the cell of the first of columns in the row
+// of view that has content, see cellHasContent. Without such a cell it
+// returns the first valid one, or an invalid value if there is none.
+func firstCellWithContent(view ReflectCellView, row int, columns []int) reflect.Value {
+	var firstValid reflect.Value
+	for _, col := range columns {
+		cell := view.ReflectCell(row, col)
+		if cellHasContent(cell) {
+			return cell
+		}
+		if cell.IsValid() && !firstValid.IsValid() {
+			firstValid = cell
+		}
+	}
+	return firstValid
+}
+
+// cellHasContent reports whether the cell of a view holds a value:
+// it is valid, not null-like, see IsNullLike, and not a string,
+// or pointer to one, that is empty or only whitespace.
+func cellHasContent(cell reflect.Value) bool {
+	if !cell.IsValid() || IsNullLike(cell) {
+		return false
+	}
+	// IsNullLike has ruled out nil pointers up to maxPointerDepth
+	for depth := 0; depth <= maxPointerDepth && (cell.Kind() == reflect.Pointer || cell.Kind() == reflect.Interface); depth++ {
+		cell = cell.Elem()
+	}
+	return cell.Kind() != reflect.String || strings.TrimSpace(cell.String()) != ""
 }
 
 // CallValidateMethod is a validation function that can be passed to ViewToStructSlice.

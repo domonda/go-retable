@@ -338,7 +338,8 @@ view, err := naming.NewView("Products", products)
 
 Reading matches view column titles to struct fields exactly by default. Column
 titles typed by people come with stray spaces and any case, so set `MatchTitle`
-to `retable.TrimEqualFold` to compare them trimmed and case-insensitively.
+to `retable.TrimEqualFold` to compare them trimmed and case-insensitively, or
+to `retable.TrimEqual` to only trim them.
 `ColumnStructFieldValue`, `ViewToStructSlice` (including its `requiredCols`) and
 the `csvtable` `Read*ToStructSlice` functions all use it:
 
@@ -352,6 +353,10 @@ naming := &retable.StructFieldNaming{
 
 // Rejects two fields whose titles match each other, like "Name" and "name"
 err := naming.CheckUniqueColumns(Account{}) // errors.Is(err, retable.ErrDuplicateColumnTitle)
+
+// When a table has several columns for one field, the closest title wins:
+// equal, then trimmed, then ignoring case. Make that an error instead:
+strict := naming.WithDisallowAmbiguousTitles(true) // retable.ErrAmbiguousColumnTitle
 
 // The first row containing every column title, in any order, with extra cells allowed
 titleRow, columns, err := naming.FindTitleRow(rows, Account{})
@@ -606,8 +611,9 @@ those files instead of failing on them.
 - Parses RFC 4180 and the doubled-quote conventions real exporters emit
 - Joins quoted fields that were split by a separator, a newline, or both
 - Finds the actual table inside header and trailer lines
-- Writes CSV that reads back, both here and in `encoding/csv`, and that Excel
-  opens as UTF-8 with `WithUTF8BOM(true)`
+- Writes CSV that reads back, both here and in `encoding/csv`. With
+  `WithUTF8BOM(true)` Excel opens it as UTF-8; `encoding/csv` does not remove
+  that mark, `csvtable` does
 
 ```go
 bookings, format, err := csvtable.ReadBytesDetectFormatToStructSlice[Booking](

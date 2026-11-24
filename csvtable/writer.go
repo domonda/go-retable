@@ -124,6 +124,9 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 		if w.encoder != nil {
 			return ErrUTF8BOMWithEncoder
 		}
+		// A table without rows and without header row writes nothing
+		// that checks ctx before the deferred function writes the mark,
+		// and a done context must not leave a file of only the mark
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -576,6 +579,16 @@ func (w *Writer[T]) WithNewLine(newLine string) *Writer[T] {
 // The byte order mark is only valid for UTF-8 output, so writing returns
 // ErrUTF8BOMWithEncoder without writing anything if an encoder is also
 // set with WithEncoder, because it converts the output to another encoding.
+// That holds for every non-nil encoder, including PassthroughEncoder.
+//
+// A context that is already done returns its error before the mark is
+// written, also for a table without rows, which without the mark
+// writes nothing and returns nil.
+//
+// The parse and read functions of this package remove the mark again.
+// encoding/csv does not: it returns the mark as part of the first field
+// and fails if that field is quoted, so strip UTF8BOM before passing
+// the output to such a reader.
 //
 // Example:
 //

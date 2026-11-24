@@ -123,6 +123,65 @@ func TestTrimEqualFold(t *testing.T) {
 	}
 }
 
+func TestTrimEqual(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{a: "Name", b: "Name", want: true},
+		{a: " Name\t", b: "\nName ", want: true},
+		{a: "Name", b: "NAME", want: false},
+		{a: "First Name", b: "FirstName", want: false},
+		{a: "", b: "  ", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"|"+tt.b, func(t *testing.T) {
+			require.Equal(t, tt.want, TrimEqual(tt.a, tt.b))
+		})
+	}
+}
+
+// TestStructFieldNaming_ColumnStructFieldValue_ClosestField covers that a
+// column goes to the field whose title it matches the closest, not to the
+// first field that MatchTitle accepts, and to the first of equally close ones.
+func TestStructFieldNaming_ColumnStructFieldValue_ClosestField(t *testing.T) {
+	type record struct {
+		Upper   string `col:"NAME"`
+		Spaced  string `col:" Name "`
+		Exact   string `col:"Name"`
+		Another string `col:"name"`
+	}
+	rec := record{Upper: "Upper", Spaced: "Spaced", Exact: "Exact", Another: "Another"}
+	loose := &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold}
+	for column, wantField := range map[string]string{
+		"Name":   "Exact",   // equal
+		"Name\t": "Spaced",  // first of two equal without whitespace, before a field differing in case
+		"nAME":   "Upper",   // first of four differing in case
+		" name":  "Another", // equal without whitespace
+	} {
+		require.Equal(t, wantField, loose.ColumnStructFieldValue(reflect.ValueOf(rec), column).String(), "column %q", column)
+	}
+	require.False(t, loose.ColumnStructFieldValue(reflect.ValueOf(rec), "Names").IsValid())
+
+	trimmed := loose.WithMatchTitle(TrimEqual)
+	require.Equal(t, "Spaced", trimmed.ColumnStructFieldValue(reflect.ValueOf(rec), "Name\t").String())
+	require.False(t, trimmed.ColumnStructFieldValue(reflect.ValueOf(rec), "nAME").IsValid(), "TrimEqual is case sensitive")
+}
+
+func TestStructFieldNaming_WithDisallowAmbiguousTitles(t *testing.T) {
+	naming := DefaultStructFieldNaming.WithDisallowAmbiguousTitles(true)
+	require.True(t, naming.DisallowAmbiguousTitles)
+	require.False(t, DefaultStructFieldNaming.DisallowAmbiguousTitles, "DefaultStructFieldNaming must not be modified")
+	require.False(t, naming.WithDisallowAmbiguousTitles(false).DisallowAmbiguousTitles)
+}
+
+func TestStructFieldNaming_WithPreferFirstColumn(t *testing.T) {
+	naming := DefaultStructFieldNaming.WithPreferFirstColumn(true)
+	require.True(t, naming.PreferFirstColumn)
+	require.False(t, DefaultStructFieldNaming.PreferFirstColumn, "DefaultStructFieldNaming must not be modified")
+	require.False(t, naming.WithPreferFirstColumn(false).PreferFirstColumn)
+}
+
 func TestStructFieldNaming_TitlesMatch(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -294,6 +353,24 @@ func TestStructFieldNaming_CheckUniqueColumns(t *testing.T) {
 	}
 }
 
+// amounts has two columns that sameAlternative lets
+// the same title of a file match.
+type amounts struct {
+	Amount string `col:"Betrag"`
+	Total  string `col:"Total"`
+}
+
+// sameAlternative accepts the title "Summe" for the fields titled
+// "Betrag" and "Total", which CheckUniqueColumns can't know,
+// because it only compares the field titles with each other.
+var sameAlternative = &StructFieldNaming{
+	Tag:    "col",
+	Ignore: "-",
+	MatchTitle: func(viewTitle, fieldTitle string) bool {
+		return TrimEqualFold(viewTitle, fieldTitle) || TrimEqualFold(viewTitle, "Summe")
+	},
+}
+
 func TestStructFieldNaming_FindTitleRow(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -303,6 +380,7 @@ func TestStructFieldNaming_FindTitleRow(t *testing.T) {
 		wantTitleRow int
 		wantColumns  []int
 		wantErr      error
+		wantErrText  string // optional
 	}{
 		{
 			name:   "first row, struct order",
@@ -330,14 +408,128 @@ func TestStructFieldNaming_FindTitleRow(t *testing.T) {
 			wantColumns:  []int{2, 0},
 		},
 		{
-			name:   "first matching cell of a title wins",
+			name:   "equal cell wins over an earlier looser match",
 			naming: onlyTagged,
 			strct:  account{},
 			rows: [][]string{
 				{"konto", "Bezeichnung", "Konto"},
 			},
 			wantTitleRow: 0,
+			wantColumns:  []int{2, 1},
+		},
+		{
+			name:   "trimmed equal cell wins over one differing in case, equal over both",
+			naming: onlyTagged,
+			strct:  account{},
+			rows: [][]string{
+				{"KONTO", " Konto ", "bezeichnung", " Bezeichnung", "Bezeichnung"},
+			},
+			wantTitleRow: 0,
+			wantColumns:  []int{1, 4},
+		},
+		{
+			name:   "last of equally close cells wins",
+			naming: onlyTagged,
+			strct:  account{},
+			rows: [][]string{
+				{"konto", "Bezeichnung", "KONTO", "Konten", "kONTO", "bezeichnung"},
+			},
+			wantTitleRow: 0,
+			wantColumns:  []int{4, 1},
+		},
+		{
+			name:   "first of equally close cells wins with PreferFirstColumn",
+			naming: onlyTagged.WithPreferFirstColumn(true),
+			strct:  account{},
+			rows: [][]string{
+				{"konto", "Bezeichnung", "KONTO", "Konten", "kONTO", "bezeichnung"},
+			},
+			wantTitleRow: 0,
 			wantColumns:  []int{0, 1},
+		},
+		{
+			name:   "PreferFirstColumn does not prefer a looser match",
+			naming: onlyTagged.WithPreferFirstColumn(true),
+			strct:  account{},
+			rows: [][]string{
+				{"konto", "bezeichnung", "Konto", "Bezeichnung", "Konto"},
+			},
+			wantTitleRow: 0,
+			wantColumns:  []int{2, 3},
+		},
+		{
+			name:   "TrimEqual does not match other case",
+			naming: onlyTagged.WithMatchTitle(TrimEqual),
+			strct:  account{},
+			rows: [][]string{
+				{"KONTO", "Bezeichnung"},
+				{" Konto ", "Bezeichnung\t"},
+			},
+			wantTitleRow: 1,
+			wantColumns:  []int{0, 1},
+		},
+		{
+			name:   "disallowed ambiguity, unambiguous title row",
+			naming: onlyTagged.WithDisallowAmbiguousTitles(true),
+			strct:  account{},
+			rows: [][]string{
+				{"Konto", "Konto"}, // not the title row, so not checked
+				{" KONTO ", "Kontoart", "Bezeichnung"},
+			},
+			wantTitleRow: 1,
+			wantColumns:  []int{0, 2},
+		},
+		{
+			name:   "disallowed ambiguity, two cells match one title",
+			naming: onlyTagged.WithDisallowAmbiguousTitles(true),
+			strct:  account{},
+			rows: [][]string{
+				{"konto", "Bezeichnung", "Konto"},
+			},
+			wantTitleRow: -1,
+			wantErr:      ErrAmbiguousColumnTitle,
+			wantErrText:  `columns "konto" and "Konto" both match "Konto" of retable.account`,
+		},
+		{
+			name:   "disallowed ambiguity, two equal cells with exact matching",
+			naming: (&StructFieldNaming{Tag: "col", Ignore: "-", Untagged: UseTitle("-")}).WithDisallowAmbiguousTitles(true),
+			strct:  account{},
+			rows: [][]string{
+				{"Konto", "Bezeichnung", "Konto"},
+			},
+			wantTitleRow: -1,
+			wantErr:      ErrAmbiguousColumnTitle,
+		},
+		{
+			name:   "one cell matching two titles is used for both",
+			naming: sameAlternative,
+			strct:  amounts{},
+			rows: [][]string{
+				{"Summe"},
+			},
+			wantTitleRow: 0,
+			wantColumns:  []int{0, 0},
+		},
+		{
+			name:   "an equal cell is not taken by the other title",
+			naming: sameAlternative,
+			strct:  amounts{},
+			rows: [][]string{
+				{"Summe", "Total"},
+			},
+			wantTitleRow: 0,
+			wantColumns:  []int{0, 1},
+		},
+		{
+			name:   "disallowed ambiguity, one cell matches two titles",
+			naming: sameAlternative.WithDisallowAmbiguousTitles(true),
+			strct:  amounts{},
+			rows: [][]string{
+				{"Summe"},
+			},
+			wantTitleRow: -1,
+			wantErr:      ErrAmbiguousColumnTitle,
+			wantErrText:  `column "Summe" matches both "Betrag" and "Total" of retable.amounts`,
 		},
 		{
 			name:   "first row with all titles wins",
@@ -415,6 +607,7 @@ func TestStructFieldNaming_FindTitleRow(t *testing.T) {
 			titleRow, columns, err := tt.naming.FindTitleRow(tt.rows, tt.strct)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
+				require.ErrorContains(t, err, tt.wantErrText)
 			} else {
 				require.NoError(t, err)
 			}
@@ -425,25 +618,37 @@ func TestStructFieldNaming_FindTitleRow(t *testing.T) {
 }
 
 // TestStructFieldNaming_FindTitleRow_FilteredView checks the documented way
-// of reading the rows after the title row: only the first cell matching a
-// title is read, also when a later column has the same title.
+// of reading the rows after the title row: only one cell per title is read,
+// also when another column matches the title equally closely, the last
+// of them by default and the first one with PreferFirstColumn.
 func TestStructFieldNaming_FindTitleRow_FilteredView(t *testing.T) {
 	rows := [][]string{
 		{"Firma: 200670"},
 		{"Bezeichnung", "Kontoart", " KONTO ", "konto"},
 		{"Software", "1", "120", "999"},
-		{"Patente", "1", "100", "999"},
+		{"Patente", "1", "100", ""},
 	}
-	titleRow, columns, err := onlyTagged.FindTitleRow(rows, account{})
-	require.NoError(t, err)
-	view := &FilteredView{
-		Source:        NewStringsView("", rows[titleRow+1:], rows[titleRow]...),
-		ColumnMapping: columns,
+	for name, tt := range map[string]struct {
+		naming      *StructFieldNaming
+		wantNumbers [2]string
+	}{
+		// The empty cell is read, the other column is not part of the view
+		"last column by default":              {naming: onlyTagged, wantNumbers: [2]string{"999", ""}},
+		"first column with PreferFirstColumn": {naming: onlyTagged.WithPreferFirstColumn(true), wantNumbers: [2]string{"120", "100"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			titleRow, columns, err := tt.naming.FindTitleRow(rows, account{})
+			require.NoError(t, err)
+			view := &FilteredView{
+				Source:        NewStringsView("", rows[titleRow+1:], rows[titleRow]...),
+				ColumnMapping: columns,
+			}
+			accounts, err := ViewToStructSlice[account](view, tt.naming, nil, nil, nil, nil, "Konto", "Bezeichnung")
+			require.NoError(t, err)
+			require.Equal(t, []account{
+				{embeddedAccountNumber: embeddedAccountNumber{Number: tt.wantNumbers[0]}, Name: "Software"},
+				{embeddedAccountNumber: embeddedAccountNumber{Number: tt.wantNumbers[1]}, Name: "Patente"},
+			}, accounts)
+		})
 	}
-	accounts, err := ViewToStructSlice[account](view, onlyTagged, nil, nil, nil, nil, "Konto", "Bezeichnung")
-	require.NoError(t, err)
-	require.Equal(t, []account{
-		{embeddedAccountNumber: embeddedAccountNumber{Number: "120"}, Name: "Software"},
-		{embeddedAccountNumber: embeddedAccountNumber{Number: "100"}, Name: "Patente"},
-	}, accounts)
 }

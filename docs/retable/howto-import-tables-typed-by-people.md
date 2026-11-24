@@ -38,6 +38,9 @@ naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithMatchTitle(retable.
 fields out, so a helper field without a tag is never mistaken for a column.
 Pass `naming` to every function below.
 
+To ignore only the whitespace around a title and keep the case, use
+`retable.TrimEqual` instead. Without a `MatchTitle` the titles must be equal.
+
 ## Import a CSV export with lines around the table
 
 1. Pass the titles of the columns you need as `requiredCols`. `csvtable` uses
@@ -190,10 +193,47 @@ naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithMatchTitle(
 The first argument is the title from the file, the second the title of the
 field. Keep `requiredCols` as the field titles, `"Betrag"`, not `"Umsatz"`.
 
+A file that has both `Betrag` and `Umsatz` fills the field from `Betrag`: the
+field's own title wins over an alternative, see
+[Decide what happens when two columns match a field](#decide-what-happens-when-two-columns-match-a-field).
+Don't accept the same alternative for two fields. The column would fill only
+the first of them.
+
 `csvtable` looks for the title row with `TrimEqualFold`, not with your
 `MatchTitle`, so an alternative title does not count there. The row is still
 found when it has more of the other required titles than any other row. With
 `FindTitleRow` every alternative counts.
+
+## Decide what happens when two columns match a field
+
+A file can have a `Betrag` and a `BETRAG` column, or two columns named
+`Betrag`. By default the import still works, by fixed rules:
+
+- The closest title wins: equal to the field title, then equal without
+  surrounding whitespace, then equal without case, then a title only your
+  `MatchTitle` accepts. The order of the columns does not matter.
+- Of two equally close columns, like two named `Betrag`, each row takes the
+  cell that has content. If both have content, the last column wins. Add
+  `WithPreferFirstColumn(true)` to the naming to let the first one win.
+
+To refuse such a file instead, because nobody should guess which column holds
+the amounts, add `WithDisallowAmbiguousTitles(true)`:
+
+```go
+naming := retable.DefaultStructFieldNamingIgnoreUntagged.
+    WithMatchTitle(retable.TrimEqualFold).
+    WithDisallowAmbiguousTitles(true)
+
+bookings, _, err := csvtable.ReadBytesDetectFormatToStructSlice[Booking](
+    export, nil, naming, nil, nil, nil, nil, "Datum", "Buchungstext", "Betrag")
+if errors.Is(err, retable.ErrAmbiguousColumnTitle) {
+    // ambiguous column title: columns "Betrag" and "BETRAG" both match "Betrag" of main.Booking
+    return fmt.Errorf("the file has two columns for the same value: %w", err)
+}
+```
+
+The error names both columns, so it can be shown to the person who made the
+file. `FindTitleRow` returns the same error for the title row.
 
 ## Make sure no two fields match the same column
 
@@ -212,7 +252,10 @@ func TestImportStructs(t *testing.T) {
 ```
 
 `FindTitleRow` runs the same check and returns `ErrDuplicateColumnTitle`
-before it looks at the rows.
+before it looks at the rows. So do `ViewToStructSlice` and the `csvtable`
+`Read*ToStructSlice` functions for a naming with a `MatchTitle`, so an import
+with such a struct fails instead of leaving the second field empty. The test
+finds it before a file does.
 
 ## Verification
 
@@ -270,9 +313,18 @@ or move a column the file may lack to a struct used only for reading.
 `col` tag. `DefaultStructFieldNamingIgnoreUntagged` ignores untagged fields.
 
 **A field is filled from the wrong column.** Two columns of the file match its
-title, like `Konto` and `konto`, and `ViewToStructSlice` assigns every
-matching column, so the last one wins. Use `FindTitleRow` with a
-`FilteredView`, which maps the first matching cell only.
+title, like `KONTO` and `konto`. Neither equals the field title `Konto`, so
+they are equally close and each row takes the cell with content, the last one
+if both have it, or the first one with `WithPreferFirstColumn(true)`. Rename
+the tag to the title the file uses, so that this column wins as the equal
+one, or refuse such files with
+[`WithDisallowAmbiguousTitles(true)`](#decide-what-happens-when-two-columns-match-a-field).
+
+**`ambiguous column title: columns "Betrag" and "BETRAG" both match "Betrag"
+of main.Booking` (`ErrAmbiguousColumnTitle`).** The naming has
+`DisallowAmbiguousTitles` set and the file has two columns for one field.
+Remove one of the columns from the file, or drop the option to let the closest
+title win.
 
 **The total line is imported as a row.** `FindTitleRow` finds the start of the
 table, not its end. Cut the data as in step 3 of the Excel recipe. `csvtable`

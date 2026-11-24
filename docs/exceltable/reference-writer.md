@@ -296,6 +296,11 @@ number to whole characters so that the number always fits into the 31 units and
 is never replaced by `…`. A sheet written with the returned name gets exactly
 that name.
 
+The returned name is not reserved. It is unique among the sheets the workbook
+has at the time of the call, so write each sheet before asking for the next
+name. Asking twice for `4711` without writing a sheet in between returns the
+same name twice, and the second `WriteSheet` returns `ErrDuplicateSheetName`.
+
 | Existing sheets | Input | `UniqueSheetName` |
 | --- | --- | --- |
 | none | `" a/b "` | `a_b` |
@@ -322,7 +327,10 @@ that name.
 
 Every error wraps its cause, so `errors.Is(err, context.Canceled)` and
 `errors.Is(err, yourFormatterErr)` work, also on the errors of an unusable
-workbook. A panic value that is an error is wrapped too. A workbook becomes unusable because the failed sheet holds only part
+workbook. A panic value that is an error is wrapped too. The stack trace of a
+panic is part of the error message, and an unusable workbook returns it again
+from every later call, so log these errors instead of showing them to a user.
+A workbook becomes unusable because the failed sheet holds only part
 of its rows and cannot be removed again; refusing every further write makes it
 impossible to deliver that truncated file. See
 [Why exceltable writes typed cells](explanation-typed-cells.md#a-failed-sheet-makes-the-workbook-unusable).
