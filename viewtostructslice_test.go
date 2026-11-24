@@ -255,7 +255,7 @@ func TestViewToStructSlice_RaggedRows(t *testing.T) {
 	}, rows)
 }
 
-func TestViewToStructSlice_MatchTitle(t *testing.T) {
+func TestViewToStructSlice_TitleMatcher(t *testing.T) {
 	type person struct {
 		Name string `col:"Name"`
 		Age  int    `col:"Age"`
@@ -281,18 +281,18 @@ func TestViewToStructSlice_MatchTitle(t *testing.T) {
 		},
 		{
 			name:   "TrimEqualFold assigns all columns",
-			naming: &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold},
+			naming: &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold},
 			want:   []person{{Name: "Alice", Age: 30}},
 		},
 		{
 			name:         "TrimEqualFold finds required columns in view and struct",
-			naming:       &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold},
+			naming:       &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold},
 			requiredCols: []string{"NAME", "age"},
 			want:         []person{{Name: "Alice", Age: 30}},
 		},
 		{
 			name:         "TrimEqualFold missing required column",
-			naming:       &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold},
+			naming:       &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold},
 			requiredCols: []string{"City"},
 			wantErr:      `required column "City" not found in View columns`,
 		},
@@ -310,11 +310,11 @@ func TestViewToStructSlice_MatchTitle(t *testing.T) {
 	}
 }
 
-// TestViewToStructSlice_MatchTitleDuplicateFieldTitles covers that two fields
-// whose titles match each other under MatchTitle are an error and not a
+// TestViewToStructSlice_TitleMatcherDuplicateFieldTitles covers that two fields
+// whose titles match each other under TitleMatcher are an error and not a
 // silently wrong struct: every column matching both titles would be assigned
 // to the first field and the second one would never be filled.
-func TestViewToStructSlice_MatchTitleDuplicateFieldTitles(t *testing.T) {
+func TestViewToStructSlice_TitleMatcherDuplicateFieldTitles(t *testing.T) {
 	type record struct {
 		ID string `col:"ID"`
 		Id string `col:"Id"`
@@ -327,7 +327,7 @@ func TestViewToStructSlice_MatchTitleDuplicateFieldTitles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []record{{ID: "first", Id: "second"}}, records)
 
-	loose := exact.WithMatchTitle(TrimEqualFold)
+	loose := exact.WithTitleMatcher(TrimEqualFold)
 	records, err = ViewToStructSlice[record](view, loose, nil, nil, nil, nil)
 	require.ErrorIs(t, err, ErrDuplicateColumnTitle)
 	require.ErrorContains(t, err, `"ID" and "Id" of retable.record`)
@@ -341,7 +341,7 @@ func TestViewToStructSlice_MatchTitleDuplicateFieldTitles(t *testing.T) {
 }
 
 // TestViewToStructSlice_EqualFieldTitlesExactMatching pins that equal field
-// titles stay accepted without MatchTitle, where the first field is filled,
+// titles stay accepted without TitleMatcher, where the first field is filled,
 // so that the duplicate check does not change existing callers.
 func TestViewToStructSlice_EqualFieldTitlesExactMatching(t *testing.T) {
 	type record struct {
@@ -373,7 +373,7 @@ func TestViewToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 	}{
 		{
 			name:   "equal name wins over looser matches before and after it",
-			naming: exact.WithMatchTitle(TrimEqualFold),
+			naming: exact.WithTitleMatcher(TrimEqualFold),
 			cols:   []string{"BETRAG", " Betrag ", "Betrag", "betrag", "Text"},
 			rows:   [][]string{{"upper", "spaced", "equal", "lower", "t"}, {"upper", "spaced", "", "lower", "t"}},
 			// The empty cell of the equal column is not replaced by a looser match
@@ -381,14 +381,14 @@ func TestViewToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 		},
 		{
 			name:   "equal without whitespace wins over differing in case",
-			naming: exact.WithMatchTitle(TrimEqualFold),
+			naming: exact.WithTitleMatcher(TrimEqualFold),
 			cols:   []string{"BETRAG", "Betrag ", "betrag"},
 			rows:   [][]string{{"upper", "spaced", "lower"}},
 			want:   []booking{{Amount: "spaced"}},
 		},
 		{
-			name: "a match differing in case wins over one only MatchTitle accepts",
-			naming: exact.WithMatchTitle(func(viewTitle, fieldTitle string) bool {
+			name: "a match differing in case wins over one only TitleMatcher accepts",
+			naming: exact.WithTitleMatcher(func(viewTitle, fieldTitle string) bool {
 				return TrimEqualFold(viewTitle, fieldTitle) || (fieldTitle == "Betrag" && viewTitle == "Umsatz")
 			}),
 			cols: []string{"Umsatz", "BETRAG", "Umsatz"},
@@ -397,7 +397,7 @@ func TestViewToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 		},
 		{
 			name:   "equally close columns: the cell with content wins, the last one of several",
-			naming: exact.WithMatchTitle(TrimEqualFold),
+			naming: exact.WithTitleMatcher(TrimEqualFold),
 			cols:   []string{"BETRAG", "betrag", "Text"},
 			rows: [][]string{
 				{"first", "", "content then empty"},
@@ -416,7 +416,7 @@ func TestViewToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 		},
 		{
 			name:   "equally close columns with PreferFirstColumn: the first cell with content",
-			naming: exact.WithMatchTitle(TrimEqualFold).WithPreferFirstColumn(true),
+			naming: exact.WithTitleMatcher(TrimEqualFold).WithPreferFirstColumn(true),
 			cols:   []string{"BETRAG", "betrag", "Text", "bETRAG"},
 			rows: [][]string{
 				{"first", "", "content then empty", ""},
@@ -433,20 +433,20 @@ func TestViewToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 		},
 		{
 			name:   "PreferFirstColumn does not prefer a looser match",
-			naming: exact.WithMatchTitle(TrimEqualFold).WithPreferFirstColumn(true),
+			naming: exact.WithTitleMatcher(TrimEqualFold).WithPreferFirstColumn(true),
 			cols:   []string{"BETRAG", "Betrag", "betrag", "Betrag"},
 			rows:   [][]string{{"upper", "equal 1", "lower", "equal 2"}, {"upper", "", "lower", "equal 2"}},
 			want:   []booking{{Amount: "equal 1"}, {Amount: "equal 2"}},
 		},
 		{
-			name:   "columns of the same name without MatchTitle and with PreferFirstColumn",
+			name:   "columns of the same name without TitleMatcher and with PreferFirstColumn",
 			naming: exact.WithPreferFirstColumn(true),
 			cols:   []string{"Betrag", "Text", "Betrag"},
 			rows:   [][]string{{"first", "both", "second"}, {"", "empty then content", "second"}},
 			want:   []booking{{Amount: "first", Text: "both"}, {Amount: "second", Text: "empty then content"}},
 		},
 		{
-			name:   "columns of the same name without MatchTitle",
+			name:   "columns of the same name without TitleMatcher",
 			naming: exact,
 			cols:   []string{"Betrag", "Text", "Betrag"},
 			rows: [][]string{
@@ -462,13 +462,13 @@ func TestViewToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 		},
 		{
 			name:   "TrimEqual ignores a column differing in case",
-			naming: exact.WithMatchTitle(TrimEqual),
+			naming: exact.WithTitleMatcher(TrimEqual),
 			cols:   []string{" Betrag", "BETRAG", "Text"},
 			rows:   [][]string{{"spaced", "upper", "t"}},
 			want:   []booking{{Amount: "spaced", Text: "t"}},
 		},
 		{
-			name:   "without MatchTitle only the equal name matches",
+			name:   "without TitleMatcher only the equal name matches",
 			naming: exact,
 			cols:   []string{" Betrag", "BETRAG", "Betrag"},
 			rows:   [][]string{{"spaced", "upper", "equal"}},
@@ -512,7 +512,7 @@ func TestViewToStructSlice_ValidatesTheAssignedCellOnly(t *testing.T) {
 		Count int `col:"Count"`
 	}
 	view := &StringsView{Cols: []string{"Count", "COUNT", "Count"}, Rows: [][]string{{"not a number", "neither", "3"}}}
-	naming := &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold}
+	naming := &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold}
 	validated := 0
 	got, err := ViewToStructSlice[record](view, naming, nil, nil, nil, func(reflect.Value) error {
 		validated++
@@ -532,7 +532,7 @@ func TestViewToStructSlice_DisallowAmbiguousTitles(t *testing.T) {
 		Text   string `col:"Text"`
 	}
 	exact := (&StructFieldNaming{Tag: "col"}).WithDisallowAmbiguousTitles(true)
-	loose := exact.WithMatchTitle(TrimEqualFold)
+	loose := exact.WithTitleMatcher(TrimEqualFold)
 	tests := []struct {
 		name    string
 		naming  *StructFieldNaming
@@ -542,10 +542,10 @@ func TestViewToStructSlice_DisallowAmbiguousTitles(t *testing.T) {
 		{name: "unambiguous", naming: loose, cols: []string{"BETRAG", "Valuta", " text "}},
 		{name: "columns differing in case", naming: loose, cols: []string{"Betrag", "Text", "BETRAG"}, wantErr: `columns "Betrag" and "BETRAG" both match "Betrag" of retable.booking`},
 		{name: "columns of the same name", naming: loose, cols: []string{"Text", "Text"}, wantErr: `columns "Text" and "Text" both match "Text" of retable.booking`},
-		{name: "columns of the same name without MatchTitle", naming: exact, cols: []string{"Betrag", "Betrag"}, wantErr: `columns "Betrag" and "Betrag" both match "Betrag" of retable.booking`},
-		{name: "other case is another column without MatchTitle", naming: exact, cols: []string{"Betrag", "BETRAG"}},
-		{name: "other case is another column for TrimEqual", naming: exact.WithMatchTitle(TrimEqual), cols: []string{"Betrag", "BETRAG"}},
-		{name: "columns differing in whitespace for TrimEqual", naming: exact.WithMatchTitle(TrimEqual), cols: []string{"Betrag", " Betrag"}, wantErr: `columns "Betrag" and " Betrag" both match "Betrag"`},
+		{name: "columns of the same name without TitleMatcher", naming: exact, cols: []string{"Betrag", "Betrag"}, wantErr: `columns "Betrag" and "Betrag" both match "Betrag" of retable.booking`},
+		{name: "other case is another column without TitleMatcher", naming: exact, cols: []string{"Betrag", "BETRAG"}},
+		{name: "other case is another column for TrimEqual", naming: exact.WithTitleMatcher(TrimEqual), cols: []string{"Betrag", "BETRAG"}},
+		{name: "columns differing in whitespace for TrimEqual", naming: exact.WithTitleMatcher(TrimEqual), cols: []string{"Betrag", " Betrag"}, wantErr: `columns "Betrag" and " Betrag" both match "Betrag"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

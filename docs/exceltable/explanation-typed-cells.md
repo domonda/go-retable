@@ -252,7 +252,7 @@ failed and wraps the cause, so `errors.Is(err, context.Canceled)` still works.
 
 A panic, like a formatter's failed type assertion or reflection over a nil
 value, stops the sheet midway just like an error. The writer recovers it,
-returns it as an error with the stack trace, and fails the workbook the same
+returns it as a `retable.PanicError` that keeps the stack trace, and fails the workbook the same
 way. Sheets are written in HTTP handlers and job workers, where an unrecovered
 panic takes down more than the one export.
 

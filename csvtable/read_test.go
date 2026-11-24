@@ -364,7 +364,7 @@ func TestReadStringsToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 		{"1,00", "Miete", "2,00"},
 		{"3,00", "Strom", ""},
 	}
-	naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithMatchTitle(retable.TrimEqualFold)
+	naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithTitleMatcher(retable.TrimEqualFold)
 
 	bookings, err := ReadStringsToStructSlice[booking](rows, naming, nil, nil, nil, nil, "Betrag", "Text")
 	require.NoError(t, err)
@@ -375,4 +375,41 @@ func TestReadStringsToStructSlice_SeveralColumnsMatchOneField(t *testing.T) {
 	require.ErrorIs(t, err, retable.ErrAmbiguousColumnTitle)
 	require.ErrorContains(t, err, `columns "BETRAG" and "Betrag" both match "Betrag"`)
 	require.Nil(t, bookings)
+}
+
+// TestReadStringsToStructSlice_TitleRowFoundWithTheNaming covers that the
+// column titles row between header lines is located with the title matching
+// of the naming, like the columns are assigned afterwards. A title that
+// only the naming's TitleMatcher accepts used to be missed there, so the
+// header line became the titles and the required column was reported missing.
+func TestReadStringsToStructSlice_TitleRowFoundWithTheNaming(t *testing.T) {
+	type account struct {
+		Number string `col:"Konto"`
+		Name   string `col:"Bezeichnung"`
+	}
+	rows := [][]string{
+		{"Kontenplan", "2026"},
+		{"Kontonummer", "Bezeichnung"},
+		{"120", "Software"},
+		{"Summe"},
+	}
+	alternative := retable.DefaultStructFieldNamingIgnoreUntagged.WithTitleMatcher(func(viewTitle, fieldTitle string) bool {
+		return retable.TrimEqualFold(viewTitle, fieldTitle) ||
+			(fieldTitle == "Konto" && retable.TrimEqualFold(viewTitle, "Kontonummer"))
+	})
+
+	accounts, err := ReadStringsToStructSlice[account](rows, alternative, nil, nil, nil, nil, "Konto")
+	require.NoError(t, err)
+	require.Equal(t, []account{{Number: "120", Name: "Software"}}, accounts)
+
+	// An exact naming does not take a row as titles that only matches loosely
+	exact := &retable.DefaultStructFieldNamingIgnoreUntagged
+	looseRows := [][]string{
+		{"KONTO", "BEZEICHNUNG"}, // a header line, not the titles of this naming
+		{"Konto", "Bezeichnung"},
+		{"120", "Software"},
+	}
+	accounts, err = ReadStringsToStructSlice[account](looseRows, exact, nil, nil, nil, nil, "Konto", "Bezeichnung")
+	require.NoError(t, err)
+	require.Equal(t, []account{{Number: "120", Name: "Software"}}, accounts)
 }

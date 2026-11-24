@@ -8,21 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `StructFieldNaming.MatchTitle` matches view column titles to struct field
+- `StructFieldNaming.TitleMatcher` matches view column titles to struct field
   titles with a function instead of exact equality, and `TrimEqualFold` is the
   function for titles typed by people: surrounding whitespace trimmed, case
   ignored. `ColumnStructFieldValue`, `ViewToStructSlice` including its
   `requiredCols`, and the `csvtable` `Read*ToStructSlice` functions use it
-  through the new `StructFieldNaming.TitlesMatch`. A nil `MatchTitle` keeps
-  the exact matching, so existing namings are unchanged. `WithMatchTitle` sets
+  through the new `StructFieldNaming.ColumnTitlesMatch`. A nil `TitleMatcher` keeps
+  the exact matching, so existing namings are unchanged. `WithTitleMatcher` sets
   it on a copy, on `StructFieldNaming` and on `StructRowsViewer`.
-- `TrimEqual` is the `MatchTitle` between exact matching and `TrimEqualFold`:
+- `TrimEqual` is the `TitleMatcher` between exact matching and `TrimEqualFold`:
   surrounding whitespace trimmed, case sensitive.
 - When several columns of a table match the title of one struct field,
   `ViewToStructSlice` and `FindTitleRow` take the closest match whatever the
   column order: a title equal to the field title, before one equal without
   surrounding whitespace, before one that also differs in case, before one only
-  `MatchTitle` accepts. Of equally close columns the last one wins, or the
+  `TitleMatcher` accepts. Of equally close columns the last one wins, or the
   first one with `StructFieldNaming.PreferFirstColumn`, set with
   `WithPreferFirstColumn`. `StructFieldNaming.DisallowAmbiguousTitles`, set
   with `WithDisallowAmbiguousTitles`, makes all of it an error wrapping
@@ -31,15 +31,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `StructFieldNaming.FindTitleRow` finds the column titles row in raw rows as
   the first row containing every column title of a struct, in any order and
   with any number of cells, and returns the cell index of each title.
-  `csvtable.DetectTableBounds` instead takes the best match among the rows of
+  `DetectTableBounds` instead takes the best match among the rows of
   the majority column count.
+- `StructFieldNaming.DetectTableBounds` and the type `TableBounds` bring the
+  table detection of `csvtable` to the root package, so that the rows of a
+  spreadsheet or any other format find their table like CSV rows do. It
+  compares the expected titles the way the naming does, with its
+  `TitleMatcher`. `csvtable.TableBounds` is now an alias of the root type and
+  `csvtable.DetectTableBounds` calls the method of a naming with
+  `TrimEqualFold`, so both work as before.
+- `PanicError` is the error for a recovered panic, with the package that
+  recovered it, the panic value, which it wraps if it is an error, and the
+  stack trace in its `Stack` field. `NewPanicError` creates one in a deferred
+  function.
 - `StructFieldNaming.CheckUniqueColumns` reports two fields whose column titles
   match each other with `ErrDuplicateColumnTitle`. `FindTitleRow` runs it, and
-  `ViewToStructSlice` does for a naming with a `MatchTitle`, where such a pair
+  `ViewToStructSlice` does for a naming with a `TitleMatcher`, where such a pair
   would fill the first field from the column of the second without an error.
 - `csvtable.Writer.WithUTF8BOM` starts the output of `Write`,
   `WriteWithViewer` and `WriteView`, padded or not, with the UTF-8 byte order
-  mark `csvtable.UTF8BOM`, so that Excel opens the file as UTF-8. The mark is
+  mark `"\xEF\xBB\xBF"`, so that Excel opens the file as UTF-8. The mark is
   written together with the first row, so an error before it leaves the
   destination untouched, as without the mark. With an
   encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
@@ -55,6 +66,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Recovered panics are returned as `*PanicError`, and their message no longer
+  ends with the stack trace: `csvtable: panic: <value>` from the `csvtable`
+  parse and read functions and `retable: panic: <value>` from `SmartAssign`,
+  where the stack trace followed on the next lines. Get the stack trace from
+  the `Stack` field with `errors.As` to log it. The message can now be shown
+  to a user, and an error that wraps it stays on one line.
+- The `csvtable` `Read*ToStructSlice` functions locate the column titles row
+  with the title matching of the passed naming, like they assign the columns
+  afterwards, instead of always comparing trimmed and without case. A title
+  that only the naming's `TitleMatcher` accepts now finds the row, and an
+  exact naming no longer takes a header line as titles that matches only
+  without case. Every file that was read without error is read the same.
 - `ViewToStructSlice`, and with it the `csvtable` `Read*ToStructSlice`
   functions, reads a table with several columns of the same name differently.
   It assigned every one of them in turn, so the last column won even with an
@@ -72,10 +95,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `exceltable`: a panic while writing a sheet, for example of a
   `CellFormatter` or the `Viewer`, is returned as error by `Write`,
-  `WriteView`, `WriteSheet` and `WriteViewSheet` with the message
-  `exceltable: panic: ` and the panic value, wrapping an error value with `%w`,
-  followed by the stack trace, like the `csvtable` parse functions. Log such an
-  error instead of sending it to a client. A panic after the sheet was added
+  `WriteView`, `WriteSheet` and `WriteViewSheet` as a `retable.PanicError`
+  with the message `exceltable: panic: ` and the panic value, like by the
+  `csvtable` parse functions. A panic after the sheet was added
   fails the `Workbook` like an error, so that `WriteTo` never writes the
   incomplete sheet; a panic before leaves it usable.
 

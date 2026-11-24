@@ -23,8 +23,8 @@ import (
 // find a corresponding struct field and assigns the value using SmartAssign,
 // which performs intelligent type conversions.
 //
-// Column names are compared with StructFieldNaming.TitlesMatch, exactly by
-// default. Set StructFieldNaming.MatchTitle to TrimEqual to ignore
+// Column names are compared with StructFieldNaming.ColumnTitlesMatch, exactly by
+// default. Set StructFieldNaming.TitleMatcher to TrimEqual to ignore
 // surrounding whitespace, or to TrimEqualFold to also ignore case.
 //
 // If several View columns match the same struct field, the field is
@@ -32,7 +32,7 @@ import (
 //   - The closest match wins, whatever the order of the columns: a column
 //     name equal to the field title, before one that is equal without
 //     surrounding whitespace, before one that also differs in case,
-//     before one that only MatchTitle accepts.
+//     before one that only TitleMatcher accepts.
 //   - Of several equally close columns, like two of the same name, the
 //     cell with content wins over an empty one: a null-like value,
 //     see IsNullLike, or a string of only whitespace. If more than one
@@ -46,11 +46,11 @@ import (
 // wrapping ErrAmbiguousColumnTitle instead, returned before any row
 // is processed.
 //
-// With a MatchTitle, two struct fields whose titles match each other are
+// With a TitleMatcher, two struct fields whose titles match each other are
 // an error wrapping ErrDuplicateColumnTitle, returned before any row is
 // processed, see StructFieldNaming.CheckUniqueColumns: every column
 // matching both titles would be assigned to the first of the fields.
-// Without a MatchTitle equal field titles are accepted as before
+// Without a TitleMatcher equal field titles are accepted as before
 // and the first field is assigned.
 //
 // If a column has no corresponding struct field, it is silently skipped.
@@ -59,7 +59,7 @@ import (
 // Required Columns:
 //
 // The requiredCols parameter specifies column names that MUST exist both in
-// the View and as struct fields, compared with StructFieldNaming.TitlesMatch.
+// the View and as struct fields, compared with StructFieldNaming.ColumnTitlesMatch.
 // If any required column is missing from either the View or the struct
 // definition, an error is returned immediately before processing any rows.
 //
@@ -147,8 +147,8 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 		return nil, fmt.Errorf("slice element type %s is not a struct or pointer to struct", rowType)
 	}
 
-	if naming != nil && naming.MatchTitle != nil {
-		// A loose MatchTitle can make two fields match the same column,
+	if naming != nil && naming.TitleMatcher != nil {
+		// A loose TitleMatcher can make two fields match the same column,
 		// of which only the first would ever be assigned
 		var row T
 		err := naming.CheckUniqueColumns(row)
@@ -175,12 +175,12 @@ func ViewToStructSlice[T any](view View, naming *StructFieldNaming, dstScanner S
 			v = reflect.New(rowType).Elem()
 		}
 		for _, requiredCol := range requiredCols {
-			viewColIndex := slices.IndexFunc(viewCols, func(viewCol string) bool { return naming.TitlesMatch(viewCol, requiredCol) })
+			viewColIndex := slices.IndexFunc(viewCols, func(viewCol string) bool { return naming.ColumnTitlesMatch(viewCol, requiredCol) })
 			if viewColIndex == -1 {
 				return nil, fmt.Errorf("required column %q not found in View columns", requiredCol)
 			}
 			// Look up the field with the view column, like the rows below,
-			// so that MatchTitle gets the view title as its first argument
+			// so that TitleMatcher gets the view title as its first argument
 			if !naming.ColumnStructFieldValue(v, viewCols[viewColIndex]).IsValid() {
 				return nil, fmt.Errorf("required column %q not found as struct field", requiredCol)
 			}

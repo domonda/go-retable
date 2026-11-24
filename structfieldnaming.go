@@ -80,14 +80,14 @@ type StructFieldNaming struct {
 	//   - Custom function for domain-specific naming conventions
 	Untagged func(fieldName string) (column string)
 
-	// MatchTitle reports whether the column title of a view, or of a row
+	// TitleMatcher reports whether the column title of a view, or of a row
 	// of raw cells, matches the column title of a struct field.
 	// It is used by every method that looks up a column by its title:
-	// ColumnStructFieldValue, TitlesMatch, CheckUniqueColumns and
+	// ColumnStructFieldValue, ColumnTitlesMatch, CheckUniqueColumns and
 	// FindTitleRow, and by ViewToStructSlice and the
 	// csvtable Read*ToStructSlice functions.
 	//
-	// MatchTitle sets how loose the matching is:
+	// TitleMatcher sets how loose the matching is:
 	//   - nil: titles must be equal
 	//   - TrimEqual: equal without surrounding whitespace
 	//   - TrimEqualFold: equal without surrounding whitespace, ignoring
@@ -97,16 +97,16 @@ type StructFieldNaming struct {
 	// If several columns match the title of one field, the closest match
 	// wins, whatever their order: an equal title before one that is equal
 	// without surrounding whitespace, before one that also differs in case,
-	// before one that only MatchTitle accepts. A field title that fits a
+	// before one that only TitleMatcher accepts. A field title that fits a
 	// column exactly is therefore never taken over by a looser match.
 	// PreferFirstColumn decides between equally close columns,
 	// and DisallowAmbiguousTitles makes all of these cases an error.
 	//
 	// Example:
 	//
-	//	naming := &StructFieldNaming{Tag: "col", Ignore: "-", MatchTitle: TrimEqualFold}
-	//	naming.TitlesMatch(" first name ", "First Name") // true
-	MatchTitle func(viewTitle, fieldTitle string) bool
+	//	naming := &StructFieldNaming{Tag: "col", Ignore: "-", TitleMatcher: TrimEqualFold}
+	//	naming.ColumnTitlesMatch(" first name ", "First Name") // true
+	TitleMatcher func(viewTitle, fieldTitle string) bool
 
 	// DisallowAmbiguousTitles makes it an error wrapping
 	// ErrAmbiguousColumnTitle if the columns of a view, or the cells of a
@@ -115,13 +115,13 @@ type StructFieldNaming struct {
 	// or one column matches the titles of more than one field.
 	// ViewToStructSlice, the csvtable Read*ToStructSlice functions and
 	// FindTitleRow return that error instead of choosing a column
-	// by the rules described for MatchTitle.
+	// by the rules described for TitleMatcher.
 	//
 	// The default false resolves these cases by the rules.
 	DisallowAmbiguousTitles bool
 
 	// PreferFirstColumn decides which of several columns wins that match
-	// the title of the same struct field equally closely, see MatchTitle,
+	// the title of the same struct field equally closely, see TitleMatcher,
 	// like two columns of the same name: the first one if true,
 	// the last one with the default false.
 	//
@@ -139,8 +139,8 @@ var (
 
 	// ErrDuplicateColumnTitle is returned by StructFieldNaming.CheckUniqueColumns
 	// and StructFieldNaming.FindTitleRow, and by ViewToStructSlice for a naming
-	// with a MatchTitle, when two struct fields have column titles
-	// that StructFieldNaming.TitlesMatch reports as matching,
+	// with a TitleMatcher, when two struct fields have column titles
+	// that StructFieldNaming.ColumnTitlesMatch reports as matching,
 	// so that a column of a view could not be assigned to one field.
 	ErrDuplicateColumnTitle = errors.New("duplicate column title")
 
@@ -161,7 +161,7 @@ var (
 // leading and trailing white space, as defined by Unicode.
 // In contrast to TrimEqualFold it is case sensitive.
 //
-// Use it as StructFieldNaming.MatchTitle to only ignore
+// Use it as StructFieldNaming.TitleMatcher to only ignore
 // the whitespace around column titles.
 //
 // Example:
@@ -176,7 +176,7 @@ func TrimEqual(a, b string) bool {
 // leading and trailing white space, as defined by Unicode,
 // and ignoring case, using strings.EqualFold.
 //
-// Use it as StructFieldNaming.MatchTitle to match column titles loosely,
+// Use it as StructFieldNaming.TitleMatcher to match column titles loosely,
 // the way csvtable.DetectTableBounds compares titles.
 //
 // Example:
@@ -242,9 +242,9 @@ func (n *StructFieldNaming) IsIgnored(column string) bool {
 	return column == "" || (n != nil && column == n.Ignore)
 }
 
-// TitlesMatch reports whether viewTitle, the column title of a view or
+// ColumnTitlesMatch reports whether viewTitle, the column title of a view or
 // of a row of raw cells, matches fieldTitle, the column title of a struct
-// field, using MatchTitle or comparing them for equality if it is nil.
+// field, using TitleMatcher or comparing them for equality if it is nil.
 //
 // This method is safe to call with a nil receiver,
 // which compares for equality.
@@ -252,15 +252,15 @@ func (n *StructFieldNaming) IsIgnored(column string) bool {
 // Example:
 //
 //	exact := &StructFieldNaming{Tag: "col"}
-//	exact.TitlesMatch("name ", "name") // false
+//	exact.ColumnTitlesMatch("name ", "name") // false
 //
-//	loose := &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold}
-//	loose.TitlesMatch("Name ", "name") // true
-func (n *StructFieldNaming) TitlesMatch(viewTitle, fieldTitle string) bool {
-	if n == nil || n.MatchTitle == nil {
+//	loose := &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold}
+//	loose.ColumnTitlesMatch("Name ", "name") // true
+func (n *StructFieldNaming) ColumnTitlesMatch(viewTitle, fieldTitle string) bool {
+	if n == nil || n.TitleMatcher == nil {
 		return viewTitle == fieldTitle
 	}
-	return n.MatchTitle(viewTitle, fieldTitle)
+	return n.TitleMatcher(viewTitle, fieldTitle)
 }
 
 // titleMatchRank says how closely a view title matches a field title.
@@ -271,17 +271,17 @@ const (
 	titleMatchEqual     titleMatchRank = iota // the titles are equal
 	titleMatchTrimEqual                       // equal without surrounding whitespace
 	titleMatchTrimFold                        // equal without surrounding whitespace and case
-	titleMatchCustom                          // only MatchTitle says that they match
-	titleMatchNone                            // TitlesMatch returns false
+	titleMatchCustom                          // only TitleMatcher says that they match
+	titleMatchNone                            // ColumnTitlesMatch returns false
 )
 
 // titleMatchRank returns how closely viewTitle matches fieldTitle,
-// or titleMatchNone if TitlesMatch returns false for them.
-// MatchTitle decides if titles match, the rank only orders
+// or titleMatchNone if ColumnTitlesMatch returns false for them.
+// TitleMatcher decides if titles match, the rank only orders
 // the titles it accepts.
 func (n *StructFieldNaming) titleMatchRank(viewTitle, fieldTitle string) titleMatchRank {
 	switch {
-	case !n.TitlesMatch(viewTitle, fieldTitle):
+	case !n.ColumnTitlesMatch(viewTitle, fieldTitle):
 		return titleMatchNone
 	case viewTitle == fieldTitle:
 		return titleMatchEqual
@@ -362,10 +362,10 @@ func closestFieldTitleMatch(matches []fieldTitleMatch) (closest fieldTitleMatch,
 //
 // The function searches through all exported struct fields (including
 // those from anonymously embedded structs) to find the field whose
-// column title matches the given column parameter, see TitlesMatch.
-// If the titles of several fields match, which only a MatchTitle or
+// column title matches the given column parameter, see ColumnTitlesMatch.
+// If the titles of several fields match, which only a TitleMatcher or
 // equal field titles make possible, the closest match wins as described
-// for MatchTitle, and the first field of several equally close ones.
+// for TitleMatcher, and the first field of several equally close ones.
 //
 // Anonymous embedded structs are recursively searched, allowing fields
 // from nested structs to be accessed by their column title.
@@ -462,14 +462,14 @@ func (n *StructFieldNaming) columns(t reflect.Type) []string {
 
 // CheckUniqueColumns returns an error wrapping ErrDuplicateColumnTitle
 // if two columns of strct, a struct or pointer to struct, have titles
-// that match each other according to TitlesMatch, naming both titles.
+// that match each other according to ColumnTitlesMatch, naming both titles.
 // A column of a view could then only be assigned to the first of them.
 //
 // With the default exact matching that means two equal titles, with
-// TrimEqualFold as MatchTitle also titles like "Name" and " name".
+// TrimEqualFold as TitleMatcher also titles like "Name" and " name".
 //
 // FindTitleRow runs this check, and ViewToStructSlice does
-// for a naming with a MatchTitle.
+// for a naming with a TitleMatcher.
 //
 // Panics if strct is not a struct or pointer to struct type.
 //
@@ -481,7 +481,7 @@ func (n *StructFieldNaming) columns(t reflect.Type) []string {
 //	    Number string `col:"Number"`
 //	    Code   string `col:"number"`
 //	}
-//	naming := &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold}
+//	naming := &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold}
 //	err := naming.CheckUniqueColumns(Account{})
 //	// errors.Is(err, ErrDuplicateColumnTitle) == true
 func (n *StructFieldNaming) CheckUniqueColumns(strct any) error {
@@ -493,9 +493,9 @@ func (n *StructFieldNaming) CheckUniqueColumns(strct any) error {
 func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error {
 	for i, title := range titles {
 		for _, other := range titles[i+1:] {
-			// Both argument orders, because MatchTitle
+			// Both argument orders, because TitleMatcher
 			// does not have to be symmetric
-			if n.TitlesMatch(other, title) || n.TitlesMatch(title, other) {
+			if n.ColumnTitlesMatch(other, title) || n.ColumnTitlesMatch(title, other) {
 				return fmt.Errorf("%w: %q and %q of %T", ErrDuplicateColumnTitle, title, other, strct)
 			}
 		}
@@ -508,14 +508,14 @@ func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error 
 // strct, a struct or pointer to struct, see Columns.
 //
 // The title row is the first row that contains a cell matching the
-// title of every column of strct according to TitlesMatch.
+// title of every column of strct according to ColumnTitlesMatch.
 // The cells can be in any order and the row can have additional cells,
 // the number of cells of a row does not matter.
 //
 // It returns the index of that row and the index of the cell of each
 // column title within the row: columns[i] is the cell index of the
 // title Columns(strct)[i]. If several cells of the row match a title,
-// it is the closest match as described for MatchTitle, an equal cell
+// it is the closest match as described for TitleMatcher, an equal cell
 // before a looser match, and of several equally close cells the last one,
 // or the first one with PreferFirstColumn.
 // With DisallowAmbiguousTitles a title row with several cells matching
@@ -524,7 +524,7 @@ func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error 
 // titleRow into a view with exactly the columns of strct,
 // see the example below.
 //
-// This differs from csvtable.DetectTableBounds, which looks for the
+// This differs from DetectTableBounds, which looks for the
 // table's column count first, as the one of the majority of rows,
 // and then takes the row of that count matching the most expected
 // titles, so a title row with some titles missing is still found,
@@ -559,7 +559,7 @@ func (n *StructFieldNaming) checkUniqueTitles(titles []string, strct any) error 
 //	    Tag:        "col",
 //	    Ignore:     "-",
 //	    Untagged:   func(string) string { return "" }, // only tagged fields are columns
-//	    MatchTitle: TrimEqualFold,
+//	    TitleMatcher: TrimEqualFold,
 //	}
 //	titleRow, columns, err := naming.FindTitleRow(rows, Account{})
 //	// titleRow == 1, columns == []int{2, 0}
@@ -628,7 +628,7 @@ func (n *StructFieldNaming) checkUnambiguousTitleCells(row, titles []string, str
 	for _, title := range titles {
 		first := -1
 		for cellIndex, cell := range row {
-			if !n.TitlesMatch(cell, title) {
+			if !n.ColumnTitlesMatch(cell, title) {
 				continue
 			}
 			if first != -1 {
@@ -640,7 +640,7 @@ func (n *StructFieldNaming) checkUnambiguousTitleCells(row, titles []string, str
 	for _, cell := range row {
 		first := ""
 		for _, title := range titles {
-			if !n.TitlesMatch(cell, title) {
+			if !n.ColumnTitlesMatch(cell, title) {
 				continue
 			}
 			if first != "" {
@@ -692,16 +692,16 @@ func (n *StructFieldNaming) WithTag(tag string) *StructFieldNaming {
 	return &mod
 }
 
-// WithMatchTitle returns a copy of the StructFieldNaming with the
-// MatchTitle field set to the specified function.
+// WithTitleMatcher returns a copy of the StructFieldNaming with the
+// TitleMatcher field set to the specified function.
 // Pass nil to match titles exactly.
 //
 // Example:
 //
-//	naming := DefaultStructFieldNaming.WithMatchTitle(TrimEqualFold)
-func (n *StructFieldNaming) WithMatchTitle(match func(viewTitle, fieldTitle string) bool) *StructFieldNaming {
+//	naming := DefaultStructFieldNaming.WithTitleMatcher(TrimEqualFold)
+func (n *StructFieldNaming) WithTitleMatcher(matcher func(viewTitle, fieldTitle string) bool) *StructFieldNaming {
 	mod := *n
-	mod.MatchTitle = match
+	mod.TitleMatcher = matcher
 	return &mod
 }
 
@@ -711,7 +711,7 @@ func (n *StructFieldNaming) WithMatchTitle(match func(viewTitle, fieldTitle stri
 // Example:
 //
 //	naming := DefaultStructFieldNaming.
-//	    WithMatchTitle(TrimEqualFold).
+//	    WithTitleMatcher(TrimEqualFold).
 //	    WithDisallowAmbiguousTitles(true)
 func (n *StructFieldNaming) WithDisallowAmbiguousTitles(disallow bool) *StructFieldNaming {
 	mod := *n
@@ -725,7 +725,7 @@ func (n *StructFieldNaming) WithDisallowAmbiguousTitles(disallow bool) *StructFi
 // Example:
 //
 //	naming := DefaultStructFieldNaming.
-//	    WithMatchTitle(TrimEqualFold).
+//	    WithTitleMatcher(TrimEqualFold).
 //	    WithPreferFirstColumn(true)
 func (n *StructFieldNaming) WithPreferFirstColumn(preferFirst bool) *StructFieldNaming {
 	mod := *n

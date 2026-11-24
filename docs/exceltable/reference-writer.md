@@ -319,8 +319,8 @@ same name twice, and the second `WriteSheet` returns `ErrDuplicateSheetName`.
 | Duplicate sheet name | wraps `ErrDuplicateSheetName`: `duplicate sheet name: "Overview" (existing sheet "OVERVIEW")` | unchanged, usable |
 | More than 1,048,576 rows (header included) or 16,384 columns | `exceltable: sheet "Invoices" has 1048577 rows, more than Excel's 1048576` | unchanged, usable |
 | A formatter error, a cancelled `ctx` or an excelize error while rows are written | `sheet "Invoices": row 1, column "Total": <cause>` | unusable |
-| A panic before the sheet is added, for example of the viewer or of `view.Title()` | `exceltable: panic: <value>` followed by the stack trace | unchanged, usable |
-| A panic after the sheet is added, for example of a formatter | `sheet "Invoices": exceltable: panic: <value>` followed by the stack trace | unusable |
+| A panic before the sheet is added, for example of the viewer or of `view.Title()` | a `*retable.PanicError`: `exceltable: panic: <value>` | unchanged, usable |
+| A panic after the sheet is added, for example of a formatter | wraps a `*retable.PanicError`: `sheet "Invoices": exceltable: panic: <value>` | unusable |
 | Any write to an unusable workbook, including `WriteTo` | `exceltable: workbook unusable after a failed sheet: sheet "Invoices": ...` | unusable |
 | `WriteTo` without sheets | `exceltable: workbook has no sheets` | unchanged, usable |
 | Any use after `Close` | `exceltable: workbook is closed` | closed |
@@ -328,8 +328,17 @@ same name twice, and the second `WriteSheet` returns `ErrDuplicateSheetName`.
 Every error wraps its cause, so `errors.Is(err, context.Canceled)` and
 `errors.Is(err, yourFormatterErr)` work, also on the errors of an unusable
 workbook. A panic value that is an error is wrapped too. The stack trace of a
-panic is part of the error message, and an unusable workbook returns it again
-from every later call, so log these errors instead of showing them to a user.
+panic is not part of the message. It is in the `Stack` field of the
+`retable.PanicError`, which `errors.As` finds, also in the errors of an
+unusable workbook:
+
+```go
+var panicErr *retable.PanicError
+if errors.As(err, &panicErr) {
+    log.Printf("%v\n%s", err, panicErr.Stack)
+}
+```
+
 A workbook becomes unusable because the failed sheet holds only part
 of its rows and cannot be removed again; refusing every further write makes it
 impossible to deliver that truncated file. See

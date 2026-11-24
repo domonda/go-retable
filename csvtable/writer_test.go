@@ -654,7 +654,7 @@ func TestWriter_WithUTF8BOM(t *testing.T) {
 			name:  "no rows",
 			w:     NewWriter[[]row]().WithUTF8BOM(true),
 			write: func(ctx context.Context, w *Writer[[]row], buf *bytes.Buffer) error { return w.Write(ctx, buf, nil) },
-			want:  UTF8BOM,
+			want:  "\xEF\xBB\xBF",
 		},
 		{
 			name: "switched off again",

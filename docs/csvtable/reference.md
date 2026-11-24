@@ -162,12 +162,13 @@ variants read the whole reader into memory first.
 `ReadStringsToStructSlice`, which the others call, does this:
 
 1. With `requiredCols`, it cuts the table out of the rows with
-   `DetectTableBounds(rows, requiredCols...)`. If no table is found, it keeps
-   all rows.
+   `naming.DetectTableBounds(rows, requiredCols...)`, so the title row is
+   found with the same title matching that assigns the columns in step 3. If
+   no table is found, it keeps all rows.
 2. It removes empty rows with `RemoveEmptyRows`.
 3. It calls `retable.ViewToStructSlice` with a `retable.StringsView` whose
    first row holds the column titles. That function matches each column title
-   to a struct field with `naming.TitlesMatch`, so `naming.MatchTitle` decides
+   to a struct field with `naming.ColumnTitlesMatch`, so `naming.TitleMatcher` decides
    whether `DATUM` matches `Datum`. When several columns match one field, the
    closest title wins, or `naming.DisallowAmbiguousTitles` makes it an error,
    see the
@@ -184,8 +185,19 @@ found therefore gives one empty struct per row, without an error. Pass
 ## Finding the table
 
 ```go
+// package retable
+func (n *StructFieldNaming) DetectTableBounds(rows [][]string, expectedTitles ...string) TableBounds
+
+// package csvtable
+type TableBounds = retable.TableBounds
 func DetectTableBounds(rows [][]string, expectedTitles ...string) TableBounds
 ```
+
+The detection lives in the root package, so rows of any format find their
+table the same way: CSV rows, the rows of a spreadsheet, or your own. The
+method compares titles the way its naming does, with `naming.TitleMatcher`.
+`csvtable.DetectTableBounds` is that method of a naming with
+`retable.TrimEqualFold`, for when you have no naming at hand.
 
 | Member | Meaning |
 | --- | --- |
@@ -200,8 +212,11 @@ How it decides:
 1. The table width is the column count the majority of rows have. Rows with
    one column only vote when no row has more, so a stack of title lines does
    not outvote the data. A tie goes to the wider count.
-2. The title row is the row of that width matching the most `expectedTitles`,
-   compared with `retable.TrimEqualFold`: trimmed and without case. The first
+2. The title row is the row of that width matching the most `expectedTitles`.
+   The cells are trimmed, like `retable.NewStringsView` trims column titles,
+   and compared with `naming.ColumnTitlesMatch`: exactly, or as the naming's
+   `TitleMatcher` says. `csvtable.DetectTableBounds` compares with
+   `retable.TrimEqualFold`: trimmed and without case. The first
    row matching all of them wins. A row matching none is never used.
    Without `expectedTitles` it is the first row of that width without an
    empty field.
@@ -303,7 +318,7 @@ A `*encoding.Encoder` of `golang.org/x/text`, like
 concurrent use, so give each goroutine its own writer with its own encoder.
 
 **UTF-8 byte order mark.** With `WithUTF8BOM(true)`, the output of `Write`,
-`WriteWithViewer` and `WriteView` starts with `UTF8BOM`, `"\xEF\xBB\xBF"`, so
+`WriteWithViewer` and `WriteView` starts with the bytes `"\xEF\xBB\xBF"`, so
 that Excel opens the file as UTF-8 instead of the legacy code page of the
 system. The mark is written once, in front of the first row, with and without
 padding. A table without rows and without header row is written as the mark
@@ -317,7 +332,7 @@ table without rows.
 The parse and read functions of this package remove the mark. Other readers
 may not: `encoding/csv` returns it as part of the first field,
 `"\ufeffNumber"`, and fails with `bare " in non-quoted-field` when the first
-field is quoted, as with `WithQuoteAllFields(true)`. Strip `UTF8BOM` from the
+field is quoted, as with `WithQuoteAllFields(true)`. Strip the mark from the
 data before passing it to such a reader. The mark is written by every
 `WriteView` call, so write a file with one call.
 
@@ -356,18 +371,35 @@ for that column, type or kind.
 
 | Name | Value or message |
 | --- | --- |
-| `UTF8BOM` | `"\xEF\xBB\xBF"` |
 | `ErrUTF8BOMWithEncoder` | `csvtable: UTF-8 byte order mark can't be combined with an encoder` |
 | `NoPadding`, `AlignLeft`, `AlignRight`, `AlignCenter` | values of `type Padding int`, `0` to `3` |
 
 ### Panics
 
 The parse and read functions never panic. A panic inside them, also one of the
-`csvReader` or of the `validate` function you pass, is returned as an error:
-`csvtable: panic: <value>` followed by the stack trace. A panic value that is
-an error is wrapped with `%w`, so `errors.Is` and `errors.As` find it. A panic
-of the `dstScanner`, `parser` or `srcFormatter` is returned the same way by
-`retable.SmartAssign`, with the prefix `retable: panic`.
+`csvReader` or of the `validate` function you pass, is returned as a
+`*retable.PanicError` with the message `csvtable: panic: <value>`. A panic
+value that is an error is wrapped, so `errors.Is` and `errors.As` find it. A
+panic of the `dstScanner`, `parser` or `srcFormatter` is returned the same way
+by `retable.SmartAssign`, with the message `retable: panic: <value>`.
+
+The message has no stack trace. The stack trace of the panic is in the `Stack`
+field:
+
+```go
+var panicErr *retable.PanicError
+if errors.As(err, &panicErr) {
+    log.Printf("%v\n%s", err, panicErr.Stack)
+}
+```
+
+| `PanicError` member | Meaning |
+| --- | --- |
+| `Package string` | The package that recovered the panic: `csvtable`, `retable` or `exceltable` |
+| `Value any` | The value `panic` was called with |
+| `Stack []byte` | The stack trace of the panic, as `runtime/debug.Stack` formats it |
+| `Error() string` | `<Package>: panic: <Value>` |
+| `Unwrap() error` | `Value` if it is an error, else nil |
 
 `Writer` does not recover panics. A panic of a formatter or a viewer reaches
 the caller.

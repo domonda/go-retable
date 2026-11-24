@@ -1084,7 +1084,9 @@ func TestSmartAssignRecoversPanic(t *testing.T) {
 	require.NotPanics(t, func() {
 		err := SmartAssign(reflect.ValueOf(&s).Elem(), src, nil, nil, nil)
 		require.ErrorContains(t, err, "retable: panic: ")
-		require.Contains(t, err.Error(), "reflect.Value.Interface", "stack trace of the panic")
+		var panicErr *PanicError
+		require.ErrorAs(t, err, &panicErr)
+		require.Contains(t, string(panicErr.Stack), "reflect.Value.Interface", "stack trace of the panic")
 	})
 
 	t.Run("a panicking Scanner keeps its panic value and stack", func(t *testing.T) {
@@ -1102,10 +1104,11 @@ func TestSmartAssignRecoversPanic(t *testing.T) {
 		})
 
 		// then
-		msg, stack, hasStack := strings.Cut(err.Error(), "\n")
-		require.Equal(t, "retable: panic: scanner is broken", msg)
-		require.True(t, hasStack, "the stack trace has to follow the message")
-		require.Contains(t, stack, "TestSmartAssignRecoversPanic", "stack trace of the panic")
+		var panicErr *PanicError
+		require.ErrorAs(t, err, &panicErr)
+		require.Equal(t, "retable: panic: scanner is broken", panicErr.Error())
+		require.NotContains(t, err.Error(), "goroutine ", "the message has no stack trace")
+		require.Contains(t, string(panicErr.Stack), "TestSmartAssignRecoversPanic", "stack trace of the panic")
 		require.ErrorIs(t, err, scannerErr)
 	})
 
@@ -1121,7 +1124,10 @@ func TestSmartAssignRecoversPanic(t *testing.T) {
 		})
 
 		// then
-		require.ErrorContains(t, err, "retable: panic: 42\n")
+		var panicErr *PanicError
+		require.ErrorAs(t, err, &panicErr)
+		require.Equal(t, "retable: panic: 42", panicErr.Error())
+		require.Equal(t, 42, panicErr.Value)
 	})
 }
 

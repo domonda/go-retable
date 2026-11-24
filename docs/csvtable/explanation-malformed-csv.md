@@ -142,7 +142,8 @@ cost is that a value which legitimately contains one is changed.
 ## Finding the table in the file
 
 The column titles are found with the column titles you expect, not by
-position. `DetectTableBounds` takes the column count of the majority of rows
+position. `DetectTableBounds`, which lives in the root package so that rows of
+any format use it, takes the column count of the majority of rows
 as the table width, with single-column rows only voting when nothing is wider,
 then takes the row of that width that matches the most expected titles. The
 table ends at the first row of another width. Blank lines inside the table
@@ -158,9 +159,11 @@ alternative that requires every title of the struct.
 
 The parse and read functions are called on uploaded files in HTTP handlers and
 job workers, where a panic takes down more than the one import. They recover
-any panic, return it as an error starting with `csvtable: panic:`, and include
-the stack trace, because a panic that reaches this point is a bug and the stack
-is what locates it.
+any panic and return it as a `retable.PanicError` with the message
+`csvtable: panic: <value>`. The stack trace is kept in its `Stack` field,
+because a panic that reaches this point is a bug and the stack is what locates
+it. It is not part of the message, so that the message can go to the person
+who uploaded the file while the stack goes to the log.
 
 ## Known limits
 

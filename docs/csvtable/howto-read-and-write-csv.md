@@ -378,8 +378,9 @@ fields as the table, so it can't be told apart from a data row. Reject it with
 the `validate` function or remove it from the result.
 
 **An error starting with `csvtable: panic:`.** Something panicked while
-parsing or converting, often the `validate` function you passed. The stack
-trace in the error shows where. Report a panic inside `csvtable` itself as a
+parsing or converting, often the `validate` function you passed. The error is
+a `*retable.PanicError`; get it with `errors.As` and log its `Stack` field to
+see where. Report a panic inside `csvtable` itself as a
 bug.
 
 **A `\r` inside a quoted field is missing.** A `\r` directly before a line

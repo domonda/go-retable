@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/domonda/go-retable"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -827,23 +828,27 @@ func fuzzSeeds() []string {
 func requireNoRecoveredPanic(t *testing.T, err error) {
 	t.Helper()
 	// retable.SmartAssign recovers panics during the cell conversions itself
-	if err != nil && (strings.HasPrefix(err.Error(), "csvtable: panic") || strings.HasPrefix(err.Error(), "retable: panic")) {
-		require.Fail(t, "recovered panic", "%+v", err)
+	var panicErr *retable.PanicError
+	if errors.As(err, &panicErr) {
+		require.Fail(t, "recovered panic", "%v\n%s", err, panicErr.Stack)
 	}
 }
 
 // requireRecoveredPanic fails the test unless err is a panic recovered by
-// recoverParsePanic: wantMsg on the first line followed by the stack trace
-// of the panic, which has to show the panic and the frame wantFrame where it
-// happened, so that the stack can't be one captured after the panic unwound.
+// recoverParsePanic or retable.SmartAssign: a retable.PanicError with the
+// message wantMsg, without the stack trace, and with the stack trace of
+// the panic in its Stack field, which has to show the panic and the frame
+// wantFrame where it happened, so that the stack can't be one captured
+// after the panic unwound.
 func requireRecoveredPanic(t *testing.T, err error, wantMsg, wantFrame string) {
 	t.Helper()
 	require.Error(t, err)
-	msg, stack, hasStack := strings.Cut(err.Error(), "\n")
-	require.Equal(t, wantMsg, msg, "first line of the error message")
-	require.True(t, hasStack, "the stack trace has to follow the message")
-	require.Contains(t, stack, "panic(", "stack trace of the panic")
-	require.Contains(t, stack, wantFrame, "stack trace of the panic")
+	var panicErr *retable.PanicError
+	require.ErrorAs(t, err, &panicErr)
+	require.Equal(t, wantMsg, panicErr.Error())
+	require.NotContains(t, err.Error(), "goroutine ", "the message has no stack trace")
+	require.Contains(t, string(panicErr.Stack), "panic(", "stack trace of the panic")
+	require.Contains(t, string(panicErr.Stack), wantFrame, "stack trace of the panic")
 }
 
 // fuzzEncodings are the encodings FuzzParseWithFormat picks from,

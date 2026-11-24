@@ -193,9 +193,12 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
     defer wb.Close()
     err = invoiceWriter.WriteSheet(r.Context(), wb, invoices, "Invoices")
     if err != nil {
-        // The error of a recovered panic includes its stack trace:
-        // log it, don't send it to the client
         log.Printf("writing sheet Invoices: %v", err)
+        // A recovered panic keeps its stack trace out of the message
+        var panicErr *retable.PanicError
+        if errors.As(err, &panicErr) {
+            log.Printf("%s", panicErr.Stack)
+        }
         http.Error(w, "export failed", http.StatusInternalServerError)
         return
     }
@@ -425,7 +428,8 @@ a number cell is right-aligned and its format shows under Format Cells.
 **Every later write returns `exceltable: workbook unusable after a failed sheet`.**
 A sheet failed after it was added, through a formatter error, a cancelled
 context, an excelize error or a panic, which the error shows as
-`exceltable: panic: <value>` followed by the stack trace. The sheet holds only part of its rows, so the
+`exceltable: panic: <value>`, with the stack trace in the `Stack` field of
+the `retable.PanicError` it wraps. The sheet holds only part of its rows, so the
 workbook refuses to write a truncated file. The error wraps the cause and names
 the sheet, row and column. Fix the cause and start a new `Workbook`.
 

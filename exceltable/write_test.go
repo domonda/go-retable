@@ -1099,7 +1099,7 @@ func TestWorkbook_PoisonedByPanic(t *testing.T) {
 				w := NewWriter[[]overviewRow]().WithColumnFormatter(0, panicInRow("boom"))
 				return w.WriteSheet(ctx, wb, rows, "Failing")
 			},
-			wantErr: []string{`sheet "Failing": exceltable: panic: boom`, "goroutine "},
+			wantErr: []string{`sheet "Failing": exceltable: panic: boom`},
 		},
 		{
 			name: "CellFormatter panics with an error in WriteViewSheet",
@@ -1126,9 +1126,17 @@ func TestWorkbook_PoisonedByPanic(t *testing.T) {
 			if tt.wantIs != nil {
 				require.ErrorIs(t, err, tt.wantIs)
 			}
+			// The stack trace is in the PanicError, not in the message
+			var panicErr *retable.PanicError
+			require.ErrorAs(t, err, &panicErr)
+			require.Equal(t, "exceltable", panicErr.Package)
+			require.Contains(t, string(panicErr.Stack), "panic(", "stack trace of the panic")
+			require.Contains(t, string(panicErr.Stack), "exceltable.TestWorkbook_PoisonedByPanic", "the frame that panicked")
+			require.NotContains(t, err.Error(), "goroutine ", "the message has no stack trace")
 
 			var buf bytes.Buffer
 			_, err = wb.WriteTo(&buf)
+			require.ErrorAs(t, err, &panicErr, "also from the failed workbook")
 			require.ErrorContains(t, err, "exceltable: workbook unusable after a failed sheet: "+tt.wantErr[0])
 			require.Zero(t, buf.Len(), "the incomplete sheet must not be written")
 			err = NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Next")

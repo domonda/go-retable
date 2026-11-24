@@ -233,7 +233,7 @@ func (v *StructRowsViewer) WithIgnore(ignore string) *StructRowsViewer {
 	return mod
 }
 
-// WithMatchTitle returns a copy of the StructRowsViewer with the MatchTitle
+// WithTitleMatcher returns a copy of the StructRowsViewer with the TitleMatcher
 // field set to the specified function. Pass nil to match titles exactly.
 //
 // It replaces the method of the embedded StructFieldNaming, which returns
@@ -241,10 +241,10 @@ func (v *StructRowsViewer) WithIgnore(ignore string) *StructRowsViewer {
 //
 // Example:
 //
-//	viewer := (&StructRowsViewer{}).WithTag("col").WithMatchTitle(TrimEqualFold)
-func (v *StructRowsViewer) WithMatchTitle(match func(viewTitle, fieldTitle string) bool) *StructRowsViewer {
+//	viewer := (&StructRowsViewer{}).WithTag("col").WithTitleMatcher(TrimEqualFold)
+func (v *StructRowsViewer) WithTitleMatcher(matcher func(viewTitle, fieldTitle string) bool) *StructRowsViewer {
 	mod := v.clone()
-	mod.MatchTitle = match
+	mod.TitleMatcher = matcher
 	return mod
 }
 

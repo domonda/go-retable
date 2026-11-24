@@ -33,10 +33,6 @@ func PassthroughEncoder() Encoder {
 	})
 }
 
-// UTF8BOM is the UTF-8 encoded Unicode byte order mark that
-// Writer.WithUTF8BOM writes at the start of the output.
-const UTF8BOM = string(bomUTF8)
-
 // ErrUTF8BOMWithEncoder is returned by the write methods of a Writer
 // configured with both WithUTF8BOM(true) and a non-nil WithEncoder,
 // because the encoder converts the output to another encoding than UTF-8,
@@ -117,7 +113,7 @@ func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer 
 
 // WriteView writes the view to dest as formatted as CSV.
 //
-// With WithUTF8BOM(true) the output starts with UTF8BOM,
+// With WithUTF8BOM(true) the output starts with the UTF-8 byte order mark,
 // see WithUTF8BOM for the combination with an encoder.
 func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
 	if w.utf8BOM {
@@ -156,7 +152,8 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 	return w.writeView(ctx, dest, view)
 }
 
-// utf8BOMWriter writes UTF8BOM to dest in front of the first written bytes.
+// utf8BOMWriter writes the UTF-8 byte order mark
+// to dest in front of the first written bytes.
 type utf8BOMWriter struct {
 	dest    io.Writer
 	written bool
@@ -170,13 +167,14 @@ func (b *utf8BOMWriter) Write(p []byte) (int, error) {
 	return b.dest.Write(p)
 }
 
-// writeBOM writes UTF8BOM to dest unless it was already written.
+// writeBOM writes the UTF-8 byte order mark to dest
+// unless it was already written.
 func (b *utf8BOMWriter) writeBOM() error {
 	if b.written {
 		return nil
 	}
 	b.written = true
-	_, err := io.WriteString(b.dest, UTF8BOM)
+	_, err := io.WriteString(b.dest, string(bomUTF8))
 	return err
 }
 
@@ -570,8 +568,8 @@ func (w *Writer[T]) WithNewLine(newLine string) *Writer[T] {
 }
 
 // WithUTF8BOM returns a new writer that starts the output of Write,
-// WriteWithViewer and WriteView with the UTF-8 byte order mark UTF8BOM
-// when utf8BOM is true, before the header row, also with padding
+// WriteWithViewer and WriteView with the UTF-8 byte order mark,
+// the bytes "\xEF\xBB\xBF", when utf8BOM is true, before the header row, also with padding
 // and also for a table without rows. Excel needs it to open a CSV file
 // as UTF-8 instead of the legacy code page of the system.
 // The default is false. ViewStrings returns cells and is not affected.
@@ -587,7 +585,7 @@ func (w *Writer[T]) WithNewLine(newLine string) *Writer[T] {
 //
 // The parse and read functions of this package remove the mark again.
 // encoding/csv does not: it returns the mark as part of the first field
-// and fails if that field is quoted, so strip UTF8BOM before passing
+// and fails if that field is quoted, so strip the mark before passing
 // the output to such a reader.
 //
 // Example:

@@ -337,7 +337,7 @@ view, err := naming.NewView("Products", products)
 ```
 
 Reading matches view column titles to struct fields exactly by default. Column
-titles typed by people come with stray spaces and any case, so set `MatchTitle`
+titles typed by people come with stray spaces and any case, so set `TitleMatcher`
 to `retable.TrimEqualFold` to compare them trimmed and case-insensitively, or
 to `retable.TrimEqual` to only trim them.
 `ColumnStructFieldValue`, `ViewToStructSlice` (including its `requiredCols`) and
@@ -348,7 +348,7 @@ naming := &retable.StructFieldNaming{
     Tag:        "col",
     Ignore:     "-",
     Untagged:   func(string) string { return "" }, // only tagged fields are columns
-    MatchTitle: retable.TrimEqualFold,
+    TitleMatcher: retable.TrimEqualFold,
 }
 
 // Rejects two fields whose titles match each other, like "Name" and "name"
@@ -368,9 +368,11 @@ accounts, err := retable.ViewToStructSlice[Account](view, naming, nil, nil, nil,
 ```
 
 `FindTitleRow` returns `ErrNoColumns`, `ErrDuplicateColumnTitle` or
-`ErrTitleRowNotFound`. Unlike `csvtable.DetectTableBounds`, which takes the row
-matching the most titles among the rows of the majority column count, it requires
-every title and ignores the column count.
+`ErrTitleRowNotFound`. Unlike `naming.DetectTableBounds`, which takes the row
+matching the most titles among the rows of the majority column count and also
+finds the end of the table, it requires every title and ignores the column
+count. Both work on rows of any format and compare titles the way the naming
+does; the `csvtable` readers use `DetectTableBounds`.
 
 More in [How to import tables typed by people](docs/retable/howto-import-tables-typed-by-people.md),
 with recipes for CSV exports and Excel sheets, and in the

@@ -143,7 +143,7 @@ func TestTrimEqual(t *testing.T) {
 
 // TestStructFieldNaming_ColumnStructFieldValue_ClosestField covers that a
 // column goes to the field whose title it matches the closest, not to the
-// first field that MatchTitle accepts, and to the first of equally close ones.
+// first field that TitleMatcher accepts, and to the first of equally close ones.
 func TestStructFieldNaming_ColumnStructFieldValue_ClosestField(t *testing.T) {
 	type record struct {
 		Upper   string `col:"NAME"`
@@ -152,7 +152,7 @@ func TestStructFieldNaming_ColumnStructFieldValue_ClosestField(t *testing.T) {
 		Another string `col:"name"`
 	}
 	rec := record{Upper: "Upper", Spaced: "Spaced", Exact: "Exact", Another: "Another"}
-	loose := &StructFieldNaming{Tag: "col", MatchTitle: TrimEqualFold}
+	loose := &StructFieldNaming{Tag: "col", TitleMatcher: TrimEqualFold}
 	for column, wantField := range map[string]string{
 		"Name":   "Exact",   // equal
 		"Name\t": "Spaced",  // first of two equal without whitespace, before a field differing in case
@@ -163,7 +163,7 @@ func TestStructFieldNaming_ColumnStructFieldValue_ClosestField(t *testing.T) {
 	}
 	require.False(t, loose.ColumnStructFieldValue(reflect.ValueOf(rec), "Names").IsValid())
 
-	trimmed := loose.WithMatchTitle(TrimEqual)
+	trimmed := loose.WithTitleMatcher(TrimEqual)
 	require.Equal(t, "Spaced", trimmed.ColumnStructFieldValue(reflect.ValueOf(rec), "Name\t").String())
 	require.False(t, trimmed.ColumnStructFieldValue(reflect.ValueOf(rec), "nAME").IsValid(), "TrimEqual is case sensitive")
 }
@@ -182,7 +182,7 @@ func TestStructFieldNaming_WithPreferFirstColumn(t *testing.T) {
 	require.False(t, naming.WithPreferFirstColumn(false).PreferFirstColumn)
 }
 
-func TestStructFieldNaming_TitlesMatch(t *testing.T) {
+func TestStructFieldNaming_ColumnTitlesMatch(t *testing.T) {
 	tests := []struct {
 		name       string
 		naming     *StructFieldNaming
@@ -193,10 +193,10 @@ func TestStructFieldNaming_TitlesMatch(t *testing.T) {
 		{name: "nil naming equal", naming: nil, viewTitle: "Name", fieldTitle: "Name", want: true},
 		{name: "nil naming case differs", naming: nil, viewTitle: "name", fieldTitle: "Name", want: false},
 		{name: "exact by default", naming: &StructFieldNaming{}, viewTitle: "Name ", fieldTitle: "Name", want: false},
-		{name: "TrimEqualFold", naming: &StructFieldNaming{MatchTitle: TrimEqualFold}, viewTitle: " NAME ", fieldTitle: "Name", want: true},
+		{name: "TrimEqualFold", naming: &StructFieldNaming{TitleMatcher: TrimEqualFold}, viewTitle: " NAME ", fieldTitle: "Name", want: true},
 		{
-			name:       "custom MatchTitle gets the view title first",
-			naming:     &StructFieldNaming{MatchTitle: func(viewTitle, fieldTitle string) bool { return viewTitle == "view" && fieldTitle == "field" }},
+			name:       "custom TitleMatcher gets the view title first",
+			naming:     &StructFieldNaming{TitleMatcher: func(viewTitle, fieldTitle string) bool { return viewTitle == "view" && fieldTitle == "field" }},
 			viewTitle:  "view",
 			fieldTitle: "field",
 			want:       true,
@@ -204,25 +204,25 @@ func TestStructFieldNaming_TitlesMatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, tt.naming.TitlesMatch(tt.viewTitle, tt.fieldTitle))
+			require.Equal(t, tt.want, tt.naming.ColumnTitlesMatch(tt.viewTitle, tt.fieldTitle))
 		})
 	}
 }
 
-func TestStructFieldNaming_WithMatchTitle(t *testing.T) {
-	naming := DefaultStructFieldNaming.WithMatchTitle(TrimEqualFold)
-	require.True(t, naming.TitlesMatch("name", "Name"))
-	require.Nil(t, DefaultStructFieldNaming.MatchTitle, "DefaultStructFieldNaming must not be modified")
-	require.False(t, naming.WithMatchTitle(nil).TitlesMatch("name", "Name"))
+func TestStructFieldNaming_WithTitleMatcher(t *testing.T) {
+	naming := DefaultStructFieldNaming.WithTitleMatcher(TrimEqualFold)
+	require.True(t, naming.ColumnTitlesMatch("name", "Name"))
+	require.Nil(t, DefaultStructFieldNaming.TitleMatcher, "DefaultStructFieldNaming must not be modified")
+	require.False(t, naming.WithTitleMatcher(nil).ColumnTitlesMatch("name", "Name"))
 }
 
 // onlyTagged is the naming of domonda's CSV importers:
 // only fields with a col tag are columns.
 var onlyTagged = &StructFieldNaming{
-	Tag:        "col",
-	Ignore:     "-",
-	Untagged:   func(string) string { return "" },
-	MatchTitle: TrimEqualFold,
+	Tag:          "col",
+	Ignore:       "-",
+	Untagged:     func(string) string { return "" },
+	TitleMatcher: TrimEqualFold,
 }
 
 type embeddedAccountNumber struct {
@@ -237,7 +237,7 @@ type account struct {
 	hidden   string `col:"Hidden"` //nolint:unused
 }
 
-func TestStructFieldNaming_ColumnStructFieldValue_MatchTitle(t *testing.T) {
+func TestStructFieldNaming_ColumnStructFieldValue_TitleMatcher(t *testing.T) {
 	tests := []struct {
 		name      string
 		naming    *StructFieldNaming
@@ -253,7 +253,7 @@ func TestStructFieldNaming_ColumnStructFieldValue_MatchTitle(t *testing.T) {
 		{name: "loose, empty title", naming: onlyTagged, column: "  "},
 		{name: "untagged field is no column", naming: onlyTagged, column: "Untagged"},
 		{name: "unexported field is no column", naming: onlyTagged, column: "Hidden"},
-		{name: "loose with default untagged naming", naming: DefaultStructFieldNaming.WithMatchTitle(TrimEqualFold), column: "untagged", wantField: "Untagged"},
+		{name: "loose with default untagged naming", naming: DefaultStructFieldNaming.WithTitleMatcher(TrimEqualFold), column: "untagged", wantField: "Untagged"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -331,8 +331,8 @@ func TestStructFieldNaming_CheckUniqueColumns(t *testing.T) {
 			}{},
 		},
 		{
-			name:   "asymmetric MatchTitle is checked both ways",
-			naming: &StructFieldNaming{MatchTitle: func(viewTitle, fieldTitle string) bool { return viewTitle == "A" && fieldTitle == "B" }},
+			name:   "asymmetric TitleMatcher is checked both ways",
+			naming: &StructFieldNaming{TitleMatcher: func(viewTitle, fieldTitle string) bool { return viewTitle == "A" && fieldTitle == "B" }},
 			strct: struct {
 				B string
 				A string
@@ -366,7 +366,7 @@ type amounts struct {
 var sameAlternative = &StructFieldNaming{
 	Tag:    "col",
 	Ignore: "-",
-	MatchTitle: func(viewTitle, fieldTitle string) bool {
+	TitleMatcher: func(viewTitle, fieldTitle string) bool {
 		return TrimEqualFold(viewTitle, fieldTitle) || TrimEqualFold(viewTitle, "Summe")
 	},
 }
@@ -459,7 +459,7 @@ func TestStructFieldNaming_FindTitleRow(t *testing.T) {
 		},
 		{
 			name:   "TrimEqual does not match other case",
-			naming: onlyTagged.WithMatchTitle(TrimEqual),
+			naming: onlyTagged.WithTitleMatcher(TrimEqual),
 			strct:  account{},
 			rows: [][]string{
 				{"KONTO", "Bezeichnung"},

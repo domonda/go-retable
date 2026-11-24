@@ -9,7 +9,6 @@ import (
 	"maps"
 	"math"
 	"reflect"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -421,16 +420,15 @@ func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheet
 // See WriteSheet for how the name is sanitized.
 //
 // A panic while writing, for example of a CellFormatter or of the view,
-// is returned as error with the message "exceltable: panic: " and the
-// panic value, wrapping the value with %w if it is an error, followed
-// by the stack trace of the panic. If the panic happened after the sheet
-// was added to wb, the message has the sheet in front, see the example,
-// the sheet is incomplete and wb fails with that error like after a
-// returned error: every later WriteSheet, WriteViewSheet and WriteTo
-// returns it. A panic before, such as of view.Title, leaves wb usable.
-//
-// The stack trace is part of the error message, so log such an error
-// instead of showing it to a user, like in the response of an HTTP handler.
+// is returned as a *retable.PanicError with the message
+// "exceltable: panic: " and the panic value, which it wraps if it is an
+// error. The stack trace of the panic is not part of the message,
+// get it from the Stack field with errors.As to log it.
+// If the panic happened after the sheet was added to wb, the error is
+// wrapped with the sheet in front, see the example, the sheet is
+// incomplete and wb fails with that error like after a returned error:
+// every later WriteSheet, WriteViewSheet and WriteTo returns it.
+// A panic before, such as of view.Title, leaves wb usable.
 //
 // Example:
 //
@@ -453,7 +451,7 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 		if p == nil {
 			return
 		}
-		err = panicError(p)
+		err = retable.NewPanicError("exceltable", p)
 		if sheetName != "" {
 			wb.err = fmt.Errorf("sheet %q: %w", sheetName, err)
 			err = wb.err
@@ -498,27 +496,15 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 	return nil
 }
 
-// recoverPanic assigns a recovered panic to *err, see panicError.
+// recoverPanic assigns a recovered panic to *err as *retable.PanicError
+// with the message "exceltable: panic: " and the panic value,
+// and with the stack trace of the panic in its Stack field.
 // It has to be deferred directly by the function whose named error
 // result err points to, because recover only stops a panic there.
 func recoverPanic(err *error) {
 	if p := recover(); p != nil {
-		*err = panicError(p)
+		*err = retable.NewPanicError("exceltable", p)
 	}
-}
-
-// panicError returns the recovered panic value p as error with the message
-// "exceltable: panic: " and p, wrapping p with %w if it is an error so that
-// errors.Is and errors.As still find it, followed by the stack trace,
-// like csvtable does for parse panics. It has to be called by the
-// deferred function that recovered p, while the stack of the panicking
-// goroutine is not yet unwound.
-func panicError(p any) error {
-	stack := debug.Stack()
-	if pErr, ok := p.(error); ok {
-		return fmt.Errorf("exceltable: panic: %w\n%s", pErr, stack)
-	}
-	return fmt.Errorf("exceltable: panic: %v\n%s", p, stack)
 }
 
 // checkSheetSize returns an error if view does not fit into an Excel sheet,

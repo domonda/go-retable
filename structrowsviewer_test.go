@@ -292,23 +292,23 @@ func TestStructRowsView_NilRows(t *testing.T) {
 	}
 }
 
-// TestStructRowsViewer_WithMatchTitle covers that WithMatchTitle returns a
+// TestStructRowsViewer_WithTitleMatcher covers that WithTitleMatcher returns a
 // StructRowsViewer like WithTag and WithIgnore. Without its own method the
 // one of the embedded StructFieldNaming is promoted, which returns only the
 // naming and silently loses MapIndices in a chain of With calls.
-func TestStructRowsViewer_WithMatchTitle(t *testing.T) {
+func TestStructRowsViewer_WithTitleMatcher(t *testing.T) {
 	type row struct{ A, B string }
 	base := (&StructRowsViewer{}).WithIgnoreFieldIndex(0)
 
-	var viewer *StructRowsViewer = base.WithMatchTitle(TrimEqualFold)
-	require.True(t, viewer.TitlesMatch(" a ", "A"))
-	require.Nil(t, base.MatchTitle, "the original must be untouched")
+	var viewer *StructRowsViewer = base.WithTitleMatcher(TrimEqualFold)
+	require.True(t, viewer.ColumnTitlesMatch(" a ", "A"))
+	require.Nil(t, base.TitleMatcher, "the original must be untouched")
 
 	view, err := viewer.NewView("", []row{{A: "a", B: "b"}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"B"}, view.ColumnNames(), "the ignored field index must be kept")
 
-	require.False(t, viewer.WithMatchTitle(nil).TitlesMatch("a", "A"))
+	require.False(t, viewer.WithTitleMatcher(nil).ColumnTitlesMatch("a", "A"))
 
 	// Same for the other naming options that have a method of their own
 	viewer = base.WithDisallowAmbiguousTitles(true).WithPreferFirstColumn(true)

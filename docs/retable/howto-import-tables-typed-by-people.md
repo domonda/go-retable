@@ -9,7 +9,7 @@ line follows the data. Each recipe stands on its own.
 
 - Go 1.26 or later.
 - `github.com/domonda/go-retable` at a version after v1.0.0-beta.3, which added
-  `MatchTitle` and `FindTitleRow`. The Excel recipe also needs
+  `TitleMatcher` and `FindTitleRow`. The Excel recipe also needs
   `github.com/domonda/go-retable/exceltable` at the same version.
 - A struct with a `col` tag on every field to import:
 
@@ -27,11 +27,11 @@ The complete API is in the
 ## Match column titles loosely
 
 Readers compare the column titles of a file with the field titles exactly, so
-`DATUM` does not fill the field titled `Datum`. Set `MatchTitle` to
+`DATUM` does not fill the field titled `Datum`. Set `TitleMatcher` to
 `retable.TrimEqualFold` to ignore surrounding whitespace and case:
 
 ```go
-naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithMatchTitle(retable.TrimEqualFold)
+naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithTitleMatcher(retable.TrimEqualFold)
 ```
 
 `DefaultStructFieldNamingIgnoreUntagged` uses the `col` tag and leaves untagged
@@ -39,7 +39,7 @@ fields out, so a helper field without a tag is never mistaken for a column.
 Pass `naming` to every function below.
 
 To ignore only the whitespace around a title and keep the case, use
-`retable.TrimEqual` instead. Without a `MatchTitle` the titles must be equal.
+`retable.TrimEqual` instead. Without a `TitleMatcher` the titles must be equal.
 
 ## Import a CSV export with lines around the table
 
@@ -169,13 +169,13 @@ titles.
 ## Accept other titles for the same column
 
 Exports of the same data name a column differently, `Betrag` in one and
-`Umsatz` in the next. Write a `MatchTitle` that also accepts the alternatives:
+`Umsatz` in the next. Write a `TitleMatcher` that also accepts the alternatives:
 
 ```go
 alternatives := map[string][]string{
     "Betrag": {"Umsatz", "Betrag EUR"},
 }
-naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithMatchTitle(
+naming := retable.DefaultStructFieldNamingIgnoreUntagged.WithTitleMatcher(
     func(viewTitle, fieldTitle string) bool {
         if retable.TrimEqualFold(viewTitle, fieldTitle) {
             return true
@@ -199,10 +199,8 @@ field's own title wins over an alternative, see
 Don't accept the same alternative for two fields. The column would fill only
 the first of them.
 
-`csvtable` looks for the title row with `TrimEqualFold`, not with your
-`MatchTitle`, so an alternative title does not count there. The row is still
-found when it has more of the other required titles than any other row. With
-`FindTitleRow` every alternative counts.
+`csvtable` looks for the title row with the same `TitleMatcher`, so a row is
+found by its alternative titles too, as with `FindTitleRow`.
 
 ## Decide what happens when two columns match a field
 
@@ -211,7 +209,7 @@ A file can have a `Betrag` and a `BETRAG` column, or two columns named
 
 - The closest title wins: equal to the field title, then equal without
   surrounding whitespace, then equal without case, then a title only your
-  `MatchTitle` accepts. The order of the columns does not matter.
+  `TitleMatcher` accepts. The order of the columns does not matter.
 - Of two equally close columns, like two named `Betrag`, each row takes the
   cell that has content. If both have content, the last column wins. Add
   `WithPreferFirstColumn(true)` to the naming to let the first one win.
@@ -221,7 +219,7 @@ the amounts, add `WithDisallowAmbiguousTitles(true)`:
 
 ```go
 naming := retable.DefaultStructFieldNamingIgnoreUntagged.
-    WithMatchTitle(retable.TrimEqualFold).
+    WithTitleMatcher(retable.TrimEqualFold).
     WithDisallowAmbiguousTitles(true)
 
 bookings, _, err := csvtable.ReadBytesDetectFormatToStructSlice[Booking](
@@ -253,7 +251,7 @@ func TestImportStructs(t *testing.T) {
 
 `FindTitleRow` runs the same check and returns `ErrDuplicateColumnTitle`
 before it looks at the rows. So do `ViewToStructSlice` and the `csvtable`
-`Read*ToStructSlice` functions for a naming with a `MatchTitle`, so an import
+`Read*ToStructSlice` functions for a naming with a `TitleMatcher`, so an import
 with such a struct fails instead of leaving the second field empty. The test
 finds it before a file does.
 
@@ -285,7 +283,7 @@ not as an error (see below).
 ## Troubleshooting
 
 **`required column "Datum" not found in View columns`, but the file has a
-column `DATUM`.** The naming compares titles exactly. Set `MatchTitle` to
+column `DATUM`.** The naming compares titles exactly. Set `TitleMatcher` to
 `retable.TrimEqualFold`. Surrounding spaces alone are not the cause:
 `NewStringsView` trims them from every column title.
 
@@ -307,7 +305,7 @@ or move a column the file may lack to a struct used only for reading.
 
 **`duplicate column title: "Name" and "name " of main.Account`
 (`ErrDuplicateColumnTitle`).** Two fields match each other with the naming's
-`MatchTitle`. Rename one of the tags.
+`TitleMatcher`. Rename one of the tags.
 
 **`struct has no columns: main.Account` (`ErrNoColumns`).** No field has a
 `col` tag. `DefaultStructFieldNamingIgnoreUntagged` ignores untagged fields.
