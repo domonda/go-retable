@@ -14,11 +14,11 @@ The generated API docs are on
 [pkg.go.dev](https://pkg.go.dev/github.com/domonda/go-retable/exceltable).
 
 ```sh
-go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable/exceltable@v1.0.0-beta.2
+go get github.com/domonda/go-retable@v1.0.0-beta.4 github.com/domonda/go-retable/exceltable@v1.0.0-beta.4
 ```
 
-`exceltable` v1.0.0-beta.2 uses root API added in v1.0.0-beta.2
-(`retable.ReflectTypeDispatcher`), so upgrade both modules together.
+`exceltable` v1.0.0-beta.4 uses root API added in v1.0.0-beta.4
+(`retable.PanicError`), so upgrade both modules together.
 
 ## API
 
@@ -95,7 +95,9 @@ sheet.
 | `(w) WithNilValue(nilValue string)` | Text written for null-like cells. `""` writes an empty cell. |
 
 `Write` and `WriteView` write nothing to `dest` when a sheet fails: the
-workbook is built completely before its bytes are written.
+workbook is built completely before its bytes are written. They close the
+workbook they create and join an error of its `Close` to the returned error,
+also to a recovered panic.
 
 A nil `CellFormatterFunc` counts as `nil` too: passing one removes the
 registration instead of storing a formatter that would panic when called.

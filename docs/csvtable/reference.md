@@ -322,8 +322,8 @@ concurrent use, so give each goroutine its own writer with its own encoder.
 that Excel opens the file as UTF-8 instead of the legacy code page of the
 system. The mark is written once, in front of the first row, with and without
 padding. A table without rows and without header row is written as the mark
-alone. When writing fails before the first row, `dest` stays empty, as it
-would without the mark. Combined with an encoder, the write methods return
+alone. When writing fails or panics before the first row, `dest` stays
+empty, as it would without the mark. Combined with an encoder, the write methods return
 `ErrUTF8BOMWithEncoder` and write nothing, because the encoded output is not
 UTF-8. That includes `PassthroughEncoder()`: any non-nil encoder is rejected.
 A cancelled `ctx` returns its error before the mark is written, also for a

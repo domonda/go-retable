@@ -562,8 +562,10 @@ if errors.As(err, &panicErr) {
 ```
 
 A panic value that is an error is wrapped, so `errors.Is` finds it.
-`NewPanicError` creates a `PanicError` in your own deferred `recover`. Which
-functions recover what is listed in the
+`ViewToStructSlice` does not recover a panic of its `validate` function; the
+`csvtable` read functions, which call it, do. `NewPanicError` creates a
+`PanicError` in your own deferred `recover`. Which functions recover what is
+listed in the
 [PanicError reference](docs/retable/reference-panic-error.md).
 
 ### SQL Integration

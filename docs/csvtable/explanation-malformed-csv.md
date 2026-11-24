@@ -204,8 +204,8 @@ converts the output to another encoding, and a UTF-8 mark in front of Windows
 1252 bytes would tell every reader to decode them wrongly.
 
 The mark is written together with the first row, not when writing starts.
-When a formatter fails before any row is written, the destination is still
-empty, as it is without the mark, so an `http.ResponseWriter` can still send
+When a formatter fails or panics before any row is written, the destination
+is still empty, as it is without the mark, so an `http.ResponseWriter` can still send
 an error status.
 
 ## Related

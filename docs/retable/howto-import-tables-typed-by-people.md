@@ -8,7 +8,7 @@ line follows the data. Each recipe stands on its own.
 ## Prerequisites
 
 - Go 1.26 or later.
-- `github.com/domonda/go-retable` at a version after v1.0.0-beta.3, which added
+- `github.com/domonda/go-retable` at v1.0.0-beta.4 or later, which added
   `TitleMatcher` and `FindTitleRow`. The Excel recipe also needs
   `github.com/domonda/go-retable/exceltable` at the same version.
 - A struct with a `col` tag on every field to import:

@@ -12,7 +12,7 @@ change how cells look. Each recipe stands on its own.
   same release:
 
   ```sh
-  go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable/exceltable@v1.0.0-beta.2
+  go get github.com/domonda/go-retable@v1.0.0-beta.4 github.com/domonda/go-retable/exceltable@v1.0.0-beta.4
   ```
 
 - The recipes import these two packages plus the standard library packages

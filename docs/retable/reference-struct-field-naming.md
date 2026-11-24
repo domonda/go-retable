@@ -62,7 +62,7 @@ columns to field names, without the `col` tag.
 
 | Method | Nil receiver | Returns |
 | --- | --- | --- |
-| `Columns(strct any) []string` | yes | The titles of all columns of `strct`, a struct or pointer to struct, in field order. Fields of anonymously embedded structs are inlined at their position. Panics for any other type. |
+| `Columns(strct any) []string` | yes | The titles of all columns of `strct`, a struct or pointer to struct, in field order. Fields of anonymously embedded structs are inlined at their position. Other embedded types, like a named string type, are no column. Panics for any other type. |
 | `StructFieldColumn(field reflect.StructField) string` | yes | The title of one field, before `Ignore` is applied. `""` for unexported and anonymous fields. |
 | `IsIgnored(column string) bool` | yes | Whether `column` is `""` or equals `Ignore`. |
 | `ColumnTitlesMatch(viewTitle, fieldTitle string) bool` | yes | `TitleMatcher(viewTitle, fieldTitle)`, or `viewTitle == fieldTitle` when `TitleMatcher` is nil. |
@@ -162,7 +162,10 @@ then assigns the field once per row, from one of them:
    one, row by row. A cell is empty when it is null-like (see `IsNullLike`) or
    a string of only whitespace. If more than one of them has content, the last
    column wins. If none has, the last column is assigned. With
-   `PreferFirstColumn` it is the first column in both cases.
+   `PreferFirstColumn` it is the first column in both cases. A panic of the
+   `IsNull`, `IsZero` or `Value` method of a cell is returned as
+   [`*PanicError`](reference-panic-error.md). The cell of a field with only
+   one column is assigned without calling these methods.
 
 Only the cell that wins is converted and validated.
 
