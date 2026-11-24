@@ -342,6 +342,10 @@ formats the default parser accepts and how to configure it.
 
 - [StructFieldNaming reference](reference-struct-field-naming.md): every
   method, the matching rules and the errors
+- [How column titles find their struct fields](explanation-title-matching.md):
+  why the closest title wins and when to use which title row finder
+- [PanicError reference](reference-panic-error.md): the error an import
+  returns for a recovered panic
 - [csvtable reference](../csvtable/reference.md): format detection, table
   bounds and the read functions
 - [How to read and write CSV files](../csvtable/howto-read-and-write-csv.md)

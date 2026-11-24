@@ -408,3 +408,5 @@ err := exceltable.NewWriter[any]().WithHeaderRow(true).WriteView(ctx, file, view
 - [Why exceltable writes typed cells](explanation-typed-cells.md): date
   serials, the conversion order, the unusable workbook
 - [README: Working with Excel Files](../../README.md#working-with-excel-files)
+- [PanicError reference](../retable/reference-panic-error.md): the error
+  returned for a panic while writing

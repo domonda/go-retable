@@ -473,3 +473,5 @@ csvtable.NewWriter[[]Product]().
 - [StructFieldNaming reference](../retable/reference-struct-field-naming.md):
   how column titles find struct fields
 - [How to import tables typed by people](../retable/howto-import-tables-typed-by-people.md)
+- [PanicError reference](../retable/reference-panic-error.md): the recovered
+  panic error of every package

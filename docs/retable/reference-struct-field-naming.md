@@ -323,6 +323,8 @@ accounts, err := retable.ViewToStructSlice[Account](view, naming, nil, nil, nil,
 
 - [How to import tables typed by people](howto-import-tables-typed-by-people.md):
   the tasks this API is built for, with troubleshooting
+- [How column titles find their struct fields](explanation-title-matching.md):
+  why the matching works this way and what it trades off
 - [csvtable reference](../csvtable/reference.md): `DetectTableBounds` and the
   `Read*ToStructSlice` functions
 - [README: Struct Field Naming](../../README.md#struct-field-naming): the short

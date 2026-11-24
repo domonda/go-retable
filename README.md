@@ -30,7 +30,8 @@ deeper:
 
 | Topic | How-to | Reference | Explanation |
 | --- | --- | --- | --- |
-| Importing files typed by people | [How to import tables typed by people](docs/retable/howto-import-tables-typed-by-people.md) | [StructFieldNaming](docs/retable/reference-struct-field-naming.md) | |
+| Importing files typed by people | [How to import tables typed by people](docs/retable/howto-import-tables-typed-by-people.md) | [StructFieldNaming](docs/retable/reference-struct-field-naming.md) | [How column titles find their struct fields](docs/retable/explanation-title-matching.md) |
+| Recovered panics | | [PanicError](docs/retable/reference-panic-error.md) | |
 | CSV | [How to read and write CSV files](docs/csvtable/howto-read-and-write-csv.md) | [csvtable](docs/csvtable/reference.md) | [How csvtable reads malformed CSV](docs/csvtable/explanation-malformed-csv.md) |
 | Excel | [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md) | [exceltable Writer](docs/exceltable/reference-writer.md) | [Why exceltable writes typed cells](docs/exceltable/explanation-typed-cells.md) |
 
@@ -377,6 +378,8 @@ does; the `csvtable` readers use `DetectTableBounds`.
 More in [How to import tables typed by people](docs/retable/howto-import-tables-typed-by-people.md),
 with recipes for CSV exports and Excel sheets, and in the
 [StructFieldNaming reference](docs/retable/reference-struct-field-naming.md).
+Why the rules are what they are is in
+[How column titles find their struct fields](docs/retable/explanation-title-matching.md).
 
 ## Advanced Features
 
@@ -541,6 +544,27 @@ rows, err := retable.ViewToStructSlice[Booking](view, nil, scanner, nil, nil, ni
 A `Scanner` returns `errors.ErrUnsupported` for a type it does not handle, which
 lets the chain continue to the next one and finally to `SmartAssign`'s own
 conversions. Any other error stops the chain.
+
+### Recovered panics
+
+`SmartAssign`, and with it `ViewToStructSlice`, the `csvtable` parse and read
+functions and the `exceltable` write methods recover a panic, of package
+`reflect` or of a `Scanner`, `Parser`, formatter or other function you pass,
+and return it as a `*retable.PanicError`. One broken cell fails one import
+instead of the program. The message is one line, like
+`csvtable: panic: <value>`, and the stack trace is in the `Stack` field:
+
+```go
+var panicErr *retable.PanicError
+if errors.As(err, &panicErr) {
+    log.Printf("%v\n%s", err, panicErr.Stack)
+}
+```
+
+A panic value that is an error is wrapped, so `errors.Is` finds it.
+`NewPanicError` creates a `PanicError` in your own deferred `recover`. Which
+functions recover what is listed in the
+[PanicError reference](docs/retable/reference-panic-error.md).
 
 ### SQL Integration
 
