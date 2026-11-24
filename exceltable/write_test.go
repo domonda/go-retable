@@ -1202,6 +1202,21 @@ func TestWriter_WritePanics(t *testing.T) {
 	require.Zero(t, buf.Len(), "nothing is written to dest")
 }
 
+// panickingWriter is an io.Writer that panics.
+type panickingWriter struct{}
+
+func (panickingWriter) Write([]byte) (int, error) { panic("dest panicked") }
+
+// TestWriter_WriteViewDestPanics covers that a panic of dest while the
+// workbook is written to it is returned as *retable.PanicError.
+func TestWriter_WriteViewDestPanics(t *testing.T) {
+	view := retable.NewStringsView("S", [][]string{{"x"}}, "a")
+	err := NewWriter[any]().WriteView(t.Context(), panickingWriter{}, view)
+	var panicErr *retable.PanicError
+	require.ErrorAs(t, err, &panicErr)
+	require.EqualError(t, err, "exceltable: panic: dest panicked")
+}
+
 func TestWorkbook_UniqueSheetName(t *testing.T) {
 	a27 := strings.Repeat("a", 27)
 	a40 := strings.Repeat("a", 40)

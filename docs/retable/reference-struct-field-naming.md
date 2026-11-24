@@ -111,7 +111,7 @@ Every lookup of a column by its title goes through `ColumnTitlesMatch`:
 | --- | --- |
 | `ColumnStructFieldValue` | each field title with the requested column |
 | `ViewToStructSlice` | each view column title with the field titles, to find the field to assign |
-| `ViewToStructSlice` `requiredCols` | each required title with the view column titles, then the matching view column with the field titles |
+| `ViewToStructSlice` `requiredCols` | each required title with the view column titles, then each required title with the titles of the fields that a view column is assigned to |
 | `csvtable.ReadStringsToStructSlice` and the other `Read*ToStructSlice` | through `ViewToStructSlice` |
 | `CheckUniqueColumns` | each pair of field titles, in both argument orders |
 | `FindTitleRow` | each cell of a row with each field title |
