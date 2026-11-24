@@ -4,14 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.0-beta.4] - 2026-11-24
+
+Adds what importing tables typed by people needs. Column titles can match
+loosely, the closest of several matching columns wins, the title row is found
+in CSV and spreadsheet rows alike, CSV files can start with the UTF-8 byte
+order mark that Excel needs, `exceltable` returns panics as `PanicError` too,
+and sheet names can be made unique. The new options are off by default. Three
+behaviours of 1.0.0-beta.3 change, see Changed. The root module and
+`exceltable` are tagged in lockstep.
 
 ### Added
 
 - `StructFieldNaming.TitleMatcher` matches view column titles to struct field
   titles with a function instead of exact equality, and `TrimEqualFold` is the
-  function for titles typed by people: surrounding whitespace trimmed, case
-  ignored. `ColumnStructFieldValue`, `ViewToStructSlice` including its
+  function for titles typed by people, which trims surrounding whitespace and
+  ignores case. `ColumnStructFieldValue`, `ViewToStructSlice` including its
   `requiredCols`, and the `csvtable` `Read*ToStructSlice` functions use it
   through the new `StructFieldNaming.ColumnTitlesMatch`. A nil `TitleMatcher` keeps
   the exact matching, so existing namings are unchanged. `WithTitleMatcher` sets
@@ -51,8 +59,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `csvtable.Writer.WithUTF8BOM` starts the output of `Write`,
   `WriteWithViewer` and `WriteView`, padded or not, with the UTF-8 byte order
   mark `"\xEF\xBB\xBF"`, so that Excel opens the file as UTF-8. The mark is
-  written together with the first row, so an error before it leaves the
-  destination untouched, as without the mark. With an
+  written together with the first row, so an error or a panic before it
+  leaves the destination untouched, as without the mark. With an
   encoder set by `WithEncoder` writing returns `ErrUTF8BOMWithEncoder` instead,
   because the mark would misdeclare the encoded output. `csvtable` removes the
   mark when reading; `encoding/csv` does not.
@@ -83,7 +91,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   It assigned every one of them in turn, so the last column won even with an
   empty cell. Now the field is assigned once per row from the last of these
   columns whose cell has content, and from the last column only if none has.
-  A cell is without content if it is null-like or a string of only whitespace.
+  A cell is without content if it is null-like or a string of only whitespace;
+  a panic of its `IsNull`, `IsZero` or `Value` method is returned as
+  `*PanicError`.
   Only the assigned cell is converted and validated, so an invalid value in a
   column that loses no longer fails the import. Tables without such columns
   are read as before.
@@ -93,6 +103,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `StructFieldNaming.Columns`, `ColumnStructFieldValue` and
+  `ViewToStructSlice` skip an embedded type that is not a struct, like a named
+  string type, instead of panicking with "expected struct or pointer to
+  struct".
 - `exceltable`: a panic while writing a sheet, for example of a
   `CellFormatter` or the `Viewer`, is returned as error by `Write`,
   `WriteView`, `WriteSheet` and `WriteViewSheet` as a `retable.PanicError`
