@@ -33,6 +33,14 @@ func PassthroughEncoder() Encoder {
 	})
 }
 
+// ErrUTF8BOMWithEncoder is returned by the write methods of a Writer
+// configured with both WithUTF8BOM(true) and a non-nil WithEncoder,
+// because the encoder converts the output to another encoding than UTF-8,
+// which a UTF-8 byte order mark in front of it would misdeclare.
+// Write the byte order mark of the target encoding to the destination
+// before calling the writer instead.
+var ErrUTF8BOMWithEncoder = errors.New("csvtable: UTF-8 byte order mark can't be combined with an encoder")
+
 type Padding int
 
 const (
@@ -55,6 +63,7 @@ type Writer[T any] struct {
 	delimiter        rune
 	newLine          string
 	encoder          Encoder
+	utf8BOM          bool
 }
 
 func NewWriter[T any]() *Writer[T] {
@@ -103,18 +112,71 @@ func (w *Writer[T]) WriteWithViewer(ctx context.Context, dest io.Writer, viewer 
 }
 
 // WriteView writes the view to dest as formatted as CSV.
+//
+// With WithUTF8BOM(true) the output starts with the UTF-8 byte order mark,
+// see WithUTF8BOM for the combination with an encoder.
 func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) error {
-	if w.padding != NoPadding {
-		return w.writeViewPadded(ctx, dest, view)
+	write := func(dest io.Writer) error {
+		if w.padding != NoPadding {
+			return w.writeViewPadded(ctx, dest, view)
+		}
+		if w.headerRow {
+			err := w.headerWriter().writeView(ctx, dest, retable.NewHeaderViewFrom(view))
+			if err != nil {
+				return err
+			}
+		}
+		return w.writeView(ctx, dest, view)
+	}
+	if !w.utf8BOM {
+		return write(dest)
 	}
 
-	if w.headerRow {
-		err := w.headerWriter().writeView(ctx, dest, retable.NewHeaderViewFrom(view))
-		if err != nil {
-			return err
-		}
+	if w.encoder != nil {
+		return ErrUTF8BOMWithEncoder
 	}
-	return w.writeView(ctx, dest, view)
+	// A table without rows and without header row writes nothing
+	// that checks ctx before the mark is written at the end,
+	// and a done context must not leave a file of only the mark
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The mark goes out with the first row, so that an error or a panic
+	// before it, like of a formatter, leaves dest untouched as without
+	// the mark, for example an http.ResponseWriter that can still send an error
+	bom := &utf8BOMWriter{dest: dest}
+	err := write(bom)
+	if err != nil {
+		return err
+	}
+	// A table without rows still starts with the mark
+	return bom.writeBOM()
+}
+
+// utf8BOMWriter writes the UTF-8 byte order mark
+// to dest in front of the first written bytes.
+type utf8BOMWriter struct {
+	dest    io.Writer
+	written bool
+}
+
+func (b *utf8BOMWriter) Write(p []byte) (int, error) {
+	err := b.writeBOM()
+	if err != nil {
+		return 0, err
+	}
+	return b.dest.Write(p)
+}
+
+// writeBOM writes the UTF-8 byte order mark to dest
+// unless it was already written.
+func (b *utf8BOMWriter) writeBOM() error {
+	if b.written {
+		return nil
+	}
+	b.written = true
+	_, err := io.WriteString(b.dest, string(bomUTF8))
+	return err
 }
 
 // headerWriter returns a clone for writing the header row.
@@ -504,6 +566,45 @@ func (w *Writer[T]) WithNewLine(newLine string) *Writer[T] {
 	mod := w.clone()
 	mod.newLine = newLine
 	return mod
+}
+
+// WithUTF8BOM returns a new writer that starts the output of Write,
+// WriteWithViewer and WriteView with the UTF-8 byte order mark,
+// the bytes "\xEF\xBB\xBF", when utf8BOM is true, before the header row, also with padding
+// and also for a table without rows. Excel needs it to open a CSV file
+// as UTF-8 instead of the legacy code page of the system.
+// The default is false. ViewStrings returns cells and is not affected.
+//
+// The byte order mark is only valid for UTF-8 output, so writing returns
+// ErrUTF8BOMWithEncoder without writing anything if an encoder is also
+// set with WithEncoder, because it converts the output to another encoding.
+// That holds for every non-nil encoder, including PassthroughEncoder.
+//
+// A context that is already done returns its error before the mark is
+// written, also for a table without rows, which without the mark
+// writes nothing and returns nil.
+//
+// The parse and read functions of this package remove the mark again.
+// encoding/csv does not: it returns the mark as part of the first field
+// and fails if that field is quoted, so strip the mark before passing
+// the output to such a reader.
+//
+// Example:
+//
+//	writer := csvtable.NewWriter[[]Invoice]().
+//	    WithHeaderRow(true).
+//	    WithUTF8BOM(true)
+//	err := writer.Write(ctx, dest, invoices) // "\xEF\xBB\xBFNumber;Total\r\n..."
+func (w *Writer[T]) WithUTF8BOM(utf8BOM bool) *Writer[T] {
+	mod := w.clone()
+	mod.utf8BOM = utf8BOM
+	return mod
+}
+
+// UTF8BOM reports whether the writer starts its output
+// with the UTF-8 byte order mark, see WithUTF8BOM.
+func (w *Writer[T]) UTF8BOM() bool {
+	return w.utf8BOM
 }
 
 func (w *Writer[T]) WithEncoder(encoder Encoder) *Writer[T] {

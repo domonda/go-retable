@@ -233,6 +233,43 @@ func (v *StructRowsViewer) WithIgnore(ignore string) *StructRowsViewer {
 	return mod
 }
 
+// WithTitleMatcher returns a copy of the StructRowsViewer with the TitleMatcher
+// field set to the specified function. Pass nil to match titles exactly.
+//
+// It replaces the method of the embedded StructFieldNaming, which returns
+// only the naming without MapIndices and the other viewer settings.
+//
+// Example:
+//
+//	viewer := (&StructRowsViewer{}).WithTag("col").WithTitleMatcher(TrimEqualFold)
+func (v *StructRowsViewer) WithTitleMatcher(matcher func(viewTitle, fieldTitle string) bool) *StructRowsViewer {
+	mod := v.clone()
+	mod.TitleMatcher = matcher
+	return mod
+}
+
+// WithDisallowAmbiguousTitles returns a copy of the StructRowsViewer
+// with the DisallowAmbiguousTitles field set to the specified value.
+//
+// It replaces the method of the embedded StructFieldNaming, which returns
+// only the naming without MapIndices and the other viewer settings.
+func (v *StructRowsViewer) WithDisallowAmbiguousTitles(disallow bool) *StructRowsViewer {
+	mod := v.clone()
+	mod.DisallowAmbiguousTitles = disallow
+	return mod
+}
+
+// WithPreferFirstColumn returns a copy of the StructRowsViewer
+// with the PreferFirstColumn field set to the specified value.
+//
+// It replaces the method of the embedded StructFieldNaming, which returns
+// only the naming without MapIndices and the other viewer settings.
+func (v *StructRowsViewer) WithPreferFirstColumn(preferFirst bool) *StructRowsViewer {
+	mod := v.clone()
+	mod.PreferFirstColumn = preferFirst
+	return mod
+}
+
 // WithMapIndex returns a copy of the StructRowsViewer with an additional
 // field-to-column mapping added to MapIndices.
 //

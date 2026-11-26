@@ -570,3 +570,37 @@ func TestStructFieldValues_NilPointer(t *testing.T) {
 	// The index count check still sees all flattened fields
 	require.Panics(t, func() { IndexedStructFieldReflectValues(reflect.ValueOf(nilOuter), 1, []int{0}) })
 }
+
+// embeddedCode is a non struct type embedded in a row struct.
+type embeddedCode string
+
+// TestStructFieldValues_EmbeddedNonStructType covers that the struct field
+// walkers skip an embedded type that is no struct, like the read side does,
+// instead of panicking with "Fields of non-struct type".
+func TestStructFieldValues_EmbeddedNonStructType(t *testing.T) {
+	type row struct {
+		Name string
+		embeddedCode
+		error // an embedded interface
+		Count int
+	}
+	r := row{Name: "x", embeddedCode: "c", Count: 2}
+	v := reflect.ValueOf(r)
+
+	fields := StructFieldTypes(v.Type())
+	require.Len(t, fields, 2)
+	require.Equal(t, "Name", fields[0].Name)
+	require.Equal(t, "Count", fields[1].Name)
+	require.Equal(t, []any{"x", 2}, StructFieldAnyValues(v))
+	require.Len(t, StructFieldReflectValues(v), 2)
+	vals := IndexedStructFieldReflectValues(v, 2, []int{1, 0})
+	require.Equal(t, 2, vals[0].Interface())
+	require.Equal(t, "x", vals[1].Interface())
+	require.Equal(t, []any{2, "x"}, IndexedStructFieldAnyValues(v, 2, []int{1, 0}))
+
+	view, err := DefaultStructRowsViewer().NewView("", []row{r})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Name", "Count"}, view.ColumnNames())
+	require.Equal(t, "x", view.Cell(0, 0))
+	require.Equal(t, 2, view.Cell(0, 1))
+}

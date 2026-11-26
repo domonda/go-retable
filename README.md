@@ -23,6 +23,20 @@ A powerful Go library for working with tabular data using reflection. `go-retabl
 go get github.com/domonda/go-retable
 ```
 
+## Documentation
+
+This README introduces every part of the library. The guides in `docs/` go
+deeper:
+
+| Topic | How-to | Reference | Explanation |
+| --- | --- | --- | --- |
+| Importing files typed by people | [How to import tables typed by people](docs/retable/howto-import-tables-typed-by-people.md) | [StructFieldNaming](docs/retable/reference-struct-field-naming.md) | [How column titles find their struct fields](docs/retable/explanation-title-matching.md) |
+| Recovered panics | | [PanicError](docs/retable/reference-panic-error.md) | |
+| CSV | [How to read and write CSV files](docs/csvtable/howto-read-and-write-csv.md) | [csvtable](docs/csvtable/reference.md) | [How csvtable reads malformed CSV](docs/csvtable/explanation-malformed-csv.md) |
+| Excel | [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md) | [exceltable Writer](docs/exceltable/reference-writer.md) | [Why exceltable writes typed cells](docs/exceltable/explanation-typed-cells.md) |
+
+The generated API docs are on [pkg.go.dev](https://pkg.go.dev/github.com/domonda/go-retable).
+
 ## Quick Start
 
 ### Working with Struct Slices
@@ -97,7 +111,8 @@ err = writer.Write(context.Background(), file, people)
 ```
 
 To go straight from a file to typed structs, and for reading exports that carry
-header and trailer lines around the table, see [csvtable](#csvtable).
+header and trailer lines around the table, see
+[How to read and write CSV files](docs/csvtable/howto-read-and-write-csv.md).
 
 ### Working with Excel Files
 
@@ -192,7 +207,7 @@ type Employee struct {
 
 employees, err := retable.ViewToStructSlice[Employee](
     view,
-    nil,  // Use default field naming
+    nil,  // No naming: columns match field names, the col tag is not read
     nil,  // No custom scanner
     nil,  // No custom parser
     nil,  // No custom formatter
@@ -321,6 +336,50 @@ naming := &retable.StructFieldNaming{
 view, err := naming.NewView("Products", products)
 // Columns: ["Product Code", "Product Name", "Unit Price"]
 ```
+
+Reading matches view column titles to struct fields exactly by default. Column
+titles typed by people come with stray spaces and any case, so set `TitleMatcher`
+to `retable.TrimEqualFold` to compare them trimmed and case-insensitively, or
+to `retable.TrimEqual` to only trim them.
+`ColumnStructFieldValue`, `ViewToStructSlice` (including its `requiredCols`) and
+the `csvtable` `Read*ToStructSlice` functions all use it:
+
+```go
+naming := &retable.StructFieldNaming{
+    Tag:        "col",
+    Ignore:     "-",
+    Untagged:   func(string) string { return "" }, // only tagged fields are columns
+    TitleMatcher: retable.TrimEqualFold,
+}
+
+// Rejects two fields whose titles match each other, like "Name" and "name"
+err := naming.CheckUniqueColumns(Account{}) // errors.Is(err, retable.ErrDuplicateColumnTitle)
+
+// When a table has several columns for one field, the closest title wins:
+// equal, then trimmed, then ignoring case. Make that an error instead:
+strict := naming.WithDisallowAmbiguousTitles(true) // retable.ErrAmbiguousColumnTitle
+
+// The first row containing every column title, in any order, with extra cells allowed
+titleRow, columns, err := naming.FindTitleRow(rows, Account{})
+view := &retable.FilteredView{
+    Source:        retable.NewStringsView("", rows[titleRow+1:], rows[titleRow]...),
+    ColumnMapping: columns, // columns[i] is the cell of naming.Columns(Account{})[i]
+}
+accounts, err := retable.ViewToStructSlice[Account](view, naming, nil, nil, nil, nil)
+```
+
+`FindTitleRow` returns `ErrNoColumns`, `ErrDuplicateColumnTitle` or
+`ErrTitleRowNotFound`. Unlike `naming.DetectTableBounds`, which takes the row
+matching the most titles among the rows of the majority column count and also
+finds the end of the table, it requires every title and ignores the column
+count. Both work on rows of any format and compare titles the way the naming
+does; the `csvtable` readers use `DetectTableBounds`.
+
+More in [How to import tables typed by people](docs/retable/howto-import-tables-typed-by-people.md),
+with recipes for CSV exports and Excel sheets, and in the
+[StructFieldNaming reference](docs/retable/reference-struct-field-naming.md).
+Why the rules are what they are is in
+[How column titles find their struct fields](docs/retable/explanation-title-matching.md).
 
 ## Advanced Features
 
@@ -486,6 +545,29 @@ A `Scanner` returns `errors.ErrUnsupported` for a type it does not handle, which
 lets the chain continue to the next one and finally to `SmartAssign`'s own
 conversions. Any other error stops the chain.
 
+### Recovered panics
+
+`SmartAssign`, and with it `ViewToStructSlice`, the `csvtable` parse and read
+functions and the `exceltable` write methods recover a panic, of package
+`reflect` or of a `Scanner`, `Parser`, formatter or other function you pass,
+and return it as a `*retable.PanicError`. One broken cell fails one import
+instead of the program. The message is one line, like
+`csvtable: panic: <value>`, and the stack trace is in the `Stack` field:
+
+```go
+var panicErr *retable.PanicError
+if errors.As(err, &panicErr) {
+    log.Printf("%v\n%s", err, panicErr.Stack)
+}
+```
+
+A panic value that is an error is wrapped, so `errors.Is` finds it.
+`ViewToStructSlice` does not recover a panic of its `validate` function; the
+`csvtable` read functions, which call it, do. `NewPanicError` creates a
+`PanicError` in your own deferred `recover`. Which functions recover what is
+listed in the
+[PanicError reference](docs/retable/reference-panic-error.md).
+
 ### SQL Integration
 
 Query in-memory Views using SQL:
@@ -538,8 +620,10 @@ during detection. A quote or a control character other than tab is never accepte
 as a separator, so the returned `Format` always passes `Format.Validate()` and can
 be reused for `ParseWithFormat` and `NewWriter`.
 
-See [csvtable](#csvtable) for how the separator and line endings are scored, how
-header and trailer lines are skipped, and which malformed files still parse.
+The [csvtable reference](docs/csvtable/reference.md#formatdetectionconfig) lists
+how the encoding, line ending and separator are scored, and
+[How csvtable reads malformed CSV](docs/csvtable/explanation-malformed-csv.md)
+explains why, and which malformed files still parse.
 
 ## Subpackages
 
@@ -555,318 +639,29 @@ those files instead of failing on them.
 - Parses RFC 4180 and the doubled-quote conventions real exporters emit
 - Joins quoted fields that were split by a separator, a newline, or both
 - Finds the actual table inside header and trailer lines
-- Writes CSV that reads back, both here and in `encoding/csv`
-
-Full API on [pkg.go.dev](https://pkg.go.dev/github.com/domonda/go-retable/csvtable).
-
-#### Import a CSV file into structs
-
-This is the shortest path from bytes to typed data. The input below is a bank
-statement with a title line, a period line, blank lines and a trailer, exported
-with `;` separators and Windows line endings — none of which you have to tell the
-parser.
+- Writes CSV that reads back, both here and in `encoding/csv`. With
+  `WithUTF8BOM(true)` Excel opens it as UTF-8; `encoding/csv` does not remove
+  that mark, `csvtable` does
 
 ```go
-package main
-
-import (
-    "fmt"
-
-    "github.com/domonda/go-retable"
-    "github.com/domonda/go-retable/csvtable"
+bookings, format, err := csvtable.ReadBytesDetectFormatToStructSlice[Booking](
+    statement,
+    nil, // default format detection
+    &retable.StructFieldNaming{Tag: "csv"},
+    nil, nil, nil, nil, // scanner, parser, formatter, validate
+    "Datum", "Text", "Betrag", // required columns find the table between header and trailer lines
 )
-
-type Booking struct {
-    Datum  string `csv:"Datum"`
-    Text   string `csv:"Text"`
-    Betrag string `csv:"Betrag"`
-}
-
-func main() {
-    statement := []byte("Kontoauszug Nr. 4\r\n" +
-        "Zeitraum;01.01.2025;31.01.2025\r\n" +
-        "\r\n" +
-        "Datum;Text;Betrag\r\n" +
-        "01.01.2025;Miete;-500,00\r\n" +
-        "02.01.2025;\"Gehalt, Januar\";2000,00\r\n" +
-        "\r\n" +
-        "Erstellt am 03.01.2025\r\n")
-
-    rows, format, err := csvtable.ParseDetectFormat(statement, nil)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Printf("%s, separator %q\n", format.Encoding, format.Separator)
-    // UTF-8, separator ";"
-
-    bookings, err := csvtable.ReadStringsToStructSlice[Booking](
-        rows,
-        &retable.StructFieldNaming{Tag: "csv"},
-        nil, nil, nil, nil, // scanner, parser, formatter, validate
-        "Datum", "Text", "Betrag", // required columns
-    )
-    if err != nil {
-        panic(err)
-    }
-    for _, b := range bookings {
-        fmt.Printf("%+v\n", b)
-    }
-    // {Datum:01.01.2025 Text:Miete Betrag:-500,00}
-    // {Datum:02.01.2025 Text:Gehalt, Januar Betrag:2000,00}
-}
 ```
 
-Three things happened without configuration: the `;` separator was picked over the
-comma inside `"Gehalt, Januar"`, the title and trailer lines were dropped, and
-`Datum;Text;Betrag` was found as the column titles rather than `Kontoauszug Nr. 4`.
-The required column names are what makes the last one work — see
-[Finding the table](#finding-the-table-inside-header-and-trailer-lines).
-
-To read straight from a file or from bytes, skip the two-step and use
-`ReadFileDetectFormatToStructSlice` or `ReadBytesDetectFormatToStructSlice`.
-Both take a `*FormatDetectionConfig` after the file or the bytes, nil for the
-defaults, then the same naming, scanner, parser, formatter, validate and
-required-column arguments, and also return the detected `*Format`. The
-`WithFormat` variants take an explicit `*Format` instead of detecting one.
-
-#### Parsing
-
-```go
-// Detect encoding, separator and line endings. A nil config means
-// NewDefaultFormatDetectionConfig().
-rows, format, err := csvtable.ParseDetectFormat(csvBytes, nil)
-
-// Or parse with a format you already know.
-rows, err := csvtable.ParseWithFormat(csvBytes, csvtable.NewFormat(","))
-```
-
-Both return `rows [][]string`. **A row can be `nil`**, for a blank line in the file
-and for a line that was absorbed into a field containing a newline. The `nil` rows
-keep row indices aligned with line numbers in the source file, which is what you
-want when reporting an error back to whoever produced the file. Call
-`RemoveEmptyRows` when you just want the data.
-
-Parsing does not fail on a malformed field. A field that cannot be interpreted is
-returned as its literal text rather than aborting the file — see
-[How malformed CSV is handled](#how-malformed-csv-is-handled).
-
-#### Format and detection
-
-```go
-type Format struct {
-    Encoding  string `json:"encoding"`  // "UTF-8", "Windows 1252", ...
-    Separator string `json:"separator"` // exactly one byte
-    Newline   string `json:"newline"`   // "\n", "\r\n" or "\n\r"
-}
-```
-
-| Function | Purpose |
-|---|---|
-| `NewFormat(separator string) *Format` | UTF-8 with `\r\n` line endings and the given separator |
-| `(*Format).Validate() error` | Nil-safe. Rejects an empty encoding, a separator that is not exactly one byte, a separator that is a quote or a control character other than tab, and any newline other than `\n`, `\r\n`, `\n\r` |
-| `NewDefaultFormatDetectionConfig() *FormatDetectionConfig` | The defaults used when `ParseDetectFormat` gets a nil config |
-| `EscapeQuotes(val string) string` | Doubles every `"` in a value, per RFC 4180 |
-
-What detection covers:
-
-- **Encoding** — a byte order mark decides on its own, and also reports the
-  UTF-16BE, UTF-32LE and UTF-32BE that are not in the candidate list. The marks
-  are matched longest first, so `FF FE 00 00` is UTF-32LE rather than UTF-16LE
-  followed by a NUL. Otherwise UTF-8, UTF-16LE, ISO 8859-1, Windows 1252 and
-  Macintosh are tried in order, and each candidate is validated by decoding a set
-  of test characters (umlauts, `§`, `€`, Cyrillic). Restrict either list to
-  narrow the guess:
-
-  ```go
-  config := &csvtable.FormatDetectionConfig{
-      Encodings:     []string{"UTF-8", "Windows 1252"},
-      EncodingTests: []string{"ä", "ö", "ü", "€"},
-  }
-  rows, format, err := csvtable.ParseDetectFormat(csvBytes, config)
-  ```
-
-- **Separator** — `,` `;` tab and `|` are candidates. A `sep=;` header line, which
-  Excel writes, is honored and removed from the output.
-- **Line endings** — `\r\n`, `\n` and `\n\r`.
-
-The returned `Format` always passes `Validate()`, including for empty input, so you
-can reuse it for `ParseWithFormat` or hand its separator to `NewWriter`.
-
-#### Finding the table inside header and trailer lines
-
-Exports put a title, a reporting period or a total around the table. Taking the
-first row of the file as the column titles gets all of those wrong.
-
-```go
-bounds := csvtable.DetectTableBounds(rows, "Datum", "Betrag")
-// TableBounds{TitleRow: 3, EndRow: 6, NumColumns: 3}
-
-if bounds.Valid() {
-    table := bounds.Rows(rows) // column titles row + data rows
-    view := retable.NewStringsView("Bookings", table)
-    _ = view
-}
-```
-
-| Member | Meaning |
-|---|---|
-| `TableBounds.TitleRow` | Index of the column titles row, `-1` when no table was found |
-| `TableBounds.EndRow` | Index after the last data row |
-| `TableBounds.NumColumns` | Column count of the table |
-| `TableBounds.Valid() bool` | Whether a table was found |
-| `TableBounds.Rows(rows) [][]string` | The titles row followed by the data rows, ready for `retable.NewStringsView` |
-
-How it decides:
-
-1. The table width is the column count the majority of rows have. Single column
-   rows only get a vote when no row has more than one column, so a stack of title
-   lines cannot outvote three data rows.
-2. The column titles are the row of that width matching the most `expectedTitles`,
-   compared trimmed and without case. A row matching none is never used.
-3. The data is the rows of that width after the titles, up to the first row of a
-   different width. Empty rows in between are skipped rather than ending the table,
-   because joining a field that contains a newline leaves empty rows behind.
-
-`ReadStringsToStructSlice` calls this for you when you pass `requiredCols` — those
-are exactly the titles to find the table by. Without them it falls back to the first
-non-empty row, so existing callers that pass a plain table are unaffected.
-
-Two limits worth knowing:
-
-- Without `expectedTitles`, only the column count and non-empty fields are
-  available, so a header line as wide as the table is taken as the column titles.
-- A trailer row as wide as the table, such as `Summe;;1500,00`, cannot be told
-  apart from a data row and is included. Validate the scanned values to reject it;
-  the blank line before it is not usable as a signal, because an empty row is also
-  what a joined multi-line field leaves behind.
-
-#### Cleaning up parsed rows
-
-All of these operate on `[][]string` straight out of the parser.
-
-| Function | Effect |
-|---|---|
-| `RemoveEmptyRows(rows) [][]string` | Drops rows with no columns and rows whose columns are all empty. Returns the input unchanged if there is nothing to drop |
-| `SetRowsWithNonUniformColumnsNil(rows) [][]string` | Sets every row that does not have the majority column count to `nil`, keeping indices aligned. Single column rows only vote when no row is wider |
-| `SetEmptyRowsNil(rows) [][]string` | Sets rows whose columns are all empty to `nil` |
-| `TrimSpace(rows)` | In place. Trims leading and trailing space from every field |
-| `ReplaceNewlineWithSpace(rows)` | In place. Replaces `\r\n`, `\n` and `\r` in every field with one space |
-| `CompactSpacedStrings(rows) int` | In place. Rewrites `"S h i n e r g y"` as `"Shinergy"` when every second rune is a space, and returns how many fields changed. PDF-extracted CSV needs this |
-
-`ReplaceNewlineWithSpacefunc` is a deprecated alias of `ReplaceNewlineWithSpace`,
-kept because the misspelled name is part of the published API.
-
-#### Writing CSV
-
-```go
-writer := csvtable.NewWriter[[]Product]().
-    WithHeaderRow(true).
-    WithDelimiter(',')
-
-err := writer.Write(context.Background(), dest, products)
-// SKU,Name,Notes
-// A-1,Widget,"He said ""hi"""
-// B-2,Gadget,"line1
-// line2"
-```
-
-`Writer[T]` is an immutable builder: every `With…` method returns a new writer, so
-keep the returned value. `Write` builds a view with `retable.SelectViewer`,
-`WriteWithViewer` uses one you supply, and `WriteView` takes a `retable.View`
-directly. `ViewStrings` returns the formatted cells as `[][]string` without writing
-anything, which is useful for tests.
-
-Defaults from `NewWriter`:
-
-| Option | Default | Setter |
-|---|---|---|
-| Delimiter | `;` | `WithDelimiter(rune)` |
-| Line ending | `\r\n` | `WithNewLine(string)` |
-| Header row | off | `WithHeaderRow(bool)` |
-| Quote escaping | `""` | `WithEscapeQuotes(string)` |
-| Nil value | `""` | `WithNilValue(string)` |
-| Padding | `NoPadding` | `WithPadding(NoPadding\|AlignLeft\|AlignRight\|AlignCenter)` |
-| Quote all fields | off | `WithQuoteAllFields(bool)` |
-| Quote empty fields | off | `WithQuoteEmptyFields(bool)` |
-| Output encoder | none | `WithEncoder(Encoder)` |
-
-A field is quoted when it contains the delimiter, a newline or a quote, so the
-output reads back both here and in `encoding/csv`. Formatting is controlled with
-the same `retable` formatters used elsewhere: `WithTypeFormatter`,
-`WithKindFormatter`, `WithInterfaceTypeFormatter`, `WithColumnFormatter` and their
-`…Func` variants. Column formatters apply to cell values only, never to the column
-titles of the header row. Passing `nil`, or a nil `…Func`, removes a registered
-formatter.
-
-`WithPadding` aligns columns for human-readable output:
-
-```go
-csvtable.NewWriter[[]Product]().
-    WithHeaderRow(true).
-    WithDelimiter('|').
-    WithPadding(csvtable.AlignLeft)
-// SKU|Name  |Notes
-// A-1|Widget|"He said ""hi"""
-```
-
-#### How malformed CSV is handled
-
-**Quoting is decided by parity, not by shape.** A field opens a quoted field when
-its leading run of quotes is odd, and that field is still open when its total quote
-count is odd. This covers every combination of leading and trailing quotes, so no
-quote pattern can abort a file. It also keeps working for the two escaping
-conventions real exporters mix:
-
-```go
-`"a","{""k"":""v"",""k2"":""v2""}","b"`   // JSON in a quoted field
-// ["a" `{"k":"v","k2":"v2"}` "b"]
-
-`1997,""Ford"",E350,"Super, luxurious truck"`  // unquoted field, doubled quotes
-// ["1997" `"Ford"` "E350" "Super, luxurious truck"]
-```
-
-The second shape is not RFC 4180 — `encoding/csv` rejects it with
-`bare " in non-quoted-field` — but bank exports emit it, so it is supported.
-
-**An unterminated quote costs one row, not the rest of the file.**
-
-```go
-"a;\"oops\nb;c\nd;e\n"
-// [["a" `"oops`] ["b" "c"] ["d" "e"]]
-```
-
-The unclosed field keeps its literal text and the following rows are parsed
-normally.
-
-**The separator is scored by how uniform the column count is**, not by how often a
-candidate occurs, because the right separator is the one that makes the data
-rectangular. Counting alone picks the comma here; uniformity picks the semicolon:
-
-```
-Name;Beschreibung
-Meier;Wien, Graz, Linz         3 semicolons vs 4 commas
-Huber;Wels, Steyr, Melk
-
-;  ->  2/2/2 columns, uniform      <- chosen
-,  ->  1/3/3 columns, not uniform
-```
-
-Separators and newlines inside quoted fields are not counted at all, so a quoted
-`\r\n` cannot switch an otherwise `\n` file to Windows line endings.
-
-**Known limits.** These are deliberate, and documented in the code:
-
-- A `\r` directly before the newline that splits the lines is lost, as in
-  `A;"x\r\ny";B` in a `\n` file. There it cannot be told apart from the residue of a
-  file with mixed line endings.
-- CR-only (classic Mac) line endings are not supported; `\r` alone is not a valid
-  `Format.Newline`.
-- `sanitizeUTF8` replaces undecodable bytes with spaces instead of reporting them,
-  so a failed encoding guess turns `Müller` into `M ller` rather than an error.
-  Check the decoded data yourself if that distinction matters.
-
-All three come from the same design: lines are split first and quoted fields are
-joined back together afterwards, so the parser has no quote state while splitting.
+Documentation:
+- [How to read and write CSV files](docs/csvtable/howto-read-and-write-csv.md):
+  importing into structs, encodings, stored formats, cleanup, CSV for Excel,
+  other encodings, HTTP downloads, troubleshooting
+- [csvtable reference](docs/csvtable/reference.md): every function and writer
+  option, the detection rules, table bounds, errors and panics
+- [How csvtable reads malformed CSV](docs/csvtable/explanation-malformed-csv.md):
+  quote parity, separator scoring, encoding detection, known limits, trade-offs
+- API on [pkg.go.dev](https://pkg.go.dev/github.com/domonda/go-retable/csvtable)
 
 ### exceltable
 
@@ -877,7 +672,8 @@ Excel `.xlsx` reading and writing using excelize:
   stay sortable and summable in Excel; formatters by column, type, interface
   and kind return an `exceltable.Cell`
 - A `Workbook` takes several sheets of different row types, and a sheet that
-  fails midway makes the workbook refuse to write a truncated file
+  fails midway, with an error or a panic, makes the workbook refuse to write
+  a truncated file
 
 Documentation:
 - [How to write Excel workbooks](docs/exceltable/howto-write-workbooks.md):

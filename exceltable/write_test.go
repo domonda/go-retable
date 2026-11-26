@@ -1060,3 +1060,293 @@ func TestWriter_NilCustomFormatterFuncRemoves(t *testing.T) {
 		})
 	}
 }
+
+// panickingTitleView is a view whose Title panics,
+// which happens before the sheet is added.
+type panickingTitleView struct{ retable.View }
+
+func (panickingTitleView) Title() string { panic("title panicked") }
+
+// panickingViewer is a Viewer that panics creating the view.
+type panickingViewer struct{}
+
+func (panickingViewer) NewView(string, any) (retable.View, error) { panic("viewer panicked") }
+
+// TestWorkbook_PoisonedByPanic covers that a panic while writing a sheet
+// is returned as error and, once the sheet was added, fails the workbook
+// like a returned error, so that the incomplete sheet is never written.
+func TestWorkbook_PoisonedByPanic(t *testing.T) {
+	rows := []overviewRow{{"a", 1}, {"b", 2}, {"c", 3}}
+	errPanic := errors.New("formatter panicked with an error")
+	panicInRow := func(value any) CellFormatterFunc {
+		return func(ctx context.Context, view retable.View, row, col int) (Cell, error) {
+			if row == 1 {
+				panic(value)
+			}
+			return Cell{}, errors.ErrUnsupported
+		}
+	}
+
+	tests := []struct {
+		name    string
+		write   func(ctx context.Context, wb *Workbook) error
+		wantErr []string
+		wantIs  error
+	}{
+		{
+			name: "CellFormatter panics with a string in WriteSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				w := NewWriter[[]overviewRow]().WithColumnFormatter(0, panicInRow("boom"))
+				return w.WriteSheet(ctx, wb, rows, "Failing")
+			},
+			wantErr: []string{`sheet "Failing": exceltable: panic: boom`},
+		},
+		{
+			name: "CellFormatter panics with an error in WriteViewSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				w := NewWriter[[][]string]().WithColumnFormatter(0, panicInRow(errPanic))
+				view := retable.NewStringsView(" Strings ", [][]string{{"A"}, {"1"}, {"2"}})
+				return w.WriteViewSheet(ctx, wb, view)
+			},
+			wantErr: []string{`sheet "Strings": exceltable: panic: formatter panicked with an error`},
+			wantIs:  errPanic,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wb := NewWorkbook()
+			defer wb.Close()
+			require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Good"))
+
+			err := tt.write(t.Context(), wb)
+			require.Error(t, err)
+			for _, want := range tt.wantErr {
+				require.ErrorContains(t, err, want)
+			}
+			if tt.wantIs != nil {
+				require.ErrorIs(t, err, tt.wantIs)
+			}
+			// The stack trace is in the PanicError, not in the message
+			var panicErr *retable.PanicError
+			require.ErrorAs(t, err, &panicErr)
+			require.Equal(t, "exceltable", panicErr.Package)
+			require.Contains(t, string(panicErr.Stack), "panic(", "stack trace of the panic")
+			require.Contains(t, string(panicErr.Stack), "exceltable.TestWorkbook_PoisonedByPanic", "the frame that panicked")
+			require.NotContains(t, err.Error(), "goroutine ", "the message has no stack trace")
+
+			var buf bytes.Buffer
+			_, err = wb.WriteTo(&buf)
+			require.ErrorAs(t, err, &panicErr, "also from the failed workbook")
+			require.ErrorContains(t, err, "exceltable: workbook unusable after a failed sheet: "+tt.wantErr[0])
+			require.Zero(t, buf.Len(), "the incomplete sheet must not be written")
+			err = NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Next")
+			require.ErrorContains(t, err, tt.wantErr[0])
+		})
+	}
+}
+
+// TestWorkbook_PanicBeforeSheetAdded covers that a panic before the sheet
+// is added returns an error but leaves the workbook usable and unchanged,
+// like ErrDuplicateSheetName.
+func TestWorkbook_PanicBeforeSheetAdded(t *testing.T) {
+	rows := []overviewRow{{"a", 1}}
+	tests := []struct {
+		name    string
+		write   func(ctx context.Context, wb *Workbook) error
+		wantErr string
+	}{
+		{
+			name: "view Title panics in WriteViewSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				view := panickingTitleView{retable.NewStringsView("X", [][]string{{"A"}, {"1"}})}
+				return NewWriter[[][]string]().WriteViewSheet(ctx, wb, view)
+			},
+			wantErr: "exceltable: panic: title panicked",
+		},
+		{
+			name: "Viewer panics in WriteSheet",
+			write: func(ctx context.Context, wb *Workbook) error {
+				return NewWriter[[]overviewRow]().WithTableViewer(panickingViewer{}).WriteSheet(ctx, wb, rows, "Never")
+			},
+			wantErr: "exceltable: panic: viewer panicked",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wb := NewWorkbook()
+			defer wb.Close()
+
+			err := tt.write(t.Context(), wb)
+			require.ErrorContains(t, err, tt.wantErr)
+			require.NotContains(t, err.Error(), "sheet \"", "a sheet that was not added is not named")
+
+			require.NoError(t, NewWriter[[]overviewRow]().WriteSheet(t.Context(), wb, rows, "Later"))
+			var buf bytes.Buffer
+			_, err = wb.WriteTo(&buf)
+			require.NoError(t, err)
+			require.Equal(t, []string{"Later"}, openWritten(t, buf.Bytes()).GetSheetList())
+		})
+	}
+}
+
+func TestWriter_WritePanics(t *testing.T) {
+	var buf bytes.Buffer
+	err := NewWriter[[]overviewRow]().WithTableViewer(panickingViewer{}).Write(t.Context(), &buf, nil, "S")
+	require.ErrorContains(t, err, "exceltable: panic: viewer panicked")
+
+	w := NewWriter[[]overviewRow]().WithKindFormatter(reflect.String, CellFormatterFunc(
+		func(context.Context, retable.View, int, int) (Cell, error) { panic("boom") },
+	))
+	err = w.Write(t.Context(), &buf, []overviewRow{{"a", 1}}, "S")
+	require.ErrorContains(t, err, `sheet "S": exceltable: panic: boom`)
+	require.Zero(t, buf.Len(), "nothing is written to dest")
+}
+
+// panickingWriter is an io.Writer that panics.
+type panickingWriter struct{}
+
+func (panickingWriter) Write([]byte) (int, error) { panic("dest panicked") }
+
+// TestWriter_WriteViewDestPanics covers that a panic of dest while the
+// workbook is written to it is returned as *retable.PanicError.
+func TestWriter_WriteViewDestPanics(t *testing.T) {
+	view := retable.NewStringsView("S", [][]string{{"x"}}, "a")
+	err := NewWriter[any]().WriteView(t.Context(), panickingWriter{}, view)
+	var panicErr *retable.PanicError
+	require.ErrorAs(t, err, &panicErr)
+	require.EqualError(t, err, "exceltable: panic: dest panicked")
+}
+
+func TestWorkbook_UniqueSheetName(t *testing.T) {
+	a27 := strings.Repeat("a", 27)
+	a40 := strings.Repeat("a", 40)
+	emoji16 := strings.Repeat("😀", 16) // 32 UTF-16 code units
+	numbered := func(base string, upTo int) []string {
+		names := []string{base}
+		for n := 2; n <= upTo; n++ {
+			names = append(names, fmt.Sprintf("%s (%d)", base, n))
+		}
+		return names
+	}
+	tests := []struct {
+		name     string
+		existing []string
+		sheet    string
+		want     string
+	}{
+		{name: "no sheets", sheet: "Overview", want: "Overview"},
+		{name: "no clash", existing: []string{"Overview"}, sheet: "Details", want: "Details"},
+		{name: "sanitized without clash", sheet: " a/b ", want: "a_b"},
+		{name: "equal name", existing: []string{"4711"}, sheet: "4711", want: "4711 (2)"},
+		{name: "name with surrounding whitespace", existing: []string{"4711"}, sheet: " 4711\t", want: "4711 (2)"},
+		{name: "clash ignoring case", existing: []string{"Overview"}, sheet: "OVERVIEW", want: "OVERVIEW (2)"},
+		{name: "clash after sanitizing", existing: []string{"a_b"}, sheet: "a/b", want: "a_b (2)"},
+		{name: "numbered name exists too", existing: []string{"X", "x (2)"}, sheet: "X", want: "X (3)"},
+		{name: "two digit number", existing: numbered("X", 9), sheet: "X", want: "X (10)"},
+		{name: "empty name", sheet: "", want: "UNNAMED"},
+		{name: "empty name clash", existing: []string{"UNNAMED"}, sheet: "  ", want: "UNNAMED (2)"},
+		{name: "long name", sheet: a40, want: strings.Repeat("a", 30) + "…"},
+		{name: "long name clash", existing: []string{a40}, sheet: a40, want: a27 + " (2)"},
+		{name: "long name clash with two digits", existing: append([]string{a40}, numbered(a27, 9)[1:]...), sheet: a40, want: a27[1:] + " (10)"},
+		// The cut to 27 units ends with the space after the 26 "a",
+		// which is dropped to avoid a double space before the number
+		{name: "cut at a space", existing: []string{a27[1:] + " bbbb"}, sheet: a27[1:] + " bbbb", want: a27[1:] + " (2)"},
+		{name: "cut to whole runes", existing: []string{emoji16}, sheet: emoji16, want: strings.Repeat("😀", 13) + " (2)"},
+		{name: "apostrophe at the start", existing: []string{"'Q1'"}, sheet: "'Q1'", want: "_Q1' (2)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wb := NewWorkbook()
+			defer wb.Close()
+			for _, existing := range tt.existing {
+				_, err := wb.addSheet(existing)
+				require.NoError(t, err)
+			}
+
+			got := wb.UniqueSheetName(tt.sheet)
+			require.Equal(t, tt.want, got)
+			require.LessOrEqual(t, utf16Len(got), excelize.MaxSheetNameLength)
+			require.Equal(t, got, sanitizeSheetName(got), "WriteSheet must use the returned name unchanged")
+		})
+	}
+}
+
+// TestWorkbook_UniqueSheetNameWrite covers that sheets written with names
+// from UniqueSheetName get exactly those names and that Excel accepts them.
+func TestWorkbook_UniqueSheetNameWrite(t *testing.T) {
+	rows := []overviewRow{{"a", 1}}
+	long := strings.Repeat("ä", 20) + strings.Repeat("😀", 10)
+	wb := NewWorkbook()
+	defer wb.Close()
+
+	var names []string
+	writer := NewWriter[[]overviewRow]()
+	for _, sheet := range []string{"4711", "4711", " 4711 ", "", "", long, long} {
+		name := wb.UniqueSheetName(sheet)
+		require.NoError(t, writer.WriteSheet(t.Context(), wb, rows, name))
+		names = append(names, name)
+	}
+	stringsWriter := NewWriter[[][]string]()
+	view := retable.NewStringsView("4711", [][]string{{"A"}, {"1"}})
+	name := wb.UniqueSheetName(view.Title())
+	require.NoError(t, stringsWriter.WriteViewSheet(t.Context(), wb, retable.ViewWithTitle(view, name)))
+	names = append(names, name)
+
+	require.Equal(t, []string{
+		"4711",
+		"4711 (2)",
+		"4711 (3)",
+		"UNNAMED",
+		"UNNAMED (2)",
+		strings.Repeat("ä", 20) + strings.Repeat("😀", 5) + "…",
+		strings.Repeat("ä", 20) + strings.Repeat("😀", 3) + " (2)",
+		"4711 (4)",
+	}, names)
+
+	var buf bytes.Buffer
+	_, err := wb.WriteTo(&buf)
+	require.NoError(t, err)
+	require.Equal(t, names, openWritten(t, buf.Bytes()).GetSheetList())
+}
+
+// TestWorkbook_UniqueSheetNameManyEqualNames covers the numbering of many
+// sheets with the same name from data, like an empty cost center number.
+// UniqueSheetName remembers how far it has counted for a name, which must
+// neither skip a number nor return one twice, also when names that share
+// sheet names after sanitizing are mixed.
+func TestWorkbook_UniqueSheetNameManyEqualNames(t *testing.T) {
+	wb := NewWorkbook()
+	defer wb.Close()
+	add := func(name string) string {
+		t.Helper()
+		unique := wb.UniqueSheetName(name)
+		_, err := wb.addSheet(unique)
+		require.NoError(t, err)
+		return unique
+	}
+
+	require.Equal(t, "4711", add("4711"))
+	for n := 2; n <= 150; n++ {
+		require.Equal(t, fmt.Sprintf("4711 (%d)", n), add(" 4711 "))
+	}
+
+	// Asking again without writing the sheet returns the same name
+	require.Equal(t, "4711 (151)", wb.UniqueSheetName("4711"))
+	require.Equal(t, "4711 (151)", wb.UniqueSheetName("4711"))
+
+	// "abc'" and "abc_" are the same sheet name after sanitizing,
+	// but their numbered names differ, so each counts on its own
+	require.Equal(t, "abc_", add("abc'"))
+	require.Equal(t, "abc' (2)", add("abc'"))
+	require.Equal(t, "abc' (3)", add("abc'"))
+	require.Equal(t, "abc_ (2)", add("abc_"))
+	require.Equal(t, "ABC_ (3)", add("ABC_"))
+
+	// A sheet written under a numbered name without UniqueSheetName
+	_, err := wb.addSheet("X")
+	require.NoError(t, err)
+	_, err = wb.addSheet("x (3)")
+	require.NoError(t, err)
+	require.Equal(t, "X (2)", add("X"))
+	require.Equal(t, "X (4)", add("X"))
+}

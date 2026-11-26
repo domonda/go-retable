@@ -291,3 +291,32 @@ func TestStructRowsView_NilRows(t *testing.T) {
 		})
 	}
 }
+
+// TestStructRowsViewer_WithTitleMatcher covers that WithTitleMatcher returns a
+// StructRowsViewer like WithTag and WithIgnore. Without its own method the
+// one of the embedded StructFieldNaming is promoted, which returns only the
+// naming and silently loses MapIndices in a chain of With calls.
+func TestStructRowsViewer_WithTitleMatcher(t *testing.T) {
+	type row struct{ A, B string }
+	base := (&StructRowsViewer{}).WithIgnoreFieldIndex(0)
+
+	var viewer *StructRowsViewer = base.WithTitleMatcher(TrimEqualFold)
+	require.True(t, viewer.ColumnTitlesMatch(" a ", "A"))
+	require.Nil(t, base.TitleMatcher, "the original must be untouched")
+
+	view, err := viewer.NewView("", []row{{A: "a", B: "b"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"B"}, view.ColumnNames(), "the ignored field index must be kept")
+
+	require.False(t, viewer.WithTitleMatcher(nil).ColumnTitlesMatch("a", "A"))
+
+	// Same for the other naming options that have a method of their own
+	viewer = base.WithDisallowAmbiguousTitles(true).WithPreferFirstColumn(true)
+	require.True(t, viewer.DisallowAmbiguousTitles)
+	require.True(t, viewer.PreferFirstColumn)
+	require.False(t, base.DisallowAmbiguousTitles, "the original must be untouched")
+	require.False(t, base.PreferFirstColumn, "the original must be untouched")
+	view, err = viewer.NewView("", []row{{A: "a", B: "b"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"B"}, view.ColumnNames(), "the ignored field index must be kept")
+}

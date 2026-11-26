@@ -14,12 +14,24 @@ import (
 	"unicode/utf8"
 )
 
+// isEmbeddedStruct reports whether field is an anonymously embedded
+// struct or pointer to struct, whose fields are inlined as columns.
+// Other embedded types, like a named string type, are no column.
+func isEmbeddedStruct(field reflect.StructField) bool {
+	t := field.Type
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return field.Anonymous && t.Kind() == reflect.Struct
+}
+
 // StructFieldTypes returns the exported fields of a struct type,
 // including the inlined fields of any anonymously embedded structs.
 // If structType is a pointer, it automatically dereferences to the underlying struct type.
 //
 // The function recursively processes embedded structs, flattening their fields into the result.
 // Only exported fields (those starting with an uppercase letter) are included.
+// Other embedded types, like a named string type, are no field of the result.
 //
 // Example:
 //
@@ -41,7 +53,9 @@ func StructFieldTypes(structType reflect.Type) (fields []reflect.StructField) {
 	for field := range structType.Fields() {
 		switch {
 		case field.Anonymous:
-			fields = append(fields, StructFieldTypes(field.Type)...)
+			if isEmbeddedStruct(field) {
+				fields = append(fields, StructFieldTypes(field.Type)...)
+			}
 		case token.IsExported(field.Name):
 			fields = append(fields, field)
 		}
@@ -86,7 +100,9 @@ func StructFieldReflectValues(structValue reflect.Value) []reflect.Value {
 		field := structType.Field(i)
 		switch {
 		case field.Anonymous:
-			values = append(values, StructFieldReflectValues(structValue.Field(i))...)
+			if isEmbeddedStruct(field) {
+				values = append(values, StructFieldReflectValues(structValue.Field(i))...)
+			}
 		case token.IsExported(field.Name):
 			values = append(values, structValue.Field(i))
 		}
@@ -145,7 +161,9 @@ func assignIndexedStructFieldReflectValues(vals []reflect.Value, structValue ref
 		field := structType.Field(i)
 		switch {
 		case field.Anonymous:
-			fieldIndex = assignIndexedStructFieldReflectValues(vals, structValue.Field(i), indices, fieldIndex)
+			if isEmbeddedStruct(field) {
+				fieldIndex = assignIndexedStructFieldReflectValues(vals, structValue.Field(i), indices, fieldIndex)
+			}
 		case token.IsExported(field.Name):
 			if fieldIndex < len(indices) && indices[fieldIndex] >= 0 {
 				vals[indices[fieldIndex]] = structValue.Field(i)
@@ -191,7 +209,9 @@ func StructFieldAnyValues(structValue reflect.Value) []any {
 		field := structType.Field(i)
 		switch {
 		case field.Anonymous:
-			values = append(values, StructFieldAnyValues(structValue.Field(i))...)
+			if isEmbeddedStruct(field) {
+				values = append(values, StructFieldAnyValues(structValue.Field(i))...)
+			}
 		case token.IsExported(field.Name):
 			values = append(values, structValue.Field(i).Interface())
 		}

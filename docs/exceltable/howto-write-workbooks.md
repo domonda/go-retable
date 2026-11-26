@@ -12,7 +12,7 @@ change how cells look. Each recipe stands on its own.
   same release:
 
   ```sh
-  go get github.com/domonda/go-retable@v1.0.0-beta.2 github.com/domonda/go-retable/exceltable@v1.0.0-beta.2
+  go get github.com/domonda/go-retable@v1.0.0-beta.4 github.com/domonda/go-retable/exceltable@v1.0.0-beta.4
   ```
 
 - The recipes import these two packages plus the standard library packages
@@ -156,25 +156,25 @@ returns an error at runtime instead of failing to compile. See
 ### When two sheet names collide
 
 `WriteSheet` returns `exceltable.ErrDuplicateSheetName` when the sanitized
-name equals an existing sheet name, ignoring case. The workbook is unchanged,
-so you can retry with another name:
+name equals an existing sheet name, ignoring case. The workbook is unchanged.
+For names from data, let the workbook number them instead:
 
 ```go
-name := center.Number
-for i := 2; ; i++ {
-    err = bookingWriter.WriteSheet(ctx, wb, bookings[center.Number], name)
-    if !errors.Is(err, exceltable.ErrDuplicateSheetName) {
-        break
-    }
-    name = fmt.Sprintf("%s (%d)", center.Number, i)
-}
+name := wb.UniqueSheetName(center.Number) // "4711", then "4711 (2)", ...
+err = bookingWriter.WriteSheet(ctx, wb, bookings[center.Number], name)
 if err != nil {
     return err
 }
+
+// A view is named by its title
+view = retable.ViewWithTitle(view, wb.UniqueSheetName(view.Title()))
+err = summaryWriter.WriteViewSheet(ctx, wb, view)
 ```
 
-Keep the suffix short when names can be long: a name cut at 30 characters
-loses the suffix and collides again.
+`UniqueSheetName` cuts a long name before the number, so the number is never
+lost at the 31 character limit. It does not reserve the name: write the sheet
+before you ask for the next name, as above. Names collected up front for
+several sheets can be equal.
 
 ## Serve a workbook as an HTTP download
 
@@ -193,7 +193,13 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
     defer wb.Close()
     err = invoiceWriter.WriteSheet(r.Context(), wb, invoices, "Invoices")
     if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+        log.Printf("writing sheet Invoices: %v", err)
+        // A recovered panic keeps its stack trace out of the message
+        var panicErr *retable.PanicError
+        if errors.As(err, &panicErr) {
+            log.Printf("%s", panicErr.Stack)
+        }
+        http.Error(w, "export failed", http.StatusInternalServerError)
         return
     }
 
@@ -421,7 +427,9 @@ a number cell is right-aligned and its format shows under Format Cells.
 
 **Every later write returns `exceltable: workbook unusable after a failed sheet`.**
 A sheet failed after it was added, through a formatter error, a cancelled
-context or an excelize error. The sheet holds only part of its rows, so the
+context, an excelize error or a panic, which the error shows as
+`exceltable: panic: <value>`, with the stack trace in the `Stack` field of
+the `retable.PanicError` it wraps. The sheet holds only part of its rows, so the
 workbook refuses to write a truncated file. The error wraps the cause and names
 the sheet, row and column. Fix the cause and start a new `Workbook`.
 

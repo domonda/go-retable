@@ -1,6 +1,7 @@
 package exceltable
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf16"
 
 	"github.com/xuri/excelize/v2"
@@ -42,11 +44,11 @@ var (
 // one Writer per row type.
 //
 // A Workbook keeps the first error of a sheet that failed after it was
-// added, for example a CellFormatter error or a cancelled context.
-// The sheet then holds only part of its rows, so every later WriteSheet,
-// WriteViewSheet and WriteTo returns that error and a truncated file can
-// never be written. Errors found before a sheet is added, such as
-// ErrDuplicateSheetName, leave the workbook usable.
+// added, for example a CellFormatter error, a cancelled context or a panic,
+// such as of a CellFormatter. The sheet then holds only part of its rows,
+// so every later WriteSheet, WriteViewSheet and WriteTo returns that error
+// and a truncated file can never be written. Errors and panics before a
+// sheet is added, such as ErrDuplicateSheetName, leave the workbook usable.
 //
 // A Workbook is not safe for concurrent use.
 // Call Close to remove the temporary files of large sheets.
@@ -56,6 +58,11 @@ type Workbook struct {
 	styles map[styleKey]int
 	err    error
 	closed bool
+
+	// sheetNumbers maps a name passed to UniqueSheetName, without
+	// surrounding whitespace, to the lowest number of numberedSheetName
+	// that can still be free: all lower numbered names are sheets of wb.
+	sheetNumbers map[string]int
 }
 
 // styleKey identifies a cell style of a workbook.
@@ -108,16 +115,101 @@ func (wb *Workbook) poisonedError() error {
 	return fmt.Errorf("exceltable: workbook unusable after a failed sheet: %w", wb.err)
 }
 
+// UniqueSheetName returns the name that WriteSheet and WriteViewSheet
+// would give a sheet named name, sanitized for Excel, see Writer.WriteSheet,
+// if that does not equal the name of an existing sheet of wb, ignoring case.
+// Otherwise it appends " (2)", " (3)" and so on to name without surrounding
+// whitespace, or to "UNNAMED" for an empty name, until the sanitized result
+// is unique, and returns it. Before the number the name is cut to whole
+// runes so that the number always fits into Excel's limit of 31 UTF-16
+// code units and is never cut off.
+//
+// Pass the result to WriteSheet, or as view title to WriteViewSheet,
+// to add a sheet with a name from user data, like a cost center number,
+// that must not fail with ErrDuplicateSheetName.
+// The sheet then has exactly the returned name.
+//
+// The returned name is not reserved: it is only unique among the sheets
+// that wb has at the time of the call, so write the sheet before asking
+// for the next name. Two calls with the same name without a sheet written
+// in between return the same name, and the second WriteSheet with it
+// fails with ErrDuplicateSheetName.
+//
+// Example:
+//
+//	name := wb.UniqueSheetName(center.Number) // "4711", then "4711 (2)", ...
+//	err := writer.WriteSheet(ctx, wb, bookings, name)
+//
+//	view = retable.ViewWithTitle(view, wb.UniqueSheetName(view.Title()))
+//	err = writer.WriteViewSheet(ctx, wb, view)
+func (wb *Workbook) UniqueSheetName(name string) string {
+	unique := sanitizeSheetName(name)
+	if wb.existingSheet(unique) == "" {
+		return unique
+	}
+	// Sheets are never removed, so the numbers found taken by an earlier
+	// call for the same name are still taken. Continuing after them
+	// instead of counting from 2 again keeps many sheets of one name,
+	// like an empty one, from costing a scan of all sheets per number.
+	name = strings.TrimSpace(name)
+	n := max(wb.sheetNumbers[name], 2)
+	unique = sanitizeSheetName(numberedSheetName(name, n))
+	for wb.existingSheet(unique) != "" {
+		// Every number is another name, so the loop ends
+		// after at most one iteration per sheet of wb
+		n++
+		unique = sanitizeSheetName(numberedSheetName(name, n))
+	}
+	if wb.sheetNumbers == nil {
+		wb.sheetNumbers = make(map[string]int)
+	}
+	wb.sheetNumbers[name] = n
+	return unique
+}
+
+// numberedSheetName returns name without surrounding whitespace,
+// or "UNNAMED" for an empty name, followed by " (n)",
+// with the name cut to whole runes so that the result has at most
+// 31 UTF-16 code units, which sanitizeSheetName keeps unchanged.
+func numberedSheetName(name string, n int) string {
+	name = cmp.Or(strings.TrimSpace(name), "UNNAMED")
+	suffix := " (" + strconv.Itoa(n) + ")"
+	maxUnits := excelize.MaxSheetNameLength - len(suffix) // suffix is ASCII
+	// No double space before the number if the cut ends at a space
+	return strings.TrimRightFunc(cutToUTF16Units(name, maxUnits), unicode.IsSpace) + suffix
+}
+
+// cutToUTF16Units returns the longest prefix of s of whole runes
+// with at most maxUnits UTF-16 code units.
+func cutToUTF16Units(s string, maxUnits int) string {
+	units := 0
+	for i, r := range s {
+		units += utf16.RuneLen(r)
+		if units > maxUnits {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// existingSheet returns the name of the sheet of wb that equals name,
+// ignoring case like Excel does, or "" if there is none.
+func (wb *Workbook) existingSheet(name string) string {
+	for _, existing := range wb.sheets {
+		if strings.EqualFold(existing, name) {
+			return existing
+		}
+	}
+	return ""
+}
+
 // addSheet sanitizes name, checks it against the existing sheet names
 // and adds the sheet. The first sheet replaces the default sheet
 // that excelize creates.
 func (wb *Workbook) addSheet(name string) (string, error) {
 	name = sanitizeSheetName(name)
-	for _, existing := range wb.sheets {
-		// Excel compares sheet names case-insensitively
-		if strings.EqualFold(existing, name) {
-			return "", fmt.Errorf("%w: %q (existing sheet %q)", ErrDuplicateSheetName, name, existing)
-		}
+	if existing := wb.existingSheet(name); existing != "" {
+		return "", fmt.Errorf("%w: %q (existing sheet %q)", ErrDuplicateSheetName, name, existing)
 	}
 	var err error
 	if len(wb.sheets) == 0 {
@@ -185,20 +277,7 @@ func sanitizeSheetName(name string) string {
 	if utf16Len(name) <= excelize.MaxSheetNameLength {
 		return name
 	}
-	var (
-		b     strings.Builder
-		units int
-	)
-	for _, r := range name {
-		n := utf16.RuneLen(r)
-		if units+n > excelize.MaxSheetNameLength-1 {
-			break
-		}
-		b.WriteRune(r)
-		units += n
-	}
-	b.WriteRune('…')
-	return b.String()
+	return cutToUTF16Units(name, excelize.MaxSheetNameLength-1) + "…"
 }
 
 // utf16Len returns the number of UTF-16 code units of s.
@@ -281,7 +360,10 @@ func NewWriter[T any]() *Writer[T] {
 
 // Write writes table as the only sheet of a new workbook to dest.
 // The sheet name is sanitized, see WriteSheet.
-func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetName string) error {
+// A panic is returned as error, see WriteViewSheet.
+func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetName string) (err error) {
+	defer recoverPanic(&err)
+
 	view, err := w.newView(table, sheetName)
 	if err != nil {
 		return err
@@ -291,11 +373,17 @@ func (w *Writer[T]) Write(ctx context.Context, dest io.Writer, table T, sheetNam
 
 // WriteView writes view as the only sheet of a new workbook to dest,
 // named after the view's title.
+// A panic is returned as error, see WriteViewSheet.
 func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.View) (err error) {
 	wb := NewWorkbook()
 	defer func() {
 		err = errors.Join(err, wb.Close())
 	}()
+	// WriteViewSheet recovers its own panics, this one is for writing
+	// the workbook to dest. Deferred after the Close above, so that it
+	// runs before it and the error of Close is joined to the panic.
+	defer recoverPanic(&err)
+
 	err = w.WriteViewSheet(ctx, wb, view)
 	if err != nil {
 		return err
@@ -312,7 +400,16 @@ func (w *Writer[T]) WriteView(ctx context.Context, dest io.Writer, view retable.
 // a name longer than 31 UTF-16 code units is cut to 30 units plus "…".
 // If the sanitized name equals an existing sheet name, ignoring case,
 // ErrDuplicateSheetName is returned and wb is left unchanged.
-func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheetName string) error {
+// Use Workbook.UniqueSheetName for names from user data.
+//
+// A panic, for example of a CellFormatter or of the Viewer, is returned
+// as error and fails wb like an error if the sheet was already added,
+// see WriteViewSheet.
+func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheetName string) (err error) {
+	// WriteViewSheet recovers its own panics,
+	// this one is for the Viewer creating the view
+	defer recoverPanic(&err)
+
 	view, err := w.newView(table, sheetName)
 	if err != nil {
 		return err
@@ -322,19 +419,52 @@ func (w *Writer[T]) WriteSheet(ctx context.Context, wb *Workbook, table T, sheet
 
 // WriteViewSheet adds view as a sheet to wb, named after the view's title.
 // See WriteSheet for how the name is sanitized.
-func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retable.View) error {
+//
+// A panic while writing, for example of a CellFormatter or of the view,
+// is returned as a *retable.PanicError with the message
+// "exceltable: panic: " and the panic value, which it wraps if it is an
+// error. The stack trace of the panic is not part of the message,
+// get it from the Stack field with errors.As to log it.
+// If the panic happened after the sheet was added to wb, the error is
+// wrapped with the sheet in front, see the example, the sheet is
+// incomplete and wb fails with that error like after a returned error:
+// every later WriteSheet, WriteViewSheet and WriteTo returns it.
+// A panic before, such as of view.Title, leaves wb usable.
+//
+// Example:
+//
+//	err := writer.WriteViewSheet(ctx, wb, view) // a CellFormatter panics
+//	// err: `sheet "Invoices": exceltable: panic: ...`
+//	_, err = wb.WriteTo(dest)
+//	// err: `exceltable: workbook unusable after a failed sheet: sheet "Invoices": exceltable: panic: ...`
+func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retable.View) (err error) {
 	if wb.closed {
 		return errWorkbookClosed
 	}
 	if wb.err != nil {
 		return wb.poisonedError()
 	}
+	// Set when wb is about to be changed by adding the sheet,
+	// after which a panic leaves an incomplete sheet behind
+	var sheetName string
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
+		}
+		err = retable.NewPanicError("exceltable", p)
+		if sheetName != "" {
+			wb.err = fmt.Errorf("sheet %q: %w", sheetName, err)
+			err = wb.err
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// Everything that can fail before the sheet exists happens first,
 	// so that such errors leave no empty sheet behind.
-	err := w.checkSheetSize(view)
+	err = w.checkSheetSize(view)
 	if err != nil {
 		return err
 	}
@@ -349,8 +479,14 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 			return err
 		}
 	}
-	name, err := wb.addSheet(view.Title())
+	title := view.Title()
+	// sanitizeSheetName never returns "", it is "UNNAMED" for an empty title
+	sheetName = sanitizeSheetName(title)
+	name, err := wb.addSheet(title)
 	if err != nil {
+		// Only ErrDuplicateSheetName and excelize errors
+		// about the name, wb is unchanged
+		sheetName = ""
 		return err
 	}
 	err = w.writeSheetRows(ctx, wb, name, view, headerStyle)
@@ -359,6 +495,17 @@ func (w *Writer[T]) WriteViewSheet(ctx context.Context, wb *Workbook, view retab
 		return wb.err
 	}
 	return nil
+}
+
+// recoverPanic assigns a recovered panic to *err as *retable.PanicError
+// with the message "exceltable: panic: " and the panic value,
+// and with the stack trace of the panic in its Stack field.
+// It has to be deferred directly by the function whose named error
+// result err points to, because recover only stops a panic there.
+func recoverPanic(err *error) {
+	if p := recover(); p != nil {
+		*err = retable.NewPanicError("exceltable", p)
+	}
 }
 
 // checkSheetSize returns an error if view does not fit into an Excel sheet,

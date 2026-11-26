@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"runtime/debug"
 	"strconv"
 	"strings"
 )
@@ -121,9 +120,9 @@ import (
 //     is what distinguishes a malformed cell from a destination type
 //     that no strategy fits.
 //     A panic, from package reflect or from the passed dstScanner, parser
-//     or srcFormatter, is returned as an error with the prefix
-//     "retable: panic" followed by the stack trace of the panic, wrapping
-//     the panic value with %w if it is an error.
+//     or srcFormatter, is returned as a *PanicError with the message
+//     "retable: panic: " and the panic value, which it wraps if it is
+//     an error, and with the stack trace of the panic in its Stack field.
 //
 // Example:
 //
@@ -186,12 +185,7 @@ func SmartAssign(dst, src reflect.Value, dstScanner Scanner, parser Parser, srcF
 	// trace that locates the bug, which is gone once this returns.
 	defer func() {
 		if r := recover(); r != nil {
-			stack := debug.Stack()
-			if rErr, ok := r.(error); ok {
-				err = errors.Join(err, fmt.Errorf("retable: panic: %w\n%s", rErr, stack))
-			} else {
-				err = errors.Join(err, fmt.Errorf("retable: panic: %v\n%s", r, stack))
-			}
+			err = errors.Join(err, NewPanicError("retable", r))
 		}
 	}()
 

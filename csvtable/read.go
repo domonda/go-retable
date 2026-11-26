@@ -10,13 +10,16 @@ import (
 // ReadStringsToStructSlice converts parsed CSV rows into a slice of structs.
 //
 // When requiredCols are passed they are used to locate the row with the column
-// titles via DetectTableBounds, so header and trailer lines around the table
-// are not mistaken for column titles or data. Without requiredCols the first
+// titles via naming.DetectTableBounds, so header and trailer lines around the
+// table are not mistaken for column titles or data. The titles are compared
+// the way naming compares them for the struct fields, see
+// retable.StructFieldNaming.TitleMatcher. Without requiredCols the first
 // non-empty row is used as column titles.
 //
 // ReadStringsToStructSlice never panics: a panic while converting the rows,
-// including one from the passed validate, is returned as an error with the
-// prefix "csvtable: panic" followed by the stack trace of the panic.
+// including one from the passed validate, is returned as a
+// *retable.PanicError with the message "csvtable: panic: " and the panic
+// value, and with the stack trace of the panic in its Stack field.
 // A panic of the passed dstScanner, parser or srcFormatter is recovered by
 // retable.SmartAssign, which returns it the same way with the prefix
 // "retable: panic".
@@ -27,7 +30,7 @@ func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFiel
 		// Only cut the table out when there are titles to find it by,
 		// guessing the column titles row without them would change
 		// the result for callers that pass a table without header lines.
-		if bounds := DetectTableBounds(rows, requiredCols...); bounds.Valid() {
+		if bounds := naming.DetectTableBounds(rows, requiredCols...); bounds.Valid() {
 			rows = bounds.Rows(rows)
 		}
 	}
@@ -48,9 +51,9 @@ func ReadStringsToStructSlice[T any](rows [][]string, naming *retable.StructFiel
 // using ReadStringsToStructSlice.
 //
 // ReadBytesWithFormatToStructSlice never panics: a panic while parsing or
-// converting, including one from the passed validate, is returned as an
-// error with the prefix "csvtable: panic" followed by the stack trace of
-// the panic.
+// converting, including one from the passed validate, is returned as a
+// *retable.PanicError with the message "csvtable: panic: " and the panic
+// value, and with the stack trace of the panic in its Stack field.
 // A panic of the passed dstScanner, parser or srcFormatter is recovered by
 // retable.SmartAssign, which returns it the same way with the prefix
 // "retable: panic".
@@ -69,8 +72,9 @@ func ReadBytesWithFormatToStructSlice[T any](csvData []byte, format *Format, nam
 //
 // ReadFileWithFormatToStructSlice never panics: a panic while reading,
 // parsing or converting, including one from the passed csvReader or validate,
-// is returned as an error with the prefix "csvtable: panic" followed by the
-// stack trace of the panic.
+// is returned as a *retable.PanicError with the message "csvtable: panic: "
+// and the panic value, and with the stack trace of the panic in its
+// Stack field.
 // A panic of the passed dstScanner, parser or srcFormatter is recovered by
 // retable.SmartAssign, which returns it the same way with the prefix
 // "retable: panic".
@@ -89,9 +93,9 @@ func ReadFileWithFormatToStructSlice[T any](csvReader io.Reader, format *Format,
 // The detected format is returned even when the conversion fails.
 //
 // ReadBytesDetectFormatToStructSlice never panics: a panic while parsing or
-// converting, including one from the passed validate, is returned as an
-// error with the prefix "csvtable: panic" followed by the stack trace of
-// the panic.
+// converting, including one from the passed validate, is returned as a
+// *retable.PanicError with the message "csvtable: panic: " and the panic
+// value, and with the stack trace of the panic in its Stack field.
 // A panic of the passed dstScanner, parser or srcFormatter is recovered by
 // retable.SmartAssign, which returns it the same way with the prefix
 // "retable: panic".
@@ -111,8 +115,9 @@ func ReadBytesDetectFormatToStructSlice[T any](csvData []byte, detectConfig *For
 //
 // ReadFileDetectFormatToStructSlice never panics: a panic while reading,
 // parsing or converting, including one from the passed csvReader or validate,
-// is returned as an error with the prefix "csvtable: panic" followed by the
-// stack trace of the panic.
+// is returned as a *retable.PanicError with the message "csvtable: panic: "
+// and the panic value, and with the stack trace of the panic in its
+// Stack field.
 // A panic of the passed dstScanner, parser or srcFormatter is recovered by
 // retable.SmartAssign, which returns it the same way with the prefix
 // "retable: panic".
